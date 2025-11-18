@@ -204,6 +204,28 @@ class KeychainManager {
         return String(data: data, encoding: .utf8)
     }
 
+    // MARK: - Generic Type Support
+
+    /// Saves a boolean value to keychain
+    /// - Parameters:
+    ///   - value: Boolean value to store
+    ///   - key: Unique identifier for the item
+    func saveBool(_ value: Bool, for key: String) throws {
+        let data = Data([value ? 1 : 0])
+        try save(data: data, for: key)
+    }
+
+    /// Retrieves a boolean value from keychain
+    /// - Parameter key: Unique identifier for the item
+    /// - Returns: Boolean value, or nil if not found
+    func retrieveBool(for key: String) throws -> Bool? {
+        guard let data = try retrieve(for: key),
+              let byte = data.first else {
+            return nil
+        }
+        return byte == 1
+    }
+
     // MARK: - Cleanup
 
     /// Clears all HouseCall keychain items (use with caution)

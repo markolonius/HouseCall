@@ -2,14 +2,20 @@
 //  ContentView.swift
 //  HouseCall
 //
-//  Created by Marko Dimiskovski on 11/17/25.
+//  DEPRECATED: Template view from Xcode project creation
+//  Replaced by authentication-based navigation in HouseCallApp.swift
+//  Kept for reference during development
 //
 
 import SwiftUI
 import CoreData
 
+/// Template ContentView from Xcode project template
+/// - Note: This view is deprecated and not used in the app flow
+/// - See: HouseCallApp.swift for actual app navigation (LoginView -> MainAppView)
 struct ContentView: View {
     @Environment(\.managedObjectContext) private var viewContext
+    @State private var errorMessage: String?
 
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
@@ -18,23 +24,31 @@ struct ContentView: View {
 
     var body: some View {
         NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+            VStack {
+                if let error = errorMessage {
+                    Text("Error: \(error)")
+                        .foregroundColor(.red)
+                        .padding()
+                }
+
+                List {
+                    ForEach(items) { item in
+                        NavigationLink {
+                            Text("Item at \(item.timestamp!, formatter: itemFormatter)")
+                        } label: {
+                            Text(item.timestamp!, formatter: itemFormatter)
+                        }
                     }
+                    .onDelete(perform: deleteItems)
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        EditButton()
+                    }
+                    ToolbarItem {
+                        Button(action: addItem) {
+                            Label("Add Item", systemImage: "plus")
+                        }
                     }
                 }
             }
@@ -49,11 +63,24 @@ struct ContentView: View {
 
             do {
                 try viewContext.save()
+                errorMessage = nil
             } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
+                // Proper error handling - no fatalError
                 let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+                print("❌ Failed to save item: \(nsError.localizedDescription)")
+
+                // Display error to user
+                errorMessage = "Failed to save item: \(nsError.localizedDescription)"
+
+                // Rollback changes
+                viewContext.rollback()
+
+                // Log to audit trail
+                try? AuditLogger.shared.log(
+                    event: .dataModified,
+                    userId: nil,
+                    message: "Failed to save item: \(nsError.localizedDescription)"
+                )
             }
         }
     }
@@ -64,11 +91,24 @@ struct ContentView: View {
 
             do {
                 try viewContext.save()
+                errorMessage = nil
             } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
+                // Proper error handling - no fatalError
                 let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+                print("❌ Failed to delete items: \(nsError.localizedDescription)")
+
+                // Display error to user
+                errorMessage = "Failed to delete items: \(nsError.localizedDescription)"
+
+                // Rollback changes
+                viewContext.rollback()
+
+                // Log to audit trail
+                try? AuditLogger.shared.log(
+                    event: .dataDeleted,
+                    userId: nil,
+                    message: "Failed to delete items: \(nsError.localizedDescription)"
+                )
             }
         }
     }

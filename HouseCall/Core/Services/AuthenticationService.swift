@@ -8,6 +8,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 /// Authentication service errors
 enum AuthenticationError: LocalizedError {
@@ -236,8 +237,13 @@ class AuthenticationService: ObservableObject {
             authMethod: authMethod
         )
 
-        currentSession = session
-        isAuthenticated = true
+        // Defer @Published property updates to avoid "Publishing changes from within view updates" error
+        // Even though we're on @MainActor, we need to defer to the next run loop cycle
+        // to ensure updates happen outside the current view update cycle
+        Task { @MainActor in
+            currentSession = session
+            isAuthenticated = true
+        }
 
         // Log session creation
         try? auditLogger.log(
@@ -259,7 +265,7 @@ class AuthenticationService: ObservableObject {
         // Check if session is expired
         if session.isExpired {
             Task { @MainActor in
-                try? await handleSessionTimeout()
+                await handleSessionTimeout()
             }
             return nil
         }
@@ -281,16 +287,23 @@ class AuthenticationService: ObservableObject {
 
     /// Updates session activity timestamp
     func updateSessionActivity() {
-        currentSession?.updateActivity()
-        // Reset timeout timer
-        startSessionTimeoutTimer()
+        guard var session = currentSession else { return }
+        
+        // Defer the update to avoid "Publishing changes from within view updates" warning
+        // This ensures the update happens outside the current view update cycle
+        Task { @MainActor in
+            session.updateActivity()
+            self.currentSession = session
+            // Reset timeout timer
+            self.startSessionTimeoutTimer()
+        }
     }
 
     /// Restores session from keychain if available
     private func restoreSession() {
-        guard let sessionToken = try? keychainManager.retrieveSessionToken(),
+        guard let _ = try? keychainManager.retrieveSessionToken(),
               let authMethodString = try? keychainManager.retrieveAuthMethod(),
-              let authMethod = AuthMethod(rawValue: authMethodString) else {
+              let _ = AuthMethod(rawValue: authMethodString) else {
             return
         }
 
@@ -345,8 +358,12 @@ class AuthenticationService: ObservableObject {
         // Monitor app going to background
         NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
             .sink { [weak self] _ in
-                // Record last activity time when app goes to background
-                self?.currentSession?.updateActivity()
+                Task { @MainActor [weak self] in
+                    // Record last activity time when app goes to background
+                    guard var session = self?.currentSession else { return }
+                    session.updateActivity()
+                    self?.currentSession = session
+                }
             }
             .store(in: &cancellables)
 

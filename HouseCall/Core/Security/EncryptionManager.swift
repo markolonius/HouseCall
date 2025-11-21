@@ -10,7 +10,7 @@ import Foundation
 import CryptoKit
 
 /// Errors that can occur during encryption operations
-enum EncryptionError: LocalizedError {
+enum EncryptionError: LocalizedError, Equatable {
     case keyGenerationFailed
     case keyDerivationFailed
     case encryptionFailed
@@ -106,14 +106,12 @@ class EncryptionManager {
         let salt = Data(userId.uuidString.utf8)
 
         // Derive user-specific key using HKDF
-        guard let derivedKey = HKDF<SHA256>.deriveKey(
+        let derivedKey = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: masterKey,
             salt: salt,
             info: Data("HouseCall User Key".utf8),
             outputByteCount: 32
-        ) as? SymmetricKey else {
-            throw EncryptionError.keyDerivationFailed
-        }
+        ) 
 
         // Cache the derived key
         derivedKeyCache[userId] = derivedKey

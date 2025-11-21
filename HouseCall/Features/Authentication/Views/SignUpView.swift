@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SignUpView: View {
     @StateObject private var viewModel = SignUpViewModel()
+    @EnvironmentObject var authService: AuthenticationService
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -40,7 +41,9 @@ struct SignUpView: View {
                                 .autocapitalization(.words)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .onChange(of: viewModel.fullName) { _ in
-                                    viewModel.validateFullName()
+                                    Task { @MainActor in
+                                        viewModel.validateFullName()
+                                    }
                                 }
 
                             if let error = viewModel.fullNameError {
@@ -61,7 +64,9 @@ struct SignUpView: View {
                                 .keyboardType(.emailAddress)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .onChange(of: viewModel.email) { _ in
-                                    viewModel.validateEmail()
+                                    Task { @MainActor in
+                                        viewModel.validateEmail()
+                                    }
                                 }
 
                             if let error = viewModel.emailError {
@@ -80,7 +85,9 @@ struct SignUpView: View {
                                 .textContentType(.newPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .onChange(of: viewModel.password) { _ in
-                                    viewModel.validatePassword()
+                                    Task { @MainActor in
+                                        viewModel.validatePassword()
+                                    }
                                 }
 
                             // Password strength indicator
@@ -114,7 +121,9 @@ struct SignUpView: View {
                                 .textContentType(.newPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .onChange(of: viewModel.confirmPassword) { _ in
-                                    viewModel.validateConfirmPassword()
+                                    Task { @MainActor in
+                                        viewModel.validateConfirmPassword()
+                                    }
                                 }
 
                             if let error = viewModel.confirmPasswordError {
@@ -159,26 +168,17 @@ struct SignUpView: View {
                     }
 
                     // Create Account Button
-                    Button(action: {
-                        Task {
-                            await viewModel.signUp()
-                        }
-                    }) {
-                        HStack {
-                            if viewModel.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            }
-                            Text("Create Account")
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(viewModel.canSubmit ? Color.blue : Color.gray)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
+                    AsyncSubmitButton(
+                        action: {
+                            print("🔵 Button tapped, starting sign up")
+                            _ = await viewModel.signUp()
+                            print("🔵 Sign up completed")
+                        },
+                        isEnabled: viewModel.canSubmit
+                    ) {
+                        Text("Create Account")
+                            .fontWeight(.semibold)
                     }
-                    .disabled(!viewModel.canSubmit)
 
                     // Login Link
                     HStack {
@@ -195,12 +195,6 @@ struct SignUpView: View {
                 .padding(.bottom, 32)
             }
             .navigationBarTitleDisplayMode(.inline)
-        }
-        .onChange(of: viewModel.isRegistrationSuccessful) { success in
-            if success {
-                // Navigate to main app
-                dismiss()
-            }
         }
     }
 }
@@ -222,6 +216,44 @@ struct RequirementRow: View {
     }
 }
 
+// MARK: - AsyncSubmitButton
+
+struct AsyncSubmitButton<Label: View>: View {
+    let action: () async -> Void
+    let isEnabled: Bool
+    @ViewBuilder let label: () -> Label
+
+    @State private var isPerformingTask = false
+
+    var body: some View {
+        Button(action: {
+            isPerformingTask = true
+            Task {
+                await action()
+                // Defer state update to next run loop to avoid "Publishing changes" error
+                DispatchQueue.main.async {
+                    isPerformingTask = false
+                }
+            }
+        }) {
+            HStack {
+                if isPerformingTask {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                }
+                label()
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(isEnabled && !isPerformingTask ? Color.blue : Color.gray)
+            .foregroundColor(.white)
+            .cornerRadius(10)
+        }
+        .disabled(!isEnabled || isPerformingTask)
+    }
+}
+
 #Preview {
     SignUpView()
+        .environmentObject(AuthenticationService.shared)
 }

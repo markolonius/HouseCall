@@ -182,7 +182,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                     for: user.id!
                 )
 
-                if !passwordHasher.verify(password: credential, hash: hashedPassword) {
+                if try !passwordHasher.verify(password: credential, hash: hashedPassword) {
                     try? auditLogger.logLoginFailure(
                         email: email,
                         reason: "Invalid password",
@@ -205,7 +205,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                     for: user.id!
                 )
 
-                if !passwordHasher.verify(password: credential, hash: hashedPasscode) {
+                if try !passwordHasher.verify(password: credential, hash: hashedPasscode) {
                     try? auditLogger.logLoginFailure(
                         email: email,
                         reason: "Invalid passcode",

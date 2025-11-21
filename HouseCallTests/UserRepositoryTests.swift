@@ -526,7 +526,7 @@ struct UserRepositoryTests {
         )
 
         // Try to authenticate with wrong password
-        try? repository.authenticateUser(
+        _ = try? repository.authenticateUser(
             email: email,
             credential: "WrongPassword123!",
             authMethod: .password

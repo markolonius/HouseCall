@@ -10,7 +10,7 @@ import Foundation
 import CoreData
 
 /// Errors that can occur during user repository operations
-enum UserRepositoryError: LocalizedError {
+enum UserRepositoryError: LocalizedError, Equatable {
     case invalidCredentials
     case encryptionFailed
     case decryptionFailed
@@ -44,6 +44,28 @@ enum UserRepositoryError: LocalizedError {
             return "Invalid password"
         case .invalidPasscode:
             return "Invalid passcode"
+        }
+    }
+    
+    // Custom Equatable implementation
+    static func == (lhs: UserRepositoryError, rhs: UserRepositoryError) -> Bool {
+        switch (lhs, rhs) {
+        case (.invalidCredentials, .invalidCredentials),
+             (.encryptionFailed, .encryptionFailed),
+             (.decryptionFailed, .decryptionFailed),
+             (.invalidAuthMethod, .invalidAuthMethod),
+             (.userNotFound, .userNotFound),
+             (.invalidEmail, .invalidEmail),
+             (.invalidPassword, .invalidPassword),
+             (.invalidPasscode, .invalidPasscode):
+            return true
+        case (.saveFailed, .saveFailed),
+             (.fetchFailed, .fetchFailed):
+            // For errors with associated values, we consider them equal by case only
+            // (not comparing the underlying Error as it may not be Equatable)
+            return true
+        default:
+            return false
         }
     }
 }

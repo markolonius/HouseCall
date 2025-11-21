@@ -7,6 +7,7 @@
 
 import Testing
 @testable import HouseCall
+import Foundation
 
 @Suite("PasswordHasher Tests")
 struct PasswordHasherTests {

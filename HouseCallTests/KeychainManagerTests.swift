@@ -8,6 +8,7 @@
 import Testing
 import CryptoKit
 @testable import HouseCall
+import Foundation
 
 @Suite("KeychainManager Tests")
 struct KeychainManagerTests {
@@ -283,7 +284,7 @@ struct KeychainManagerTests {
 
     @Test("Concurrent saves don't corrupt data")
     func testConcurrentSaves() async throws {
-        let manager = KeychainManager.shared
+        let manager = await KeychainManager.shared
         let iterations = 10
 
         await withTaskGroup(of: Void.self) { group in
@@ -291,7 +292,7 @@ struct KeychainManagerTests {
                 group.addTask {
                     let key = "concurrent.test.\(i)"
                     let data = Data("Data \(i)".utf8)
-                    try? manager.save(data: data, for: key)
+                    try? await manager.save(data: data, for: key)
                 }
             }
         }
@@ -299,12 +300,12 @@ struct KeychainManagerTests {
         // Verify all items saved correctly
         for i in 0..<iterations {
             let key = "concurrent.test.\(i)"
-            let retrieved = try manager.retrieve(for: key)
+            let retrieved = try await manager.retrieve(for: key)
             let expected = Data("Data \(i)".utf8)
             #expect(retrieved == expected)
 
             // Cleanup
-            try? manager.delete(for: key)
+            try? await manager.delete(for: key)
         }
     }
 }

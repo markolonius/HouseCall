@@ -9,31 +9,32 @@ import Foundation
 import SwiftUI
 
 @MainActor
-class LoginViewModel: ObservableObject {
-    @Published var email: String = ""
-    @Published var credential: String = "" // Password or passcode
-    @Published var authMethod: AuthMethod = .password
+@Observable
+class LoginViewModel {
+    var email: String = ""
+    var credential: String = "" // Password or passcode
+    var authMethod: AuthMethod = .password
 
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String?
-    @Published var isLoginSuccessful: Bool = false
+    var isLoading: Bool = false
+    var errorMessage: String?
+    var isLoginSuccessful: Bool = false
 
-    @Published var useBiometric: Bool = false
-    @Published var biometricType: BiometricType = .none
+    var useBiometric: Bool = false
+    var biometricType: BiometricType = .none
 
     private let authService: AuthenticationService
     private let biometricAuthManager: BiometricAuthManager
 
     init(
-        authService: AuthenticationService = .shared,
-        biometricAuthManager: BiometricAuthManager = .shared
+        authService: AuthenticationService? = nil,
+        biometricAuthManager: BiometricAuthManager? = nil
     ) {
-        self.authService = authService
-        self.biometricAuthManager = biometricAuthManager
+        self.authService = authService ?? .shared
+        self.biometricAuthManager = biometricAuthManager ?? .shared
 
         // Check biometric availability
-        self.biometricType = biometricAuthManager.isBiometricAvailable()
-        self.useBiometric = biometricAuthManager.isBiometricEnabledForApp() && biometricType != .none
+        self.biometricType = self.biometricAuthManager.isBiometricAvailable()
+        self.useBiometric = self.biometricAuthManager.isBiometricEnabledForApp() && biometricType != .none
     }
 
     // MARK: - Login

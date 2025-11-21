@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 class SignUpViewModel: ObservableObject {
@@ -46,6 +47,7 @@ class SignUpViewModel: ObservableObject {
 
         // Update strength indicator
         passwordStrength = Validators.assessPasswordStrength(password)
+        print("🔐 Password validation - Length: \(password.count), Strength: \(passwordStrength), Error: \(passwordError ?? "none")")
     }
 
     func validateConfirmPassword() {
@@ -63,7 +65,9 @@ class SignUpViewModel: ObservableObject {
 
     // MARK: - Sign Up
 
-    func signUp() async {
+    func signUp() async -> Bool {
+        print("📝 Sign up started - Email: \(email), Name: \(fullName), Password length: \(password.count)")
+
         // Validate all fields
         validateEmail()
         validatePassword()
@@ -75,28 +79,37 @@ class SignUpViewModel: ObservableObject {
               passwordError == nil,
               confirmPasswordError == nil,
               fullNameError == nil else {
-            errorMessage = "Please fix the errors above"
-            return
+            print("❌ Validation failed - Email: \(emailError ?? "ok"), Password: \(passwordError ?? "ok"), Confirm: \(confirmPasswordError ?? "ok"), Name: \(fullNameError ?? "ok")")
+            await MainActor.run {
+                errorMessage = "Please fix the errors above"
+            }
+            return false
         }
 
-        isLoading = true
+        print("✅ All validations passed, attempting registration...")
+
         errorMessage = nil
 
+        var success = false
         do {
+            print("🔄 Calling authService.register...")
             _ = try await authService.register(
                 email: email,
                 password: authMethod == .password ? password : nil,
-                passcode: authMethod == .passcode ? password : nil, // Using password field for passcode
+                passcode: authMethod == .passcode ? password : nil,
                 fullName: fullName,
                 authMethod: authMethod
             )
 
-            isRegistrationSuccessful = true
+            print("✅ Registration successful!")
+            success = true
         } catch {
+            print("❌ Registration failed: \(error)")
             errorMessage = error.localizedDescription
         }
 
-        isLoading = false
+        print("🏁 Sign up completed")
+        return success
     }
 
     // MARK: - Helper Methods
@@ -105,8 +118,7 @@ class SignUpViewModel: ObservableObject {
         !email.isEmpty &&
         !password.isEmpty &&
         !confirmPassword.isEmpty &&
-        !fullName.isEmpty &&
-        !isLoading
+        !fullName.isEmpty
     }
 
     var passwordStrengthText: String {

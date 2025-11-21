@@ -29,9 +29,22 @@
 		AD45C9732ECB48A600A6D601 /* HouseCallUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HouseCallUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		ADEE96B12ECD5DEC00B27484 /* Exceptions for "HouseCall" folder in "HouseCall" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AD45C9562ECB48A300A6D601 /* HouseCall */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AD45C9592ECB48A300A6D601 /* HouseCall */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				ADEE96B12ECD5DEC00B27484 /* Exceptions for "HouseCall" folder in "HouseCall" target */,
+			);
 			path = HouseCall;
 			sourceTree = "<group>";
 		};
@@ -397,6 +410,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HouseCall/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HouseCall;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.medical";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "HouseCall uses Face ID to securely protect your health information and verify your identity.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -428,6 +445,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HouseCall/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HouseCall;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.medical";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "HouseCall uses Face ID to securely protect your health information and verify your identity.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

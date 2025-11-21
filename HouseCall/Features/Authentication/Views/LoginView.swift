@@ -8,8 +8,9 @@
 import SwiftUI
 
 struct LoginView: View {
-    @StateObject private var viewModel = LoginViewModel()
+    @State private var viewModel = LoginViewModel()
     @State private var showingSignUp = false
+    @EnvironmentObject var authService: AuthenticationService
 
     var body: some View {
         NavigationView {
@@ -137,6 +138,12 @@ struct LoginView: View {
         }
         .sheet(isPresented: $showingSignUp) {
             SignUpView()
+        }
+        .onChange(of: authService.isAuthenticated) { isAuth in
+            if isAuth {
+                print("🟢 LoginView detected authentication, closing sheet")
+                showingSignUp = false
+            }
         }
     }
 }

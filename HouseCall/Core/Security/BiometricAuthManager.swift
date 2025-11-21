@@ -121,6 +121,8 @@ class BiometricAuthManager {
             return .touchID
         case .none:
             return .none
+        case .opticID:
+            return .faceID // Optic ID on Vision Pro, treat similarly to Face ID
         @unknown default:
             return .none
         }
@@ -271,6 +273,22 @@ class BiometricAuthManager {
             return .failed("Authentication cannot be performed in non-interactive mode")
         case .appCancel:
             return .systemCancel
+        case .touchIDNotAvailable:
+            return .notAvailable
+        case .touchIDNotEnrolled:
+            return .notEnrolled
+        case .touchIDLockout:
+            return .biometricLockout
+        case .invalidDimensions:
+            return .failed("Invalid dimensions")
+        #if os(watchOS)
+        case .watchNotAvailable:
+            return .notAvailable
+        #endif
+        #if os(iOS)
+        case .companionNotAvailable:
+            return .notAvailable
+        #endif
         @unknown default:
             return .unknown(error)
         }

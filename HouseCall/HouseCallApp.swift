@@ -45,48 +45,92 @@ struct RootView: View {
     }
 }
 
-// MARK: - Main App View (Placeholder for AI Chat)
+// MARK: - Main App View (AI Chat Interface)
 
 struct MainAppView: View {
     @EnvironmentObject var authService: AuthenticationService
+    @Environment(\.managedObjectContext) private var viewContext
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 24) {
-                Text("🏥 HouseCall")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+        TabView {
+            // Conversations Tab
+            conversationsTab
+                .tabItem {
+                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                }
 
-                Text("AI Healthcare Assistant")
-                    .font(.title2)
+            // Profile Tab
+            profileTab
+                .tabItem {
+                    Label("Profile", systemImage: "person.circle")
+                }
+        }
+    }
+
+    // MARK: - Tabs
+
+    private var conversationsTab: some View {
+        Group {
+            if let user = authService.getCurrentUser(), let userId = user.id {
+                ConversationListView(
+                    userId: userId,
+                    conversationRepository: CoreDataConversationRepository(context: viewContext),
+                    messageRepository: CoreDataMessageRepository(context: viewContext)
+                )
+            } else {
+                Text("Unable to load conversations")
                     .foregroundColor(.secondary)
+            }
+        }
+    }
 
+    private var profileTab: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                // User Info Section
                 if let user = authService.getCurrentUser() {
-                    VStack(spacing: 8) {
-                        Text("Welcome!")
-                            .font(.headline)
+                    VStack(spacing: 16) {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundColor(.blue)
 
-                        Text(user.email ?? "")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                        VStack(spacing: 8) {
+                            if let fullName = try? authService.getCurrentUserFullName() {
+                                Text(fullName)
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                            }
 
-                        if let fullName = try? authService.getCurrentUserFullName() {
-                            Text(fullName)
-                                .font(.title3)
-                                .fontWeight(.medium)
+                            Text(user.email ?? "")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
                         }
                     }
                     .padding()
-                    .background(Color.blue.opacity(0.1))
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.systemBackground))
                     .cornerRadius(12)
+                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
                 }
 
                 Spacer()
 
-                Text("AI Chat Interface Coming Soon")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-                    .padding()
+                // App Info
+                VStack(spacing: 8) {
+                    Text("🏥 HouseCall")
+                        .font(.title3)
+                        .fontWeight(.bold)
+
+                    Text("AI Healthcare Assistant")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Text("HIPAA-Compliant • Encrypted • Secure")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                        .padding(.top, 4)
+                }
+                .padding()
 
                 Spacer()
 
@@ -107,7 +151,7 @@ struct MainAppView: View {
                 .padding(.horizontal)
             }
             .padding()
-            .navigationTitle("HouseCall")
+            .navigationTitle("Profile")
         }
     }
 }

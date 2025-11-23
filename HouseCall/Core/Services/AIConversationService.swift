@@ -433,38 +433,99 @@ class AIConversationService: ObservableObject {
             }
 
         case .failure(let error):
-            errorMessage = error.localizedDescription
+            // Check if we have a partial response to save
+            let hasPartialResponse = !streamingText.isEmpty
 
-            // Log failure
-            auditLogger.log(
-                eventType: .aiInteractionFailed,
-                userId: userId,
-                details: AuditEventDetails(
-                    errorMessage: error.localizedDescription,
-                    additionalInfo: [
-                        "conversationId": conversationId.uuidString,
-                        "provider": providerType.rawValue
-                    ]
-                )
-            )
+            if hasPartialResponse {
+                // Save partial response for network interruptions
+                do {
+                    try messageRepository.updateMessageContent(
+                        id: messageId,
+                        content: streamingText,
+                        complete: false,  // Mark as incomplete
+                        tokenCount: nil
+                    )
 
-            // Remove failed message from UI and Core Data
-            if let index = messages.firstIndex(where: { $0.id == messageId }) {
-                messages.remove(at: index)
-            }
+                    // Update error message to indicate partial save
+                    errorMessage = "\(error.localizedDescription) (Partial response saved)"
 
-            do {
-                try messageRepository.deleteMessage(id: messageId)
-            } catch {
-                // Log deletion failure
+                    // Log partial save
+                    auditLogger.log(
+                        eventType: .aiStreamingInterrupted,
+                        userId: userId,
+                        details: AuditEventDetails(
+                            message: "Streaming interrupted, partial response saved",
+                            additionalInfo: [
+                                "conversationId": conversationId.uuidString,
+                                "provider": providerType.rawValue,
+                                "hasPartialResponse": "true"
+                            ]
+                        )
+                    )
+
+                    // Keep message in UI to show partial content
+                    if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                        // Refresh from Core Data
+                        if let updatedMessage = try messageRepository.fetchMessage(id: messageId) {
+                            messages[index] = updatedMessage
+                        }
+                    }
+                } catch {
+                    // If we can't save partial, fall back to deleting
+                    errorMessage = error.localizedDescription
+
+                    if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                        messages.remove(at: index)
+                    }
+
+                    do {
+                        try messageRepository.deleteMessage(id: messageId)
+                    } catch {
+                        auditLogger.log(
+                            eventType: .dataDeleted,
+                            userId: userId,
+                            details: AuditEventDetails(
+                                errorMessage: "Failed to delete incomplete message",
+                                additionalInfo: ["messageId": messageId.uuidString]
+                            )
+                        )
+                    }
+                }
+            } else {
+                // No partial response, delete the placeholder message
+                errorMessage = error.localizedDescription
+
+                // Log failure
                 auditLogger.log(
-                    eventType: .dataDeleted,
+                    eventType: .aiInteractionFailed,
                     userId: userId,
                     details: AuditEventDetails(
-                        errorMessage: "Failed to delete incomplete message",
-                        additionalInfo: ["messageId": messageId.uuidString]
+                        errorMessage: error.localizedDescription,
+                        additionalInfo: [
+                            "conversationId": conversationId.uuidString,
+                            "provider": providerType.rawValue
+                        ]
                     )
                 )
+
+                // Remove failed message from UI and Core Data
+                if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                    messages.remove(at: index)
+                }
+
+                do {
+                    try messageRepository.deleteMessage(id: messageId)
+                } catch {
+                    // Log deletion failure
+                    auditLogger.log(
+                        eventType: .dataDeleted,
+                        userId: userId,
+                        details: AuditEventDetails(
+                            errorMessage: "Failed to delete incomplete message",
+                            additionalInfo: ["messageId": messageId.uuidString]
+                        )
+                    )
+                }
             }
         }
 

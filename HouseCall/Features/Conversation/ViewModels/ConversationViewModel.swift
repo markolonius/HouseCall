@@ -33,6 +33,12 @@ class ConversationViewModel: ObservableObject {
     /// ID of the message currently being streamed
     @Published private(set) var streamingMessageId: UUID?
 
+    /// Current LLM error (for enhanced error handling)
+    @Published private(set) var currentError: LLMError?
+
+    /// Rate limit countdown timer (seconds remaining)
+    @Published private(set) var rateLimitCountdown: Int?
+
     // MARK: - Dependencies
 
     let conversationRepository: ConversationRepositoryProtocol
@@ -45,6 +51,9 @@ class ConversationViewModel: ObservableObject {
 
     // Last sent message for retry functionality
     private var lastMessageContent: String?
+
+    // Rate limit timer
+    private var rateLimitTimer: Timer?
 
     // MARK: - Initialization
 
@@ -135,6 +144,10 @@ class ConversationViewModel: ObservableObject {
     /// Clear the current error message
     func clearError() {
         errorMessage = nil
+        currentError = nil
+        rateLimitCountdown = nil
+        rateLimitTimer?.invalidate()
+        rateLimitTimer = nil
     }
 
     /// Switch to a different LLM provider
@@ -206,43 +219,59 @@ class ConversationViewModel: ObservableObject {
     private func handleError(_ error: Error) {
         // Convert technical errors to user-friendly messages
         if let llmError = error as? LLMError {
+            currentError = llmError
             errorMessage = llmError.userFriendlyMessage
+
+            // Start countdown for rate limit errors
+            if let seconds = llmError.retryAfterSeconds {
+                startRateLimitCountdown(seconds: seconds)
+            }
         } else if let _ = error as? ConversationRepositoryError {
             errorMessage = "Unable to load conversation. Please try again."
+            currentError = nil
         } else if let _ = error as? MessageRepositoryError {
             errorMessage = "Unable to save message. Please try again."
+            currentError = nil
         } else {
             errorMessage = "An unexpected error occurred. Please try again."
+            currentError = nil
         }
 
         // Log error without PHI
         print("ConversationViewModel error: \(error.localizedDescription)")
     }
-}
 
-// MARK: - LLMError Extension
+    /// Start countdown timer for rate limit errors
+    private func startRateLimitCountdown(seconds: Int) {
+        rateLimitCountdown = seconds
+        rateLimitTimer?.invalidate()
 
-extension LLMError {
-    var userFriendlyMessage: String {
-        switch self {
-        case .notConfigured:
-            return "AI service not configured. Please check your settings."
-        case .authentication:
-            return "API authentication failed. Please check your API key in settings."
-        case .network:
-            return "Unable to connect to AI service. Please check your internet connection."
-        case .rateLimit:
-            return "Too many requests. Please wait a moment and try again."
-        case .timeout:
-            return "Request timed out. Please try again."
-        case .invalidResponse:
-            return "Received an invalid response from AI service."
-        case .providerError(let message):
-            return "AI service error: \(message)"
-        case .streamingCancelled:
-            return "AI response was cancelled."
-        case .unknown:
-            return "An unexpected error occurred. Please try again."
+        rateLimitTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+
+            Task { @MainActor in
+                if let countdown = self.rateLimitCountdown, countdown > 0 {
+                    self.rateLimitCountdown = countdown - 1
+
+                    // Update error message with new countdown
+                    self.errorMessage = "Rate limit exceeded. Wait \(countdown - 1)s."
+                } else {
+                    // Countdown complete - clear error and auto-retry if there's a last message
+                    timer.invalidate()
+                    self.rateLimitTimer = nil
+                    self.rateLimitCountdown = nil
+                    self.clearError()
+
+                    // Auto-retry the last message
+                    if let lastContent = self.lastMessageContent {
+                        await self.sendMessage(content: lastContent)
+                    }
+                }
+            }
         }
     }
 }
+

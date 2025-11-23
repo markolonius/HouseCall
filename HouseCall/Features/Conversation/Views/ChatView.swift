@@ -11,6 +11,7 @@ import SwiftUI
 /// Main chat view for displaying and interacting with AI conversations
 struct ChatView: View {
     @ObservedObject var viewModel: ConversationViewModel
+    @ObservedObject private var networkMonitor = NetworkMonitor.shared
 
     @State private var messageText: String = ""
     @State private var showError: Bool = false
@@ -50,6 +51,11 @@ struct ChatView: View {
             }
 
             Divider()
+
+            // MARK: - Network Status Banner
+            if !networkMonitor.isConnected {
+                networkStatusBanner
+            }
 
             // MARK: - Error Banner
             if let errorMessage = viewModel.errorMessage {
@@ -147,44 +153,154 @@ struct ChatView: View {
     }
 
     private func errorBanner(message: String) -> some View {
-        HStack {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: errorIcon)
+                    .foregroundColor(errorColor)
 
-            Text(message)
-                .font(.subheadline)
-                .foregroundColor(.primary)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
 
-            Spacer()
+                Spacer()
 
-            // Retry button for certain errors
-            if message.contains("connect") || message.contains("timeout") {
-                Button("Retry") {
-                    viewModel.retryLastMessage()
+                Button(action: { viewModel.clearError() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
                 }
-                .font(.subheadline)
-                .foregroundColor(.blue)
             }
 
-            // Settings button for auth errors
-            if message.contains("authentication") || message.contains("API") {
-                Button("Settings") {
-                    // Navigate to settings (future implementation)
+            // Action buttons row
+            HStack(spacing: 12) {
+                // Retry button for retryable errors
+                if viewModel.currentError?.isRetryable == true && viewModel.rateLimitCountdown == nil {
+                    Button(action: {
+                        viewModel.clearError()
+                        viewModel.retryLastMessage()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Retry")
+                        }
+                        .font(.subheadline)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
                 }
-                .font(.subheadline)
-                .foregroundColor(.blue)
-            }
 
-            Button(action: { viewModel.clearError() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.secondary)
+                // Settings button for configuration errors
+                if viewModel.currentError?.needsConfiguration == true {
+                    Button(action: {
+                        // Navigate to settings (future implementation)
+                        // For now, just show an alert
+                        print("Navigate to LLM provider settings")
+                    }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Settings")
+                        }
+                        .font(.subheadline)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                // Countdown timer for rate limit
+                if let countdown = viewModel.rateLimitCountdown, countdown > 0 {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Auto-retry in \(countdown)s")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color(.systemGray5))
+                    .cornerRadius(8)
+                }
+
+                Spacer()
             }
         }
         .padding()
-        .background(Color(.systemYellow).opacity(0.2))
+        .background(errorBackgroundColor)
         .cornerRadius(8)
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    private var networkStatusBanner: some View {
+        HStack {
+            Image(systemName: "wifi.slash")
+                .foregroundColor(.orange)
+
+            Text("No internet connection. Messages saved locally.")
+                .font(.caption)
+                .foregroundColor(.primary)
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(.systemOrange).opacity(0.15))
+    }
+
+    // MARK: - Error UI Helpers
+
+    private var errorIcon: String {
+        guard let error = viewModel.currentError else {
+            return "exclamationmark.triangle.fill"
+        }
+
+        switch error {
+        case .authenticationFailed, .notConfigured, .invalidConfiguration:
+            return "key.slash"
+        case .networkError, .connectionLost:
+            return "wifi.slash"
+        case .rateLimit:
+            return "clock.fill"
+        case .timeout:
+            return "clock.badge.exclamationmark"
+        default:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var errorColor: Color {
+        guard let error = viewModel.currentError else {
+            return .orange
+        }
+
+        switch error {
+        case .authenticationFailed, .notConfigured, .invalidConfiguration:
+            return .red
+        case .rateLimit:
+            return .orange
+        default:
+            return .orange
+        }
+    }
+
+    private var errorBackgroundColor: Color {
+        guard let error = viewModel.currentError else {
+            return Color(.systemYellow).opacity(0.2)
+        }
+
+        switch error {
+        case .authenticationFailed, .notConfigured, .invalidConfiguration:
+            return Color(.systemRed).opacity(0.15)
+        case .rateLimit:
+            return Color(.systemOrange).opacity(0.15)
+        default:
+            return Color(.systemYellow).opacity(0.2)
+        }
     }
 
     private var providerBadge: some View {
@@ -236,7 +352,11 @@ struct ChatView: View {
     }
 
     private var canSend: Bool {
-        !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isStreaming
+        let hasText = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let notStreaming = !viewModel.isStreaming
+        let notRateLimited = viewModel.rateLimitCountdown == nil
+
+        return hasText && notStreaming && notRateLimited
     }
 
     // MARK: - Actions

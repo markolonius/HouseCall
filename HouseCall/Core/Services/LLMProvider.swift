@@ -81,48 +81,97 @@ enum LLMError: Error, LocalizedError {
     case notConfigured
     case invalidConfiguration
     case streamingError(String)
+    case connectionLost(partialResponse: String?)
 
     var errorDescription: String? {
         switch self {
         case .authenticationFailed:
-            return "API authentication failed. Please check your settings."
+            return "API authentication failed. Check settings."
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "Unable to connect to AI service"
         case .invalidResponse:
             return "Received invalid response from AI service."
         case .rateLimit(let seconds):
             if let seconds = seconds {
-                return "Rate limit exceeded. Please wait \(seconds) seconds."
+                return "Rate limit exceeded. Wait \(seconds)s."
             } else {
-                return "Rate limit exceeded. Please try again later."
+                return "Rate limit exceeded. Please wait."
             }
         case .timeout:
-            return "Request timed out. Please try again."
+            return "Request timed out. Retry?"
         case .cancelled:
             return "Request was cancelled."
         case .providerError(let statusCode, let message):
-            return "Provider error (\(statusCode)): \(message)"
+            return "AI service error (\(statusCode))"
         case .notConfigured:
-            return "Provider is not configured. Please add your API key in settings."
+            return "API authentication failed. Check settings."
         case .invalidConfiguration:
-            return "Invalid provider configuration. Please check your settings."
+            return "API authentication failed. Check settings."
         case .streamingError(let message):
-            return "Streaming error: \(message)"
+            return "Connection error occurred"
+        case .connectionLost:
+            return "Connection lost"
+        }
+    }
+
+    /// User-friendly message for UI display
+    var userFriendlyMessage: String {
+        switch self {
+        case .authenticationFailed, .notConfigured, .invalidConfiguration:
+            return "API authentication failed. Check settings."
+        case .networkError:
+            return "Unable to connect to AI service"
+        case .invalidResponse:
+            return "Received an invalid response from AI service."
+        case .rateLimit(let seconds):
+            if let seconds = seconds {
+                return "Rate limit exceeded. Wait \(seconds)s."
+            } else {
+                return "Rate limit exceeded. Please wait."
+            }
+        case .timeout:
+            return "Request timed out. Retry?"
+        case .cancelled:
+            return "Request was cancelled."
+        case .providerError:
+            return "AI service temporarily unavailable"
+        case .streamingError, .connectionLost:
+            return "Connection lost"
         }
     }
 
     /// Whether this error should be retried
     var isRetryable: Bool {
         switch self {
-        case .networkError, .timeout, .rateLimit:
+        case .networkError, .timeout, .rateLimit, .connectionLost, .streamingError:
             return true
         case .authenticationFailed, .notConfigured, .invalidConfiguration, .cancelled:
             return false
         case .providerError(let statusCode, _):
             // Retry on 5xx errors, not on 4xx
             return statusCode >= 500
-        case .invalidResponse, .streamingError:
+        case .invalidResponse:
             return false
+        }
+    }
+
+    /// Whether this error should show a Settings navigation button
+    var needsConfiguration: Bool {
+        switch self {
+        case .authenticationFailed, .notConfigured, .invalidConfiguration:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Get retry delay in seconds for rate limit errors
+    var retryAfterSeconds: Int? {
+        switch self {
+        case .rateLimit(let seconds):
+            return seconds
+        default:
+            return nil
         }
     }
 }

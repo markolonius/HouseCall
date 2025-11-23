@@ -50,83 +50,83 @@
 ## Phase 2: LLM Provider Layer (API Integration)
 
 ### Task 2.1: Define LLM Provider protocol
-- [ ] Create `LLMProvider.swift` protocol in `Core/Services/`
-- [ ] Define protocol methods:
-  - [ ] `streamCompletion(messages:onChunk:onComplete:) async throws`
-  - [ ] `cancelStreaming()`
-  - [ ] Property: `providerType: LLMProviderType`
-  - [ ] Property: `isConfigured: Bool`
-- [ ] Create supporting types:
-  - [ ] `LLMProviderType` enum (openai, claude, custom)
-  - [ ] `ChatMessage` struct (role, content)
-  - [ ] `MessageRole` enum (system, user, assistant)
-  - [ ] `LLMError` enum (authentication, network, rateLimit, timeout, etc.)
+- [x] Create `LLMProvider.swift` protocol in `Core/Services/`
+- [x] Define protocol methods:
+  - [x] `streamCompletion(messages:onChunk:onComplete:) async throws`
+  - [x] `cancelStreaming()`
+  - [x] Property: `providerType: LLMProviderType`
+  - [x] Property: `isConfigured: Bool`
+- [x] Create supporting types:
+  - [x] `LLMProviderType` enum (openai, claude, custom)
+  - [x] `ChatMessage` struct (role, content)
+  - [x] `MessageRole` enum (system, user, assistant)
+  - [x] `LLMError` enum (authentication, network, rateLimit, timeout, etc.)
 
-**Validation**: Protocol compiles, types are well-defined
+**Validation**: ✅ Protocol compiles, types are well-defined
 
 ---
 
 ### Task 2.2: Implement OpenAI provider
-- [ ] Create `OpenAIProvider.swift` in `Core/Services/LLMProviders/`
-- [ ] Implement `LLMProvider` protocol
-- [ ] Add OpenAI-specific configuration:
-  - [ ] API key retrieval from KeychainManager
-  - [ ] Model selection (gpt-4, gpt-3.5-turbo)
-  - [ ] Base URL: `https://api.openai.com/v1/chat/completions`
-- [ ] Implement SSE streaming:
-  - [ ] Create `SSEParser.swift` to parse Server-Sent Events
-  - [ ] Handle `data:` lines and `[DONE]` marker
-  - [ ] Extract token deltas from JSON chunks
-- [ ] Add error handling:
-  - [ ] Parse OpenAI error responses
-  - [ ] Handle rate limiting (HTTP 429)
-  - [ ] Implement retry logic with exponential backoff
+- [x] Create `OpenAIProvider.swift` in `Core/Services/LLMProviders/`
+- [x] Implement `LLMProvider` protocol
+- [x] Add OpenAI-specific configuration:
+  - [x] API key retrieval from KeychainManager
+  - [x] Model selection (gpt-4, gpt-3.5-turbo)
+  - [x] Base URL: `https://api.openai.com/v1/chat/completions`
+- [x] Implement SSE streaming:
+  - [x] Create `SSEParser.swift` to parse Server-Sent Events
+  - [x] Handle `data:` lines and `[DONE]` marker
+  - [x] Extract token deltas from JSON chunks
+- [x] Add error handling:
+  - [x] Parse OpenAI error responses
+  - [x] Handle rate limiting (HTTP 429)
+  - [x] Implement retry logic with exponential backoff
 
-**Validation**: Unit tests mock OpenAI API, verify streaming parsing, error handling
+**Validation**: ✅ Unit tests mock OpenAI API, verify streaming parsing, error handling
 
 ---
 
 ### Task 2.3: Implement Anthropic Claude provider
-- [ ] Create `ClaudeProvider.swift` in `Core/Services/LLMProviders/`
-- [ ] Implement `LLMProvider` protocol
-- [ ] Add Claude-specific configuration:
-  - [ ] API key from Keychain
-  - [ ] Headers: `x-api-key`, `anthropic-version: 2023-06-01`
-  - [ ] Base URL: `https://api.anthropic.com/v1/messages`
-- [ ] Implement SSE streaming for Claude format
-- [ ] Handle Claude-specific error codes
-- [ ] Add retry logic
+- [x] Create `ClaudeProvider.swift` in `Core/Services/LLMProviders/`
+- [x] Implement `LLMProvider` protocol
+- [x] Add Claude-specific configuration:
+  - [x] API key from Keychain
+  - [x] Headers: `x-api-key`, `anthropic-version: 2023-06-01`
+  - [x] Base URL: `https://api.anthropic.com/v1/messages`
+- [x] Implement SSE streaming for Claude format
+- [x] Handle Claude-specific error codes
+- [x] Add retry logic
 
-**Validation**: Unit tests verify Claude API compatibility, streaming works
+**Validation**: ✅ Unit tests verify Claude API compatibility, streaming works
 
 ---
 
 ### Task 2.4: Implement Custom provider support
-- [ ] Create `CustomProvider.swift` in `Core/Services/LLMProviders/`
-- [ ] Implement OpenAI-compatible endpoint support
-- [ ] Add configuration:
-  - [ ] Custom base URL (user-provided)
-  - [ ] Optional API key
-  - [ ] Model selection
-- [ ] Handle various self-hosted formats (Ollama, llama.cpp, etc.)
-- [ ] Test with local Ollama instance if available
+- [x] Create `CustomProvider.swift` in `Core/Services/LLMProviders/`
+- [x] Implement OpenAI-compatible endpoint support
+- [x] Add configuration:
+  - [x] Custom base URL (user-provided)
+  - [x] Optional API key
+  - [x] Model selection
+- [x] Handle various self-hosted formats (Ollama, llama.cpp, etc.)
+- [x] Test with local Ollama instance if available
 
-**Validation**: Integration test with Ollama or mock server verifies compatibility
+**Validation**: ✅ Integration test with Ollama or mock server verifies compatibility
 
 ---
 
 ### Task 2.5: Create LLM Provider configuration manager
-- [ ] Create `LLMProviderConfig.swift` struct in `Core/Services/`
-- [ ] Define configuration storage:
-  - [ ] Provider type
-  - [ ] Model name
-  - [ ] System prompt
-  - [ ] Temperature, max_tokens
-- [ ] Store API keys in KeychainManager
-- [ ] Store non-sensitive config in UserDefaults
-- [ ] Implement provider switching logic
+- [x] Create `LLMProviderConfig.swift` struct in `Core/Services/`
+- [x] Define configuration storage:
+  - [x] Provider type
+  - [x] Model name
+  - [x] System prompt
+  - [x] Temperature, max_tokens
+- [x] Store API keys in KeychainManager
+- [x] Store non-sensitive config in UserDefaults
+- [x] Implement provider switching logic
 
-**Validation**: Configuration persists across app launches, API keys stored securely
+**Validation**: ✅ Configuration persists across app launches, API keys stored securely
 
 ---
 

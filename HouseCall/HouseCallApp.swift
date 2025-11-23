@@ -13,12 +13,47 @@ struct HouseCallApp: App {
     let persistenceController = PersistenceController.shared
 
     @StateObject private var authService = AuthenticationService.shared
+    @StateObject private var screenProtectionManager = ScreenProtectionManager.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .environmentObject(authService)
+                .environmentObject(screenProtectionManager)
+                .overlay {
+                    // Privacy screen overlay when app is backgrounded
+                    if screenProtectionManager.showPrivacyScreen {
+                        PrivacyScreenView()
+                    }
+                }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            handleScenePhaseChange(from: oldPhase, to: newPhase)
+        }
+    }
+
+    // MARK: - Scene Phase Handling
+
+    /// Handles scene phase transitions for privacy protection
+    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        switch newPhase {
+        case .active:
+            // App became active - hide privacy screen
+            screenProtectionManager.showPrivacyScreen = false
+
+        case .inactive:
+            // App is transitioning (e.g., during app switcher)
+            // Show privacy screen immediately to hide sensitive content
+            screenProtectionManager.showPrivacyScreen = true
+
+        case .background:
+            // App moved to background - ensure privacy screen is shown
+            screenProtectionManager.showPrivacyScreen = true
+
+        @unknown default:
+            break
         }
     }
 }

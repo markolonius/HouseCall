@@ -86,71 +86,74 @@ struct MainAppView: View {
 
     private var profileTab: some View {
         NavigationStack {
-            VStack(spacing: 24) {
+            List {
                 // User Info Section
-                if let user = authService.getCurrentUser() {
-                    VStack(spacing: 16) {
-                        Image(systemName: "person.circle.fill")
-                            .font(.system(size: 80))
-                            .foregroundColor(.blue)
+                Section {
+                    if let user = authService.getCurrentUser() {
+                        HStack(spacing: 16) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.blue)
 
-                        VStack(spacing: 8) {
-                            if let fullName = try? authService.getCurrentUserFullName() {
-                                Text(fullName)
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
+                            VStack(alignment: .leading, spacing: 4) {
+                                if let fullName = try? authService.getCurrentUserFullName() {
+                                    Text(fullName)
+                                        .font(.title3)
+                                        .fontWeight(.semibold)
+                                }
+
+                                Text(user.email ?? "")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
                             }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
 
-                            Text(user.email ?? "")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                // Settings Section
+                Section(header: Text("Settings")) {
+                    NavigationLink(destination: LLMProviderSettingsView()) {
+                        Label("AI Provider Settings", systemImage: "cpu")
+                    }
+                }
+
+                // App Info Section
+                Section(header: Text("About")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("🏥 HouseCall")
+                            .font(.headline)
+                            .fontWeight(.bold)
+
+                        Text("AI Healthcare Assistant")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        Text("HIPAA-Compliant • Encrypted • Secure")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                            .padding(.top, 4)
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                // Logout Section
+                Section {
+                    Button(action: {
+                        Task {
+                            try? await authService.logout()
+                        }
+                    }) {
+                        HStack {
+                            Spacer()
+                            Text("Logout")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.red)
+                            Spacer()
                         }
                     }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.systemBackground))
-                    .cornerRadius(12)
-                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
                 }
-
-                Spacer()
-
-                // App Info
-                VStack(spacing: 8) {
-                    Text("🏥 HouseCall")
-                        .font(.title3)
-                        .fontWeight(.bold)
-
-                    Text("AI Healthcare Assistant")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-
-                    Text("HIPAA-Compliant • Encrypted • Secure")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                        .padding(.top, 4)
-                }
-                .padding()
-
-                Spacer()
-
-                // Logout Button
-                Button(action: {
-                    Task {
-                        try? await authService.logout()
-                    }
-                }) {
-                    Text("Logout")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.red.opacity(0.8))
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                }
-                .padding(.horizontal)
             }
-            .padding()
             .navigationTitle("Profile")
         }
     }

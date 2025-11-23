@@ -28,9 +28,35 @@
         <attribute name="deviceId" attributeType="String"/>
     </entity>
 
+    <!-- Conversation entity for AI chat conversations -->
+    <entity name="Conversation" representedClassName="Conversation" syncable="YES" codeGenerationType="class">
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="userId" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="encryptedTitle" attributeType="Binary"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="isActive" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="llmProvider" attributeType="String" defaultValueString="openai"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Message" inverseName="conversation" inverseEntity="Message"/>
+    </entity>
+
+    <!-- Message entity for AI chat messages -->
+    <entity name="Message" representedClassName="Message" syncable="YES" codeGenerationType="class">
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="conversationId" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="role" attributeType="String"/>
+        <attribute name="encryptedContent" attributeType="Binary"/>
+        <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="tokenCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="streamingComplete" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <relationship name="conversation" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Conversation" inverseName="messages" inverseEntity="Conversation"/>
+    </entity>
+
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
         <element name="User" positionX="-63" positionY="90" width="128" height="179"/>
         <element name="AuditLogEntry" positionX="135" positionY="90" width="128" height="134"/>
+        <element name="Conversation" positionX="-63" positionY="270" width="128" height="164"/>
+        <element name="Message" positionX="135" positionY="270" width="128" height="164"/>
     </elements>
 </model>

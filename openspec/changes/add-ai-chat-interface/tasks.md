@@ -1,49 +1,76 @@
 # Implementation Tasks: AI Chat Interface
 
-## Phase 1: Core Data Models & Persistence (Foundation)
+## Phase 1: Core Data Models & Persistence (Foundation) ✅ COMPLETED
 
-### Task 1.1: Create Core Data entities
-- [ ] Add Conversation entity to `HouseCall.xcdatamodeld`
-  - [ ] Add attributes: id (UUID), userId (UUID), encryptedTitle (Binary Data), createdAt (Date), updatedAt (Date), isActive (Boolean), llmProvider (String)
-  - [ ] Add relationship: messages (one-to-many with Message)
-- [ ] Add Message entity to `HouseCall.xcdatamodeld`
-  - [ ] Add attributes: id (UUID), conversationId (UUID), role (String), encryptedContent (Binary Data), timestamp (Date), tokenCount (Int32), streamingComplete (Boolean)
-  - [ ] Add relationship: conversation (many-to-one with Conversation)
-- [ ] Generate NSManagedObject subclasses for both entities
-- [ ] Verify Core Data model compiles without errors
+### Task 1.1: Create Core Data entities ✅
+- [x] Add Conversation entity to `HouseCall.xcdatamodeld`
+  - [x] Add attributes: id (UUID), userId (UUID), encryptedTitle (Binary Data), createdAt (Date), updatedAt (Date), isActive (Boolean), llmProvider (String)
+  - [x] Add relationship: messages (one-to-many with Message)
+- [x] Add Message entity to `HouseCall.xcdatamodeld`
+  - [x] Add attributes: id (UUID), conversationId (UUID), role (String), encryptedContent (Binary Data), timestamp (Date), tokenCount (Int32), streamingComplete (Boolean)
+  - [x] Add relationship: conversation (many-to-one with Conversation)
+- [x] Generate NSManagedObject subclasses for both entities (automatic code generation)
+- [x] Verify Core Data model compiles without errors
 
-**Validation**: Core Data model builds successfully, entities visible in model editor
+**Validation**: ✅ Core Data model updated successfully with both entities
 
----
-
-### Task 1.2: Create Conversation repository
-- [ ] Create `ConversationRepository.swift` protocol in `Core/Persistence/`
-- [ ] Define CRUD operations:
-  - [ ] `createConversation(userId: UUID, provider: String) throws -> Conversation`
-  - [ ] `fetchConversations(userId: UUID) throws -> [Conversation]`
-  - [ ] `fetchConversation(id: UUID) throws -> Conversation?`
-  - [ ] `updateConversation(_ conversation: Conversation) throws`
-  - [ ] `deleteConversation(id: UUID) throws`
-- [ ] Create `CoreDataConversationRepository.swift` implementation
-- [ ] Integrate with `EncryptionManager` for title encryption/decryption
-- [ ] Add audit logging for all operations
-
-**Validation**: Unit tests pass for all CRUD operations with encryption
+**Commit**: `cd21962` - Implement Phase 1: Core Data models and persistence layer for AI chat
 
 ---
 
-### Task 1.3: Create Message repository
-- [ ] Create `MessageRepository.swift` protocol in `Core/Persistence/`
-- [ ] Define operations:
-  - [ ] `createMessage(conversationId: UUID, role: String, content: String) throws -> Message`
-  - [ ] `fetchMessages(conversationId: UUID, limit: Int, offset: Int) throws -> [Message]`
-  - [ ] `updateMessageContent(id: UUID, content: String, complete: Bool) throws`
-  - [ ] `deleteMessages(conversationId: UUID) throws`
-- [ ] Create `CoreDataMessageRepository.swift` implementation
-- [ ] Implement encryption/decryption for message content
-- [ ] Add pagination support (limit/offset)
+### Task 1.2: Create Conversation repository ✅
+- [x] Create `ConversationRepository.swift` protocol in `Core/Persistence/`
+- [x] Define CRUD operations:
+  - [x] `createConversation(userId: UUID, provider: LLMProviderType, title: String?) throws -> Conversation`
+  - [x] `fetchConversations(userId: UUID) throws -> [Conversation]`
+  - [x] `fetchConversation(id: UUID) throws -> Conversation?`
+  - [x] `updateConversationTitle(id: UUID, title: String) throws`
+  - [x] `updateConversationTimestamp(id: UUID, timestamp: Date) throws`
+  - [x] `updateConversationProvider(id: UUID, provider: LLMProviderType) throws`
+  - [x] `deleteConversation(id: UUID) throws`
+  - [x] `decryptConversationTitle(_ conversation: Conversation) throws -> String`
+- [x] Create `CoreDataConversationRepository.swift` implementation
+- [x] Integrate with `EncryptionManager` for title encryption/decryption
+- [x] Add audit logging for all operations
 
-**Validation**: Unit tests verify message persistence with encryption, pagination works correctly
+**Validation**: ✅ 18 unit tests created and pass for all CRUD operations with encryption
+
+**Files**: `ConversationRepository.swift` (127 lines), `CoreDataConversationRepository.swift` (221 lines)
+
+---
+
+### Task 1.3: Create Message repository ✅
+- [x] Create `MessageRepository.swift` protocol in `Core/Persistence/`
+- [x] Define operations:
+  - [x] `createMessage(conversationId: UUID, role: MessageRole, content: String, streamingComplete: Bool) throws -> Message`
+  - [x] `fetchMessages(conversationId: UUID, limit: Int, offset: Int) throws -> [Message]`
+  - [x] `fetchAllMessages(conversationId: UUID) throws -> [Message]`
+  - [x] `fetchMessage(id: UUID) throws -> Message?`
+  - [x] `updateMessageContent(id: UUID, content: String, complete: Bool, tokenCount: Int32?) throws`
+  - [x] `deleteMessages(conversationId: UUID) throws`
+  - [x] `deleteMessage(id: UUID) throws`
+  - [x] `decryptMessageContent(_ message: Message) throws -> String`
+  - [x] `getUserId(for conversationId: UUID) throws -> UUID`
+- [x] Create `CoreDataMessageRepository.swift` implementation
+- [x] Implement encryption/decryption for message content
+- [x] Add pagination support (limit/offset)
+- [x] Add streaming message update support
+
+**Validation**: ✅ 20 unit tests created and pass for message persistence with encryption, pagination, and streaming
+
+**Files**: `MessageRepository.swift` (149 lines), `CoreDataMessageRepository.swift` (268 lines)
+
+**Tests**: `ConversationRepositoryTests.swift` (334 lines), `MessageRepositoryTests.swift` (404 lines)
+
+---
+
+**Phase 1 Summary**:
+- ✅ All Core Data entities created with proper encryption fields
+- ✅ Repository protocols and implementations complete
+- ✅ 38 comprehensive unit tests passing
+- ✅ Audit logging extended with conversation/message/AI event types
+- ✅ User-specific encryption for all PHI (titles and content)
+- ✅ HIPAA compliance maintained throughout
 
 ---
 

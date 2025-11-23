@@ -47,6 +47,24 @@ enum AuditEventType: String, Codable {
     case dataAccessed = "data_accessed"
     case dataModified = "data_modified"
     case dataDeleted = "data_deleted"
+
+    // Conversation Events
+    case conversationCreated = "conversation_created"
+    case conversationAccessed = "conversation_accessed"
+    case conversationDeleted = "conversation_deleted"
+    case conversationProviderSwitched = "conversation_provider_switched"
+
+    // Message Events
+    case messageCreated = "message_created"
+    case messageSent = "message_sent"
+    case messageReceived = "message_received"
+
+    // AI Interaction Events
+    case aiInteraction = "ai_interaction"
+    case aiInteractionFailed = "ai_interaction_failed"
+    case aiStreamingStarted = "ai_streaming_started"
+    case aiStreamingCompleted = "ai_streaming_completed"
+    case aiStreamingInterrupted = "ai_streaming_interrupted"
 }
 
 /// Details that can be included with audit events

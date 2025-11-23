@@ -14,6 +14,8 @@ struct ChatView: View {
 
     @State private var messageText: String = ""
     @State private var showError: Bool = false
+    @State private var showProviderMenu: Bool = false
+    @State private var showSettings: Bool = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -63,8 +65,38 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                providerBadge
+                Menu {
+                    // Provider selection
+                    ForEach(LLMProviderType.allCases, id: \.self) { provider in
+                        Button(action: {
+                            Task {
+                                await viewModel.switchProvider(to: provider)
+                            }
+                        }) {
+                            HStack {
+                                Text(provider.displayName)
+                                if currentProviderType == provider {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    // Settings button
+                    Button(action: {
+                        showSettings = true
+                    }) {
+                        Label("Settings", systemImage: "gear")
+                    }
+                } label: {
+                    providerBadge
+                }
             }
+        }
+        .sheet(isPresented: $showSettings) {
+            LLMProviderSettingsView()
         }
         .onAppear {
             viewModel.loadMessages()
@@ -213,6 +245,15 @@ struct ChatView: View {
         } catch {
             return "Chat"
         }
+    }
+
+    private var currentProviderType: LLMProviderType {
+        guard let conversation = viewModel.currentConversation,
+              let providerString = conversation.llmProvider,
+              let providerType = LLMProviderType(rawValue: providerString) else {
+            return .openai
+        }
+        return providerType
     }
 
     private var providerName: String {

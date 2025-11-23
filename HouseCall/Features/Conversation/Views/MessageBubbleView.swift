@@ -18,6 +18,36 @@ struct MessageBubbleView: View {
     @State private var showTimestamp: Bool = false
 
     var body: some View {
+        // System messages are displayed differently (centered)
+        if isSystemMessage {
+            systemMessageView
+        } else {
+            regularMessageView
+        }
+    }
+
+    // MARK: - Subviews
+
+    private var systemMessageView: some View {
+        HStack {
+            Spacer()
+            Text(decryptedContent)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .onAppear {
+            decryptMessage()
+        }
+    }
+
+    private var regularMessageView: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if isUserMessage {
                 Spacer()
@@ -79,6 +109,10 @@ struct MessageBubbleView: View {
 
     private var isUserMessage: Bool {
         message.role == "user"
+    }
+
+    private var isSystemMessage: Bool {
+        message.role == "system"
     }
 
     private var bubbleColor: Color {

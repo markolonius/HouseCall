@@ -71,11 +71,13 @@ These shape every decision below:
                        │
           ┌────────────▼─────────────┐
           │  External (BAA required) │
-          │  - LLM provider(s)       │
           │  - LabCorp / Quest       │
           │  - CommonWell/Carequality│
           │  - Surescripts (Phase 2) │
           └──────────────────────────┘
+
+   Note: LLM inference (MedGemma) is self-hosted inside the AWS
+   boundary, not an external dependency — see §6 and §8.
 ```
 
 ### Components
@@ -131,8 +133,9 @@ AI Agent Runtime detects urgent signal
 ```
 
 ### PHI handling rules
-- LLM provider calls: only the minimum necessary context, over a BAA-covered
-  endpoint. No PHI to any provider without a signed BAA.
+- LLM inference: MedGemma is self-hosted inside the AWS BAA boundary, so PHI
+  never leaves it for a third party. Calls still send only the minimum necessary
+  context, over TLS, with no PHI in plaintext logs.
 - S3 media (heart/lung audio, skin images): server-side encryption, presigned
   URLs with short TTL, never public.
 - Audit store: append-only, no deletes, no PHI content (metadata + IDs only —
@@ -193,12 +196,18 @@ is enforced in the Core API, covered by tests, and audited on every transition.
 ## 5. Authentication & Authorization
 
 ### Identity
+Identity is **self-hosted Zitadel** (open source), run inside the AWS BAA
+boundary — no third-party identity vendor, no additional BAA. Chosen for native
+multi-tenant organizations (matching the DTC / practice / health-system tenancy
+model) and language-agnostic OIDC. If the backend stack lands on TypeScript,
+`better-auth` is a viable lighter-weight alternative; the final lock rides with
+the backend-stack decision.
+
 - **Patients**: existing iOS auth (password / passcode / biometric) becomes the
-  *local unlock*. A separate cloud identity (token-based) authenticates API
-  calls. Candidate: AWS Cognito, with the local biometric gating access to the
-  stored refresh token.
-- **Physicians**: web app auth. MFA mandatory. Likely Cognito or an OIDC
-  provider with a healthcare tier.
+  *local unlock*. A separate cloud identity (Zitadel-issued OIDC tokens)
+  authenticates API calls, with the local biometric gating access to the stored
+  refresh token.
+- **Physicians**: web app auth via Zitadel. MFA mandatory.
 
 ### Authorization model
 - Role-based: `patient`, `physician`, `practice_admin`, `system_admin`.
@@ -209,9 +218,9 @@ is enforced in the Core API, covered by tests, and audited on every transition.
 - Every authorization decision that touches PHI emits an audit event.
 
 ### Open decisions
-- Cognito vs. self-managed OIDC — leaning Cognito for the managed-services
-  principle, pending a check that it covers physician MFA + license metadata
-  cleanly.
+- Physician license metadata (states licensed, NPI, DEA) — stored as Zitadel
+  custom claims/metadata vs. in the Core API `Physician` row. Leaning Core API
+  row as the source of truth, with Zitadel holding only auth identity.
 - How biometric local unlock binds to the cloud refresh token without weakening
   either.
 
@@ -221,6 +230,20 @@ is enforced in the Core API, covered by tests, and audited on every transition.
 
 This is the highest-risk component and the least specified in PROJECT.md. Phase 1
 deliberately ships a **reduced** version.
+
+### Model
+The agent runs on **MedGemma** (Google's open-weights medical model), **self-
+hosted** — production on AWS GPU inference (SageMaker endpoint or EC2/EKS + vLLM)
+inside the AWS BAA boundary, development on a locally hosted model. Both are
+served behind an OpenAI-compatible interface, so the same client code runs in
+both environments (and aligns with the existing iOS `CustomProvider`). PHI never
+leaves the AWS BAA boundary, so there is no model-vendor BAA. Phase 1 is
+text-only, which MedGemma's text variant covers; the multimodal choice is
+deferred to Phase 2 with the multimodal exam feature.
+
+MedGemma is shipped by Google as a developer model that *requires validation* —
+it is not a cleared clinical product. This is exactly why the physician-in-loop
+invariant and the eval harness below are non-negotiable.
 
 ### Phase 1: reactive agent
 - Stateless request/response: patient sends a message → agent responds, using
@@ -246,9 +269,10 @@ deliberately ships a **reduced** version.
   but it must exist.
 
 ### Open decisions
-- Model selection (multimodal: vision/audio/text) — Phase 1 is text-only, so
-  this can be a text-capable model under a BAA. Multimodal choice deferred to
-  Phase 2 with the multimodal exam feature.
+- GPU inference platform — SageMaker endpoint vs. EC2/EKS + vLLM. Pick on cost
+  and ops overhead once the backend stack is chosen.
+- MedGemma variant/size for Phase 1 (4B vs 27B text) — pick against the eval set
+  and latency budget.
 - Agent framework vs. hand-rolled orchestration — recommend hand-rolled and
   minimal for Phase 1; revisit if the proactive loop justifies a framework.
 
@@ -281,9 +305,10 @@ All under an executed BAA. Managed services preferred.
 | Compute | ECS Fargate or Lambda | Core API + agent runtime; Fargate likely for long-lived WebSocket |
 | System of record | RDS PostgreSQL | Encrypted, Multi-AZ; row-level security for tenancy |
 | Media | S3 | SSE-KMS, presigned URLs, lifecycle policies |
-| Identity | Cognito | Patient + physician pools (pending §5 decision) |
+| Identity | Self-hosted Zitadel (ECS Fargate) | OIDC; native multi-tenant orgs; runs inside the BAA boundary |
+| LLM inference | Self-hosted MedGemma — SageMaker endpoint or EC2/EKS + vLLM (GPU) | OpenAI-compatible interface; inside the BAA boundary |
 | Async jobs | SQS + worker tasks | Integration workers (HealthKit, labs) |
-| Secrets | Secrets Manager | LLM keys, integration credentials |
+| Secrets | Secrets Manager | Integration credentials, DB creds, signing keys |
 | Audit store | RDS (append-only table) or dedicated store | No deletes; consider separate DB |
 | Observability | CloudWatch | No PHI in logs — enforced |
 | Push | APNs (via SNS) | Recommendation-delivered, escalation alerts |
@@ -303,7 +328,7 @@ Each is a hard gate with an owner and a target date — none are "do later."
 |---|---|---|
 | AWS BAA executed | Any cloud PHI storage | [ ] not started |
 | HIPAA security risk assessment | Production launch | [ ] not started |
-| LLM provider BAA | Any PHI to an LLM | [ ] not started |
+| LLM inference in the BAA boundary | Any PHI to the model | [x] resolved — MedGemma self-hosted on AWS; covered by the AWS BAA, no separate model-vendor BAA |
 | Lab integration BAAs (LabCorp, Quest) | Lab result ingestion | [ ] Phase 1 deferred candidate |
 | FDA SaMD analysis | Clinical claims in marketing | [ ] not started — assumption, not analysis |
 | State telehealth / physician licensing review | First patient in any state | [ ] not started |
@@ -322,14 +347,17 @@ say and do.
 ## 10. What Has to Be True Before Phase 1 Code Starts
 
 1. AWS account with BAA executed.
-2. This architecture reviewed and the §5 (identity) and §6 (model selection)
-   open decisions closed.
-3. State launch list decided (drives the physician licensing review and the
-   `Physician.statesLicensed` model).
-4. LLM provider chosen with a BAA in place.
-5. A Phase 1 exit-criteria definition agreed (see PROJECT.md Phase 1).
+2. Backend stack chosen for the Core API + AI Agent Runtime — this also
+   finalizes the identity choice (Zitadel, or `better-auth` if the stack is
+   TypeScript; see §5).
+3. Launch state confirmed — set by the supervising physician's licensure once
+   that physician is confirmed; drives the telehealth licensing review and the
+   `Physician.statesLicensed` model.
+4. A Phase 1 exit-criteria definition agreed (see PROJECT.md Phase 1).
 
-Until 1, 2, and 4 are done, the iOS app cannot talk to a real backend and Phase 1
-is blocked. Extending the iOS app in isolation (e.g., HealthKit capture into
-local Core Data) is possible in parallel but is throwaway-risk work until the
-sync layer exists.
+The §5 (identity) and §6 (model selection) open decisions are now closed:
+self-hosted Zitadel for identity and self-hosted MedGemma for inference, both
+inside the AWS BAA boundary. Until 1 and 2 are done, the iOS app cannot talk to
+a real backend and Phase 1 is blocked. Extending the iOS app in isolation (e.g.,
+HealthKit capture into local Core Data) is possible in parallel but is
+throwaway-risk work until the sync layer exists.

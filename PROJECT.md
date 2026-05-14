@@ -122,7 +122,10 @@ AI evaluates patient
 
 ### Cloud
 - **Target:** AWS (HIPAA-eligible services)
-- **Approach:** Managed services where possible (RDS, S3, Cognito, etc.)
+- **Approach:** Managed services where possible (RDS, S3, API Gateway, etc.)
+- **Identity and LLM inference are self-hosted *within* the AWS BAA boundary**
+  (open-source Zitadel for identity, self-hosted MedGemma for inference) — no
+  third-party identity or model vendor, so no additional BAA beyond AWS.
 - BAA with AWS required before any PHI touches the cloud
 
 ### Compliance
@@ -153,7 +156,7 @@ chat with their AI agent, the agent drafts a recommendation, a physician reviews
 it, and the approved result reaches the patient. Everything else is deferred.
 
 **In scope:**
-- [ ] HIPAA-compliant AWS infrastructure (RDS, S3, API Gateway, Cognito — per ARCHITECTURE.md §8)
+- [ ] HIPAA-compliant AWS infrastructure (RDS, S3, API Gateway, self-hosted Zitadel — per ARCHITECTURE.md §8)
 - [ ] Core API service: patients, conversations, messages, recommendations, protocols
 - [ ] Cloud identity + tenant isolation (DTC tenant only for Phase 1)
 - [ ] Patient iOS app: cloud sync layer added to existing chat + auth (text chat only)
@@ -203,11 +206,27 @@ it, and the approved result reaches the patient. Everything else is deferred.
 ## Open Questions
 
 ### Blocks Phase 1
-- [ ] Telehealth regulations: which states to launch in first? Physician licensing coverage?
-- [ ] Identity provider decision (Cognito vs. OIDC) — see ARCHITECTURE.md §5
-- [ ] LLM provider selection + BAA (text-only for Phase 1)
-- [ ] Membership / subscription pricing model
 - [ ] FDA SaMD analysis — confirm the "below threshold" assumption with a real review
+- [ ] Backend stack for the Core API + AI Agent Runtime (also finalizes the
+      identity choice — see Resolved below)
+
+### Resolved (2026-05-14)
+- **Launch state:** single state for launch; the specific state is TBD and will
+  be set once the supervising physician is confirmed (the physician's licensure
+  determines it). The `Physician.statesLicensed` model still supports multiple.
+- **Identity provider:** self-hosted **Zitadel** (open source) — runs inside the
+  AWS BAA boundary, so no third-party identity vendor and no extra BAA. Chosen
+  for native multi-tenant organizations and language-agnostic OIDC. *Caveat:* if
+  the backend stack lands on TypeScript, `better-auth` is a viable lighter-weight
+  alternative; the final lock rides with the backend-stack decision above.
+- **LLM provider:** **MedGemma**, self-hosted. Production runs on AWS GPU
+  inference (SageMaker endpoint or EC2/EKS + vLLM) inside the AWS BAA boundary —
+  PHI never leaves it, so no model-vendor BAA. Development uses a locally hosted
+  model behind the same OpenAI-compatible interface. Phase 1 is text-only, which
+  MedGemma's text variant covers. Note: Google ships MedGemma as a developer
+  model requiring validation, not a clinical product — this reinforces the
+  physician-in-loop design and makes the §6 eval harness non-optional.
+- **Pricing:** flat monthly membership.
 
 ### Blocks Phase 2
 - [ ] E-prescribing vendor selection (Surescripts or equivalent)

@@ -207,18 +207,21 @@ it, and the approved result reaches the patient. Everything else is deferred.
 
 ### Blocks Phase 1
 - [ ] FDA SaMD analysis — confirm the "below threshold" assumption with a real review
-- [ ] Backend stack for the Core API + AI Agent Runtime (also finalizes the
-      identity choice — see Resolved below)
 
 ### Resolved (2026-05-14)
 - **Launch state:** single state for launch; the specific state is TBD and will
   be set once the supervising physician is confirmed (the physician's licensure
   determines it). The `Physician.statesLicensed` model still supports multiple.
+- **Backend stack:** **Go**, with a minimal / assemble-libraries approach
+  (lightweight router + hand-picked libraries, not a batteries-included
+  framework). Chosen for the long-lived WebSocket / concurrency workload, fast
+  iteration (aligns with "ship first"), single static-binary deploys to Fargate,
+  and shared language with Zitadel. Covers the Core API, AI Agent Runtime, and
+  Integration Workers.
 - **Identity provider:** self-hosted **Zitadel** (open source) — runs inside the
   AWS BAA boundary, so no third-party identity vendor and no extra BAA. Chosen
-  for native multi-tenant organizations and language-agnostic OIDC. *Caveat:* if
-  the backend stack lands on TypeScript, `better-auth` is a viable lighter-weight
-  alternative; the final lock rides with the backend-stack decision above.
+  for native multi-tenant organizations and language-agnostic OIDC. Confirmed
+  now that the backend stack is Go.
 - **LLM provider:** **MedGemma**, self-hosted. Production runs on AWS GPU
   inference (SageMaker endpoint or EC2/EKS + vLLM) inside the AWS BAA boundary —
   PHI never leaves it, so no model-vendor BAA. Development uses a locally hosted

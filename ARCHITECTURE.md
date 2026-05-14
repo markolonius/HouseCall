@@ -92,6 +92,16 @@ These shape every decision below:
 | **Integration Workers** | Async jobs pulling/pushing external data (HealthKit deltas, lab results) | New build — HealthKit only in Phase 1 |
 | **Data Layer** | PostgreSQL system of record, S3 for media, append-only audit store | New build |
 
+### Backend stack
+
+All three backend components — Core API Service, AI Agent Runtime, and
+Integration Workers — are built in **Go**, using a minimal / assemble-libraries
+approach rather than a batteries-included framework: a lightweight router
+(stdlib `net/http` or `chi`), a maintained WebSocket library, and `pgx` for
+PostgreSQL are representative choices. Go fits the long-lived WebSocket workload,
+deploys as a single static binary to Fargate, and shares a language with
+Zitadel. The specific library set is finalized at backend kickoff.
+
 ---
 
 ## 3. PHI Data Flow
@@ -199,9 +209,8 @@ is enforced in the Core API, covered by tests, and audited on every transition.
 Identity is **self-hosted Zitadel** (open source), run inside the AWS BAA
 boundary — no third-party identity vendor, no additional BAA. Chosen for native
 multi-tenant organizations (matching the DTC / practice / health-system tenancy
-model) and language-agnostic OIDC. If the backend stack lands on TypeScript,
-`better-auth` is a viable lighter-weight alternative; the final lock rides with
-the backend-stack decision.
+model) and language-agnostic OIDC. Confirmed now that the backend stack is Go
+(see §2); Zitadel is also written in Go, so it shares the platform's language.
 
 - **Patients**: existing iOS auth (password / passcode / biometric) becomes the
   *local unlock*. A separate cloud identity (Zitadel-issued OIDC tokens)
@@ -270,7 +279,7 @@ invariant and the eval harness below are non-negotiable.
 
 ### Open decisions
 - GPU inference platform — SageMaker endpoint vs. EC2/EKS + vLLM. Pick on cost
-  and ops overhead once the backend stack is chosen.
+  and ops overhead.
 - MedGemma variant/size for Phase 1 (4B vs 27B text) — pick against the eval set
   and latency budget.
 - Agent framework vs. hand-rolled orchestration — recommend hand-rolled and
@@ -302,7 +311,7 @@ All under an executed BAA. Managed services preferred.
 | Concern | Service | Notes |
 |---|---|---|
 | API edge | API Gateway | TLS, throttling, routing |
-| Compute | ECS Fargate or Lambda | Core API + agent runtime; Fargate likely for long-lived WebSocket |
+| Compute | ECS Fargate or Lambda | Core API + agent runtime as Go static binaries; Fargate likely for long-lived WebSocket |
 | System of record | RDS PostgreSQL | Encrypted, Multi-AZ; row-level security for tenancy |
 | Media | S3 | SSE-KMS, presigned URLs, lifecycle policies |
 | Identity | Self-hosted Zitadel (ECS Fargate) | OIDC; native multi-tenant orgs; runs inside the BAA boundary |
@@ -347,17 +356,14 @@ say and do.
 ## 10. What Has to Be True Before Phase 1 Code Starts
 
 1. AWS account with BAA executed.
-2. Backend stack chosen for the Core API + AI Agent Runtime — this also
-   finalizes the identity choice (Zitadel, or `better-auth` if the stack is
-   TypeScript; see §5).
-3. Launch state confirmed — set by the supervising physician's licensure once
+2. Launch state confirmed — set by the supervising physician's licensure once
    that physician is confirmed; drives the telehealth licensing review and the
    `Physician.statesLicensed` model.
-4. A Phase 1 exit-criteria definition agreed (see PROJECT.md Phase 1).
+3. A Phase 1 exit-criteria definition agreed (see PROJECT.md Phase 1).
 
-The §5 (identity) and §6 (model selection) open decisions are now closed:
-self-hosted Zitadel for identity and self-hosted MedGemma for inference, both
-inside the AWS BAA boundary. Until 1 and 2 are done, the iOS app cannot talk to
-a real backend and Phase 1 is blocked. Extending the iOS app in isolation (e.g.,
-HealthKit capture into local Core Data) is possible in parallel but is
-throwaway-risk work until the sync layer exists.
+The backend stack (§2 — Go), §5 (identity — Zitadel), and §6 (model selection —
+MedGemma) decisions are now closed; Zitadel and MedGemma both run inside the AWS
+BAA boundary. Until item 1 is done, the iOS app cannot talk to a real backend
+and Phase 1 is blocked. Extending the iOS app in isolation (e.g., HealthKit
+capture into local Core Data) is possible in parallel but is throwaway-risk work
+until the sync layer exists.

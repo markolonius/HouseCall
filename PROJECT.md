@@ -141,24 +141,54 @@ AI evaluates patient
 
 ## Phased Roadmap (Draft)
 
-### Phase 1 — Foundation
-- [ ] Patient iOS app (voice + text chat, basic health dashboard)
-- [ ] Physician web app (recommendation queue, basic protocol management)
-- [ ] AI agent (text/voice, basic monitoring loop)
-- [ ] HealthKit integration
-- [ ] Apple Health / patient portal record pull
-- [ ] CGM + basic peripheral support
-- [ ] Lab result ingestion (LabCorp, Quest)
-- [ ] HIPAA-compliant AWS infrastructure
-- [ ] DTC subscription model
+> System architecture for the platform is specified separately in
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md). Phase 1 cannot start until the
+> prerequisites in that document's §10 are met (AWS BAA, identity decision,
+> LLM provider + BAA).
+
+### Phase 1 — Cloud Backbone & Physician-in-Loop MVP
+
+**Goal:** prove the core loop end-to-end with one integration — a patient can
+chat with their AI agent, the agent drafts a recommendation, a physician reviews
+it, and the approved result reaches the patient. Everything else is deferred.
+
+**In scope:**
+- [ ] HIPAA-compliant AWS infrastructure (RDS, S3, API Gateway, Cognito — per ARCHITECTURE.md §8)
+- [ ] Core API service: patients, conversations, messages, recommendations, protocols
+- [ ] Cloud identity + tenant isolation (DTC tenant only for Phase 1)
+- [ ] Patient iOS app: cloud sync layer added to existing chat + auth (text chat only)
+- [ ] Physician web app: patient panel + recommendation review queue (approve / reject / modify)
+- [ ] AI agent: **reactive only** — responds to patient messages, drafts recommendations in `PENDING_REVIEW`
+- [ ] Physician-in-loop state machine enforced and audited (ARCHITECTURE.md §4)
+- [ ] HealthKit integration (HR, SpO2, sleep, activity) — the one Phase 1 data source
+- [ ] DTC subscription model (billing + physician matching)
+
+**Explicitly deferred to Phase 1.5 / Phase 2** (was previously bundled into Phase 1):
+- Voice chat, proactive monitoring loop, CGM/BP peripherals, patient portal pulls
+  (CommonWell/Carequality), lab ingestion, practice/health-system tenancy
+
+**Phase 1 exit criteria:**
+- [ ] 1 supervising physician + 5–10 pilot patients live on the platform
+- [ ] Full loop works: patient message → AI recommendation → physician review → patient delivery
+- [ ] Zero AI output reaches a patient without a physician state transition (verified by audit log)
+- [ ] HealthKit data syncs to the cloud and is visible in the physician panel
+- [ ] HIPAA security risk assessment + penetration test passed
+- [ ] All ARCHITECTURE.md §9 compliance gates marked "Phase 1" are closed
+
+### Phase 1.5 — Data Breadth
+- [ ] Voice chat interaction
+- [ ] CGM + basic Bluetooth peripheral support (BP, thermometer)
+- [ ] Patient portal record pull (CommonWell, Carequality)
+- [ ] Lab result ingestion (LabCorp, Quest) — ingestion only, no ordering
 
 ### Phase 2 — Clinical Depth
 - [ ] Multimodal exam (phone mic / camera assessment)
+- [ ] Proactive AI monitoring loop (scheduled check-ins, threshold evaluation)
 - [ ] AI-assisted protocol builder
 - [ ] Lab ordering (physician approval workflow)
 - [ ] E-prescribing
 - [ ] Escalation / triage layer
-- [ ] Practice licensing model
+- [ ] Practice licensing model (multi-provider tenancy)
 - [ ] Radiology result ingestion
 
 ### Phase 3 — Scale & Hardware
@@ -172,15 +202,23 @@ AI evaluates patient
 
 ## Open Questions
 
+### Blocks Phase 1
 - [ ] Telehealth regulations: which states to launch in first? Physician licensing coverage?
-- [ ] E-prescribing vendor selection
-- [ ] Accessibility requirements and WCAG compliance scope
-- [ ] Pediatric roadmap
+- [ ] Identity provider decision (Cognito vs. OIDC) — see ARCHITECTURE.md §5
+- [ ] LLM provider selection + BAA (text-only for Phase 1)
 - [ ] Membership / subscription pricing model
-- [ ] Device kit hardware sourcing and fulfillment
+- [ ] FDA SaMD analysis — confirm the "below threshold" assumption with a real review
+
+### Blocks Phase 2
+- [ ] E-prescribing vendor selection (Surescripts or equivalent)
 - [ ] AI model selection (multimodal — vision, audio, text)
 - [ ] Radiology integration vendors and timeline
 
+### Not yet blocking
+- [ ] Accessibility requirements and WCAG compliance scope (needed before production launch)
+- [ ] Pediatric roadmap
+- [ ] Device kit hardware sourcing and fulfillment
+
 ---
 
-*Last updated: 2026-03-11*
+*Last updated: 2026-05-14*

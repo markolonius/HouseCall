@@ -1,0 +1,37 @@
+context: |
+  iOS healthcare app (HIPAA-compliant). Swift 5.x, SwiftUI, Core Data.
+
+  Testing: Swift Testing only — `@Test` macro + `#expect()`. NOT XCTest, NOT `XCTAssert*`.
+  Tests use in-memory Core Data. Run on iPhone 15 simulator.
+
+  Encryption (enforced everywhere PHI is stored or transmitted):
+  - At rest: AES-256-GCM, HKDF user-specific key derivation, NSFileProtectionComplete
+  - Keychain: kSecAttrAccessibleWhenUnlockedThisDeviceOnly — no iCloud sync
+  - Passwords: PBKDF2-SHA256, 600,000 iterations
+  - PHI never appears in logs, errors, analytics, or debug output
+
+  Error handling: No fatalError() — all errors must use typed throws.
+  Session: 5-minute inactivity timeout with auto-logout.
+
+  Architecture: MVVM + Repository pattern + protocol-based DI.
+  New data access → implement existing repository protocol, not a concrete type.
+  File layout: Features/<Name>/Views/ + ViewModels/; services in Core/Services/.
+
+  LLM providers (OpenAI, Claude, Custom) use SSE streaming via SSEParser.
+  Custom/self-hosted endpoints must be OpenAI-compatible API format.
+  API keys stored in Keychain via LLMProviderConfigManager — never in code or UserDefaults.
+
+rules:
+  spec:
+    - Use Given/When/Then for every acceptance scenario
+    - If the feature touches PHI, name the data type(s) and state which encryption layer applies
+    - Call out whether a new Core Data entity is needed or an existing one is modified
+
+  task:
+    - Any task that creates or reads PHI must include an audit logging step
+    - Tasks adding a new repository must implement the existing protocol (not ship a concrete standalone class)
+    - New LLM provider integrations must verify SSEParser compatibility
+
+  design:
+    - Prefer extending Core/Services/ over adding new top-level modules
+    - State BAA requirement for any third-party service that will process PHI

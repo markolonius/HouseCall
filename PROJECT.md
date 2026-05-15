@@ -122,7 +122,10 @@ AI evaluates patient
 
 ### Cloud
 - **Target:** AWS (HIPAA-eligible services)
-- **Approach:** Managed services where possible (RDS, S3, Cognito, etc.)
+- **Approach:** Managed services where possible (RDS, S3, API Gateway, etc.)
+- **Identity and LLM inference are self-hosted *within* the AWS BAA boundary**
+  (open-source Zitadel for identity, self-hosted MedGemma for inference) — no
+  third-party identity or model vendor, so no additional BAA beyond AWS.
 - BAA with AWS required before any PHI touches the cloud
 
 ### Compliance
@@ -141,24 +144,54 @@ AI evaluates patient
 
 ## Phased Roadmap (Draft)
 
-### Phase 1 — Foundation
-- [ ] Patient iOS app (voice + text chat, basic health dashboard)
-- [ ] Physician web app (recommendation queue, basic protocol management)
-- [ ] AI agent (text/voice, basic monitoring loop)
-- [ ] HealthKit integration
-- [ ] Apple Health / patient portal record pull
-- [ ] CGM + basic peripheral support
-- [ ] Lab result ingestion (LabCorp, Quest)
-- [ ] HIPAA-compliant AWS infrastructure
-- [ ] DTC subscription model
+> System architecture for the platform is specified separately in
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md). Phase 1 cannot start until the
+> prerequisites in that document's §10 are met (AWS BAA, identity decision,
+> LLM provider + BAA).
+
+### Phase 1 — Cloud Backbone & Physician-in-Loop MVP
+
+**Goal:** prove the core loop end-to-end with one integration — a patient can
+chat with their AI agent, the agent drafts a recommendation, a physician reviews
+it, and the approved result reaches the patient. Everything else is deferred.
+
+**In scope:**
+- [ ] HIPAA-compliant AWS infrastructure (RDS, S3, API Gateway, self-hosted Zitadel — per ARCHITECTURE.md §8)
+- [ ] Core API service: patients, conversations, messages, recommendations, protocols
+- [ ] Cloud identity + tenant isolation (DTC tenant only for Phase 1)
+- [ ] Patient iOS app: cloud sync layer added to existing chat + auth (text chat only)
+- [ ] Physician web app: patient panel + recommendation review queue (approve / reject / modify)
+- [ ] AI agent: **reactive only** — responds to patient messages, drafts recommendations in `PENDING_REVIEW`
+- [ ] Physician-in-loop state machine enforced and audited (ARCHITECTURE.md §4)
+- [ ] HealthKit integration (HR, SpO2, sleep, activity) — the one Phase 1 data source
+- [ ] DTC subscription model (billing + physician matching)
+
+**Explicitly deferred to Phase 1.5 / Phase 2** (was previously bundled into Phase 1):
+- Voice chat, proactive monitoring loop, CGM/BP peripherals, patient portal pulls
+  (CommonWell/Carequality), lab ingestion, practice/health-system tenancy
+
+**Phase 1 exit criteria:**
+- [ ] 1 supervising physician + 5–10 pilot patients live on the platform
+- [ ] Full loop works: patient message → AI recommendation → physician review → patient delivery
+- [ ] Zero AI output reaches a patient without a physician state transition (verified by audit log)
+- [ ] HealthKit data syncs to the cloud and is visible in the physician panel
+- [ ] HIPAA security risk assessment + penetration test passed
+- [ ] All ARCHITECTURE.md §9 compliance gates marked "Phase 1" are closed
+
+### Phase 1.5 — Data Breadth
+- [ ] Voice chat interaction
+- [ ] CGM + basic Bluetooth peripheral support (BP, thermometer)
+- [ ] Patient portal record pull (CommonWell, Carequality)
+- [ ] Lab result ingestion (LabCorp, Quest) — ingestion only, no ordering
 
 ### Phase 2 — Clinical Depth
 - [ ] Multimodal exam (phone mic / camera assessment)
+- [ ] Proactive AI monitoring loop (scheduled check-ins, threshold evaluation)
 - [ ] AI-assisted protocol builder
 - [ ] Lab ordering (physician approval workflow)
 - [ ] E-prescribing
 - [ ] Escalation / triage layer
-- [ ] Practice licensing model
+- [ ] Practice licensing model (multi-provider tenancy)
 - [ ] Radiology result ingestion
 
 ### Phase 3 — Scale & Hardware
@@ -172,15 +205,46 @@ AI evaluates patient
 
 ## Open Questions
 
-- [ ] Telehealth regulations: which states to launch in first? Physician licensing coverage?
-- [ ] E-prescribing vendor selection
-- [ ] Accessibility requirements and WCAG compliance scope
-- [ ] Pediatric roadmap
-- [ ] Membership / subscription pricing model
-- [ ] Device kit hardware sourcing and fulfillment
+### Blocks Phase 1
+- [ ] FDA SaMD analysis — confirm the "below threshold" assumption with a real review
+
+### Resolved (2026-05-14)
+
+> Full alternatives-considered rationale for the technical decisions below is in
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md) §11 Decision Log.
+
+- **Launch state:** single state for launch; the specific state is TBD and will
+  be set once the supervising physician is confirmed (the physician's licensure
+  determines it). The `Physician.statesLicensed` model still supports multiple.
+- **Backend stack:** **Go**, with a minimal / assemble-libraries approach
+  (lightweight router + hand-picked libraries, not a batteries-included
+  framework). Chosen for the long-lived WebSocket / concurrency workload, fast
+  iteration (aligns with "ship first"), single static-binary deploys to Fargate,
+  and shared language with Zitadel. Covers the Core API, AI Agent Runtime, and
+  Integration Workers.
+- **Identity provider:** self-hosted **Zitadel** (open source) — runs inside the
+  AWS BAA boundary, so no third-party identity vendor and no extra BAA. Chosen
+  for native multi-tenant organizations and language-agnostic OIDC. Confirmed
+  now that the backend stack is Go.
+- **LLM provider:** **MedGemma**, self-hosted. Production runs on AWS GPU
+  inference (SageMaker endpoint or EC2/EKS + vLLM) inside the AWS BAA boundary —
+  PHI never leaves it, so no model-vendor BAA. Development uses a locally hosted
+  model behind the same OpenAI-compatible interface. Phase 1 is text-only, which
+  MedGemma's text variant covers. Note: Google ships MedGemma as a developer
+  model requiring validation, not a clinical product — this reinforces the
+  physician-in-loop design and makes the §6 eval harness non-optional.
+- **Pricing:** flat monthly membership.
+
+### Blocks Phase 2
+- [ ] E-prescribing vendor selection (Surescripts or equivalent)
 - [ ] AI model selection (multimodal — vision, audio, text)
 - [ ] Radiology integration vendors and timeline
 
+### Not yet blocking
+- [ ] Accessibility requirements and WCAG compliance scope (needed before production launch)
+- [ ] Pediatric roadmap
+- [ ] Device kit hardware sourcing and fulfillment
+
 ---
 
-*Last updated: 2026-03-11*
+*Last updated: 2026-05-14*

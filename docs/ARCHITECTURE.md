@@ -442,3 +442,50 @@ an OpenAI-compatible interface.
 **Rationale:** PHI never leaves the AWS BAA boundary, so no model-vendor BAA is
 needed; the OpenAI-compatible vLLM endpoint means the same client code runs in
 development (local model) and production.
+
+---
+
+## 12. Production Security Prerequisites (Out of MVP Scope)
+
+The local-development MVP (`add-cloud-platform-mvp`) does not implement the
+controls below — it runs on a developer machine with no real PHI. The controls
+in this section **must be in place before the first real patient connects** to
+any production environment. Healthcare is now the most-attacked sector
+(Change Healthcare 2024, ~$2.87B impact; CommonSpirit; Ascension; AHA reports
+ransomware as the #1 hospital cyber threat), and the difference between orgs
+that survive and orgs that pay is the discipline of doing all of the following,
+not any single one.
+
+- **Backups** — 3-2-1-1 with one immutable/offline copy. S3 Object Lock in
+  compliance mode in a separate AWS account whose root is break-glass. Backup
+  credentials unreachable from the production plane. Restore drills on a
+  defined cadence (not just backup-success metrics).
+- **Identity & access** — phishing-resistant MFA (WebAuthn/FIDO2) for all
+  staff, admins, and remote access; SSO with conditional access; just-in-time
+  admin elevation; no shared accounts. Builds on ADR-002 (Zitadel).
+- **Endpoints & email** — EDR on every endpoint (CrowdStrike / SentinelOne /
+  Defender for Endpoint); modern email security with attachment sandboxing and
+  URL rewriting; DMARC/SPF/DKIM enforced; Office macros disabled by policy.
+- **Network** — clinical, corporate, and development planes segmented;
+  production data tier unreachable from user-laptop subnets; egress
+  restrictions; no internet-exposed RDP or legacy remote-access gateways.
+- **Patching** — CISA KEV-driven SLA; minimized internet exposure of services.
+- **Supply chain** — SBOMs, dependency scanning, signed container images,
+  pinned base images. GitHub branch protection, required reviews, signed
+  commits, no force-push to main. Secrets in AWS Secrets Manager / KMS,
+  rotated. CI runners without standing production credentials.
+- **Detection & response** — central audit log → SIEM with 6-year retention;
+  behavioural detections (mass file reads/writes, privilege escalation,
+  impossible travel); 24/7 monitoring (MDR vendor unless an in-house SOC
+  exists); pre-signed DFIR retainer; written and rehearsed IR plan; HHS/OCR
+  60-day breach-notification playbook.
+- **Third-party / BAA** — every PHI-adjacent vendor under BAA and security
+  review (model provider, hosting, identity, email). Vendor-compromise plan
+  (Change Healthcare cascade lesson).
+- **Framework** — HHS HPH Cybersecurity Performance Goals (CPGs) as the
+  explicit compliance target, with NIST CSF 2.0 or HITRUST CSF as the overall
+  map and HICP/405(d) as the healthcare-specific playbook (recognized safe
+  harbor under HHS enforcement discretion).
+
+Tracked as the OpenSpec change `add-production-security-hardening` (backlog
+stub).

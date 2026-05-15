@@ -100,7 +100,8 @@ approach rather than a batteries-included framework: a lightweight router
 (stdlib `net/http` or `chi`), a maintained WebSocket library, and `pgx` for
 PostgreSQL are representative choices. Go fits the long-lived WebSocket workload,
 deploys as a single static binary to Fargate, and shares a language with
-Zitadel. The specific library set is finalized at backend kickoff.
+Zitadel (see §11 Decision Log for the Go-vs-Rust evaluation). The specific
+library set is finalized at backend kickoff.
 
 ---
 
@@ -211,6 +212,8 @@ boundary — no third-party identity vendor, no additional BAA. Chosen for nativ
 multi-tenant organizations (matching the DTC / practice / health-system tenancy
 model) and language-agnostic OIDC. Confirmed now that the backend stack is Go
 (see §2); Zitadel is also written in Go, so it shares the platform's language.
+See §11 Decision Log for the alternatives considered (Hanko, Keycloak, Authentik,
+Ory) and why each was ruled out.
 
 - **Patients**: existing iOS auth (password / passcode / biometric) becomes the
   *local unlock*. A separate cloud identity (Zitadel-issued OIDC tokens)
@@ -253,6 +256,8 @@ deferred to Phase 2 with the multimodal exam feature.
 MedGemma is shipped by Google as a developer model that *requires validation* —
 it is not a cleared clinical product. This is exactly why the physician-in-loop
 invariant and the eval harness below are non-negotiable.
+
+See §11 Decision Log for the hosting alternatives considered.
 
 ### Phase 1: reactive agent
 - Stateless request/response: patient sends a message → agent responds, using
@@ -367,3 +372,73 @@ BAA boundary. Until item 1 is done, the iOS app cannot talk to a real backend
 and Phase 1 is blocked. Extending the iOS app in isolation (e.g., HealthKit
 capture into local Core Data) is possible in parallel but is throwaway-risk work
 until the sync layer exists.
+
+---
+
+## 11. Decision Log
+
+Architecturally significant decisions, with the alternatives considered and why
+they were ruled out. New decisions are appended here.
+
+### ADR-001: Backend stack — Go
+**Date:** 2026-05-14 · **Status:** Accepted
+
+**Context:** The backend (Core API, AI Agent Runtime, Integration Workers) is
+greenfield; `openspec/project.md` marked the technology "TBD".
+**Decision:** Build all three backend components in Go, using a minimal /
+assemble-libraries approach rather than a batteries-included framework.
+**Alternatives considered:**
+- *Rust* — by 2026 industry consensus ("Go for the network layer, Rust for the
+  compute-intensive core") this is not a Rust project: the Phase 1 Core API is
+  I/O-bound and model inference is offloaded to a separate vLLM process, so
+  there is no compute-intensive core. Slower iteration and scarcer hiring also
+  cut against PROJECT.md's "ship first" principle.
+- *Zig* — pre-1.0, with an immature web / Postgres / async ecosystem; a
+  liability for a HIPAA backend that must ship and be maintained.
+- *TypeScript* — weaker at long-lived connections; "one language across web app
+  + backend" was not decisive.
+- *Python* — its main draw (ML ecosystem) disappears because the AI Agent
+  Runtime is HTTP orchestration against an OpenAI-compatible endpoint, not ML
+  code.
+**Rationale:** The workload is I/O-bound with heavy WebSocket concurrency, which
+Go fits best; fast compiles and onboarding; single static-binary deploys to
+Fargate; shared language with Zitadel. The one real Rust draw — compile-time
+type-state for the recommendation state machine — is covered in Go by the
+tests + audit approach §4 already commits to.
+
+### ADR-002: Identity provider — self-hosted Zitadel
+**Date:** 2026-05-14 · **Status:** Accepted
+
+**Context:** The platform needs a HIPAA-suitable identity provider that supports
+the multi-tenant invariant (§1) and runs inside the AWS BAA boundary.
+**Decision:** Self-host Zitadel (Apache 2.0), inside the AWS BAA boundary.
+**Alternatives considered:**
+- *Hanko* — strong project (Go, stable, passkey-first, OIDC/SAML/MFA), but its
+  multi-tenancy / organizations / roles are still "in development" on its own
+  roadmap, conflicting with the "multi-tenant from day one" invariant; its
+  backend is also AGPL-3.0.
+- *Keycloak* — mature but Java (off-stack) and heavy to operate.
+- *Authentik* — Python; multi-tenancy is explicitly not a core feature, weak for
+  strict tenant isolation.
+- *Ory* — Hydra is only an OAuth2 token server, not a full identity provider.
+- *AWS Cognito / better-auth* — third-party or stack-coupled; superseded once
+  the Go backend stack was chosen.
+**Rationale:** Zitadel is the only Go-native option built ground-up for the
+`Instance > Organization > Project` hierarchy HouseCall's tenancy model needs,
+with event-sourced audit logs that fit HIPAA, under a permissive license.
+
+### ADR-003: LLM inference hosting — self-hosted MedGemma on AWS
+**Date:** 2026-05-14 · **Status:** Accepted
+
+**Context:** Phase 1 needs a text-capable medical model with no PHI leaving a
+BAA-covered boundary.
+**Decision:** Self-host MedGemma — production on AWS GPU inference (SageMaker
+endpoint or EC2/EKS + vLLM), development on a locally hosted model, both behind
+an OpenAI-compatible interface.
+**Alternatives considered:**
+- *Google Vertex AI Model Garden* — splits infrastructure onto GCP and requires
+  a separate Google BAA.
+- *Third-party inference host* — variable BAA availability and terms.
+**Rationale:** PHI never leaves the AWS BAA boundary, so no model-vendor BAA is
+needed; the OpenAI-compatible vLLM endpoint means the same client code runs in
+development (local model) and production.

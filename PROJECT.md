@@ -209,6 +209,10 @@ it, and the approved result reaches the patient. Everything else is deferred.
 - [ ] FDA SaMD analysis — confirm the "below threshold" assumption with a real review
 
 ### Resolved (2026-05-14)
+
+> Full alternatives-considered rationale for the technical decisions below is in
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md) §11 Decision Log.
+
 - **Launch state:** single state for launch; the specific state is TBD and will
   be set once the supervising physician is confirmed (the physician's licensure
   determines it). The `Physician.statesLicensed` model still supports multiple.

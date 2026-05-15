@@ -32,24 +32,7 @@ struct PersistenceController {
 
     @MainActor
     static let preview: PersistenceController = {
-        let result = PersistenceController(inMemory: true)
-        let viewContext = result.container.viewContext
-
-        // Create sample data for SwiftUI previews
-        for _ in 0..<10 {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-        }
-
-        do {
-            try viewContext.save()
-        } catch {
-            // Proper error handling instead of fatalError
-            print("⚠️ Preview context save error: \(error.localizedDescription)")
-            // Preview errors are non-critical, continue execution
-        }
-
-        return result
+        PersistenceController(inMemory: true)
     }()
 
     let container: NSPersistentContainer

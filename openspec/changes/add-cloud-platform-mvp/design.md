@@ -71,13 +71,27 @@ Every PHI-bearing table carries `tenant_id`. MVP entities (a subset of
 | Table | Key fields |
 |---|---|
 | `tenants` | `id`, `kind` (`dtc` for the MVP), `name` |
-| `patients` | `id`, `tenant_id`, `email`, `full_name`, `created_at` |
-| `physicians` | `id`, `tenant_id`, `email`, `full_name`, `states_licensed` |
+| `patients` | `id`, `tenant_id`, `email`, `full_name`, `state` (USPS code), `created_at` |
+| `physicians` | `id`, `tenant_id`, `email`, `full_name`, `states_licensed` (text[]) |
 | `care_relationships` | `id`, `tenant_id`, `patient_id`, `physician_id`, `active` |
 | `conversations` | `id`, `tenant_id`, `patient_id`, `title`, `created_at`, `updated_at` |
 | `messages` | `id`, `tenant_id`, `conversation_id`, `role`, `content`, `created_at` |
-| `recommendations` | `id`, `tenant_id`, `conversation_id`, `patient_id`, `state`, `draft_content`, `final_content`, `created_at`, `reviewed_by`, `reviewed_at` |
+| `recommendations` | `id`, `tenant_id`, `conversation_id`, `patient_id`, `state`, `payload_type` (`guidance` \| `prescription` \| `lab_order` \| `referral`), `payload` (JSONB), `draft_content`, `final_content`, `created_at`, `reviewed_by`, `reviewed_at` |
 | `audit_events` | `id`, `tenant_id`, `actor_type`, `actor_id`, `event_type`, `metadata` (JSONB, no PHI), `created_at` |
+
+`recommendations.payload_type` is constrained to the four values above; the MVP
+agent only ever writes `guidance` and the `payload` JSONB for that type is
+`{ "text": "<draft>" }`. The other three values are reserved so the prescribing
+slice can land without a schema migration: e.g. a `prescription` payload will
+carry `{ "drug": ..., "strength": ..., "sig": ..., "quantity": ..., "refills": ... }`.
+`draft_content` and `final_content` remain the human-readable text the
+physician sees and the patient receives, derived from the payload.
+
+`patients.state` and `physicians.states_licensed` exist so the state-licensing
+invariant in §3 can be enforced from day one. For the single-state beachhead
+launch every patient row will share one state and every physician will be
+licensed in that state; the check is therefore trivial in practice but the
+schema does not assume single-state.
 
 Tenant scoping is enforced in the `store` layer: every query takes a
 `tenant_id` and there is no query path that omits it. (PostgreSQL row-level
@@ -102,6 +116,10 @@ DRAFT ──► PENDING_REVIEW ──► APPROVED  ──► DELIVERED
   `actor_id`, the decision) in the same DB transaction as the state change.
 - The agent can only ever create a recommendation in `DRAFT` and move it to
   `PENDING_REVIEW`. It has no code path to `APPROVED`/`MODIFIED`/`DELIVERED`.
+- **State-licensing invariant**: the `Transition` function rejects any
+  physician action whose `physician.states_licensed` does not include the
+  `patient.state` for the recommendation's patient. The check is in the same
+  pure function as the lifecycle check so it cannot be forgotten by handlers.
 
 ### 4. Core API Surface
 
@@ -131,11 +149,17 @@ patient and `queue.updated` to the physician.
   (`AGENT_MODEL_BASE_URL`, default `http://localhost:11434/v1`) — the same
   OpenAI-compatible shape the iOS `CustomProvider` already uses, so the request
   format is well understood.
-- On success: creates a `recommendation` row in `DRAFT`, immediately transitions
-  it to `PENDING_REVIEW`, writes the audit event, emits `queue.updated`.
+- On success: creates a `recommendation` row in `DRAFT` with
+  `payload_type = 'guidance'` and `payload = { "text": <model output> }`,
+  immediately transitions it to `PENDING_REVIEW`, writes the audit event, emits
+  `queue.updated`.
 - On model-endpoint failure: no recommendation is created; an
   `ai_interaction_failed` audit event is written; the patient is not shown an
   error masquerading as a clinical response.
+- The runtime knows about exactly one payload type in the MVP (`guidance`).
+  Differentiated payload generation (prescription, lab order, referral) is a
+  follow-on slice; this code path is structured so a new payload type adds an
+  agent strategy, not a redesign of the loop.
 
 ### 6. Physician Web App (`internal/web`)
 
@@ -164,7 +188,10 @@ Message-send flow change in `AIConversationService`:
 3. On success: local message gets its `serverId`, `syncState = synced`.
 4. The AI response is **not** streamed back inline anymore. Instead the app
    listens on the WebSocket (or polls) for `recommendation.delivered` and then
-   shows the delivered content as the assistant message.
+   renders the delivered content as a generic `RecommendationCard` view in the
+   conversation. The card reads `payload_type` so it can dispatch to a
+   typed card view later; for the MVP all rows are `guidance` and render as a
+   single text card.
 5. Offline: step 2 fails → message stays `pending`; a replay pass retries on
    reconnect.
 
@@ -177,12 +204,14 @@ is added instead. The agent-to-model OpenAI-compatible call lives server-side.
 ### 8. Authentication (MVP)
 
 **Decision:** the Core API issues its own short-lived JWT (HMAC-signed) from
-`POST /auth/login`, validated against the `patients` / `physicians` tables.
-Zitadel (ADR-002) is **deferred to the next slice** — wiring full OIDC
-federation is disproportionate for a local-only MVP.
+`POST /auth/login`, validated against the `patients` / `physicians` tables. The
+production identity provider under the AWS-direct hosting decision is **AWS
+Cognito** (ADR-002 — which named Zitadel — is superseded for the AWS path and
+should be revisited in a follow-on ADR). Cognito wiring is **deferred to the
+next slice**: federating OIDC is disproportionate for a local-only MVP.
 **Rationale:** keeps the MVP self-contained and runnable with `docker compose
-up`; the JWT middleware boundary is the same one Zitadel-issued tokens will plug
-into later, so this is a stopgap at the edge, not a throwaway core.
+up`; the JWT middleware boundary is the same one Cognito-issued tokens will
+plug into later, so this is a stopgap at the edge, not a throwaway core.
 **Risk:** the MVP login is not production auth — mitigated by the MVP being
 local-development-only and by isolating all token logic behind one middleware.
 
@@ -193,6 +222,43 @@ one binary). The model server runs outside compose (Ollama/vLLM on the host or
 a separate container), pointed at via `AGENT_MODEL_BASE_URL`. A `Makefile`
 target runs migrations and seeds one tenant, one physician, one patient, and an
 active care relationship so the loop is demoable immediately.
+
+### 10. Production Target & Governance
+
+The MVP runs locally, but the package and interface boundaries are designed
+against a specific production target so the next slice is not a rewrite.
+
+**Production hosting target — AWS direct (HIPAA, with BAA), HIPAA-eligible
+services only:**
+
+| Concern | MVP (local) | Production (AWS) |
+|---|---|---|
+| Identity | HMAC JWT issued by Core API | AWS Cognito (OIDC), JWTs validated by the same middleware |
+| Compute | `cmd/server` binary in Docker Compose | ECS Fargate (or AWS App Runner) running the same binary |
+| Database | PostgreSQL in Compose | RDS for PostgreSQL with KMS encryption at rest |
+| Object storage | n/a in MVP | S3 with KMS, SSE-KMS, no public ACLs |
+| Secrets | env vars in Compose | AWS Secrets Manager |
+| Encryption keys | dev key in env | AWS KMS Customer-Managed Keys, per-tenant key alias |
+| Audit immutability | append-only `audit_events` table | same table + CloudTrail for infra-plane events |
+| Observability | stdout logs | CloudWatch Logs (no PHI), Security Hub, AWS Config baselines |
+
+The Core API code path is identical across both environments — the only
+differences are configuration and the identity middleware. No AWS SDK calls
+appear in the MVP build.
+
+**Governance — Public Benefit Corporation:**
+
+- The PBC's charter purpose prohibits monetizing PHI. This is enforced
+  architecturally rather than only by policy: the data model contains no
+  marketing-analytics surface, no third-party ad-network or attribution
+  hooks, and no export path other than the audited Core API.
+- `audit_events.metadata` is constrained to identifiers and event types; PHI
+  content (message bodies, recommendation payloads, prescriptions) never
+  enters the audit log, so the audit trail itself cannot be exfiltrated as a
+  PHI proxy.
+- Any future capability that could plausibly violate the no-monetization
+  invariant (analytics SDKs, ad networks, third-party data brokers) must
+  ship as its own change proposal with explicit charter review.
 
 ## Testing Strategy
 

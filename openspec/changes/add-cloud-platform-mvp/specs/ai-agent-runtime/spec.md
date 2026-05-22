@@ -54,3 +54,20 @@ Recommendation to `APPROVED`, `MODIFIED`, or `DELIVERED`.
 **When** the draft is complete
 **Then** the recommendation is in `PENDING_REVIEW`
 **And** the runtime has not transitioned it any further
+
+---
+
+### Requirement: Guidance Payload Only In MVP
+
+The AI Agent Runtime SHALL produce Recommendations with `payload_type` =
+`guidance` and SHALL NOT produce `prescription`, `lab_order`, or `referral`
+payloads in this slice. The runtime SHALL be structured so that additional
+payload types can be added as new agent strategies without changing the
+review lifecycle.
+
+#### Scenario: A drafted recommendation is a guidance payload
+
+**Given** the AI Agent Runtime has drafted a recommendation
+**When** the draft is persisted
+**Then** the recommendation's `payload_type` is `guidance`
+**And** the runtime does not write any other `payload_type`

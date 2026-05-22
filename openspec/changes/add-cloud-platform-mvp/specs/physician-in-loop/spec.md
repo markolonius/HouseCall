@@ -73,3 +73,30 @@ change so a transition can never occur without its audit record.
 **Then** an audit event with the actor, action, and timestamp is committed in
 the same transaction
 **And** if the audit write fails, the state change is rolled back
+
+---
+
+### Requirement: State-Licensed Physician Action
+
+A physician SHALL only act on a Recommendation when the physician is licensed
+in the state of residence of the Recommendation's patient. The
+`Transition` function SHALL reject any physician action whose
+`physician.states_licensed` does not contain the `patient.state`, and the
+rejection SHALL produce an audit event without mutating the recommendation.
+
+#### Scenario: An unlicensed physician cannot approve
+
+**Given** a recommendation whose patient resides in a state the acting
+physician is not licensed in
+**When** the physician attempts to approve, modify, or reject it
+**Then** the transition is rejected with an error
+**And** the recommendation's state is unchanged
+**And** an audit event records the denied action
+
+#### Scenario: A licensed physician can act
+
+**Given** a recommendation whose patient resides in a state the acting
+physician is licensed in
+**When** the physician submits a valid review action
+**Then** the transition is permitted to proceed through the usual lifecycle
+rules

@@ -92,3 +92,46 @@ PHI content.
 **When** the operation completes
 **Then** an `AuditEvent` is written with the event type, actor id, and tenant
 **And** the audit event contains no message or recommendation content
+
+---
+
+### Requirement: Typed Recommendation Payload
+
+Every Recommendation SHALL carry a `payload_type` discriminator drawn from the
+set `guidance`, `prescription`, `lab_order`, `referral`, and a `payload` value
+matching that type's shape. The MVP agent SHALL only produce `guidance`
+payloads; the other types SHALL be valid persistable values so the prescribing
+slice can introduce them without a schema migration.
+
+#### Scenario: A drafted recommendation carries a typed guidance payload
+
+**Given** a patient message that the agent has processed
+**When** the resulting Recommendation is persisted
+**Then** its `payload_type` is `guidance`
+**And** its `payload` contains the model-generated text for that type
+
+#### Scenario: Unknown payload types are rejected
+
+**Given** a write to the recommendations table
+**When** the `payload_type` is not one of the four defined values
+**Then** the write is rejected by the database constraint
+**And** no recommendation is created
+
+---
+
+### Requirement: No PHI Monetization Surface
+
+The Core API SHALL NOT expose any endpoint, event stream, or export path whose
+purpose is marketing analytics, advertising attribution, or third-party data
+sharing for PHI. Read access to PHI SHALL be limited to the patient who owns
+it, physicians with an active care relationship to that patient within the
+tenant, and the patient's own audit history.
+
+#### Scenario: No third-party PHI export endpoint exists
+
+**Given** the published Core API surface
+**When** the surface is enumerated
+**Then** no endpoint serves PHI to a third-party identifier such as an
+advertising or analytics audience
+**And** the only PHI-bearing reads are scoped to the owning patient or a
+care-related physician within the tenant

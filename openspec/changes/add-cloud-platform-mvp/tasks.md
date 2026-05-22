@@ -12,7 +12,12 @@
       `care_relationships`, `conversations`, `messages`, `recommendations`,
       `audit_events`
 - [ ] Every PHI-bearing table has a non-null `tenant_id`
+- [ ] `patients.state` (USPS code) and `physicians.states_licensed`
+      (`text[]`) are non-null
 - [ ] `recommendations.state` constrained to the state-machine values
+- [ ] `recommendations.payload_type` constrained to
+      (`guidance` | `prescription` | `lab_order` | `referral`),
+      `recommendations.payload` is non-null JSONB
 
 ### Task 1.3: Store layer with tenant scoping
 - [ ] `internal/store` access functions — each takes a `tenant_id`; no
@@ -57,13 +62,22 @@ compose stack; audit rows appear for each PHI-touching operation.
 - [ ] State change + `audit_event` written in one DB transaction
 - [ ] Patient-visible content is set only on the `DELIVERED` transition
 
-### Task 3.3: Tests
+### Task 3.3: State-licensing enforcement
+- [ ] `Transition` rejects any physician action when
+      `physician.states_licensed` does not include the
+      recommendation's `patient.state`
+- [ ] The rejection emits an audit event and does not mutate state
+
+### Task 3.4: Tests
 - [ ] Exhaustive valid-transition tests
 - [ ] Representative invalid-transition tests (each returns an error)
 - [ ] Invariant test: `PENDING_REVIEW` / `REJECTED` content is never
       patient-visible
+- [ ] State-licensing test: a physician unlicensed in the patient's state
+      cannot approve, modify, or reject; the action is rejected and audited
 
-**Validation**: `go test ./internal/domain/...` green; invariant test passes.
+**Validation**: `go test ./internal/domain/...` green; invariant and
+state-licensing tests pass.
 
 ## Phase 4: AI Agent Runtime
 
@@ -74,7 +88,8 @@ compose stack; audit rows appear for each PHI-touching operation.
 
 ### Task 4.2: Reactive drafting
 - [ ] On a persisted patient message: assemble tenant-scoped conversation
-      context, call the model, create a `recommendation` in `DRAFT`
+      context, call the model, create a `recommendation` in `DRAFT` with
+      `payload_type = 'guidance'` and `payload = {"text": <model output>}`
 - [ ] Immediately transition `DRAFT` → `PENDING_REVIEW`, write the audit event,
       emit `queue.updated`
 
@@ -116,8 +131,10 @@ recommendations, and drive each of the three actions.
 ### Task 6.3: Wire into the chat flow
 - [ ] `AIConversationService` message send → `SyncClient` POST instead of a
       direct LLM provider call
-- [ ] Delivered recommendation arrives via WebSocket → shown as the assistant
-      message
+- [ ] Delivered recommendation arrives via WebSocket → rendered as a generic
+      `RecommendationCard` SwiftUI view in the conversation, keyed off
+      `payload_type` so differentiated card types can be added later without
+      reworking the chat
 - [ ] Offline: messages stay `pending`, replay on reconnect
 
 ### Task 6.4: Tests

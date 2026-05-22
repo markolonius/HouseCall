@@ -10,6 +10,43 @@ delivered back to the patient. This proves the core physician-in-loop care loop
 end to end while remaining runnable on a local developer machine — no AWS
 dependency.
 
+The MVP loop produces `guidance`-typed recommendations only, but the data model
+is designed forward-compatible with the prescribing-practice payload types
+(`prescription`, `lab_order`, `referral`) that the production practice will
+require. Live prescribing, e-prescribe integration, and lab-order routing are
+explicitly out of scope for this slice.
+
+## Strategic Context
+
+This MVP is the first technical slice of a larger product strategy. The
+following strategic decisions are now locked and shape the design below; they
+are recorded here so the MVP's data model, governance, and deployment target
+match where the platform is headed.
+
+- **Clinical scope**: full primary care practice (head-to-head with Lotus).
+  Prescriptions, lab orders, and referrals are first-class concepts in the
+  data model.
+- **Beachhead**: chronic disease management (diabetes, hypertension, etc.),
+  launched in a single state to keep the medical-board surface manageable for
+  a solo founder.
+- **Legal entity**: Public Benefit Corporation. The charter's public-benefit
+  purpose forbids monetizing PHI; this is an architectural invariant, not a
+  policy preference.
+- **Pricing**: $29–$49/month subscription. Drives a discipline around
+  high-leverage physician panels (AI assist enabling ~700–1,000
+  patients/physician for chronic care) rather than a traditional ~400-patient
+  DPC panel.
+- **Production hosting**: AWS direct with a Business Associate Agreement. Only
+  AWS HIPAA-eligible services. The MVP itself remains local-only; the
+  production target is captured in `design.md` so the package boundaries do
+  not paint into a corner.
+- **iOS UX direction**: chat-first with inline action cards. The MVP renders a
+  generic recommendation card; differentiated card types (prescription, lab,
+  referral) ship post-MVP.
+- **Team**: solo founder. Out-of-scope work — clinician console SPA,
+  prescribing integrations, multi-state expansion, production hosting — is
+  deferred so the MVP stays shippable by one person.
+
 ## Motivation
 
 ### Business Need
@@ -33,20 +70,28 @@ committing to the full Phase 1 build.
 
 ### New Capabilities
 1. **`core-api`** — Go Core API service: a tenant-scoped data model (Tenant,
-   Patient, Physician, CareRelationship, Conversation, Message, Recommendation,
-   AuditEvent), REST + WebSocket endpoints, JWT authentication, PostgreSQL
-   persistence.
-2. **`physician-in-loop`** — the Recommendation lifecycle state machine and the
+   Patient, Physician, CareRelationship, Conversation, Message, Recommendation
+   with a `payload_type`-discriminated payload, AuditEvent), REST + WebSocket
+   endpoints, JWT authentication, PostgreSQL persistence. Patients carry a
+   `state` field and physicians a `states_licensed` set so the
+   state-licensing invariant can be enforced from day one.
+2. **`physician-in-loop`** — the Recommendation lifecycle state machine, the
    architectural invariant that no AI output reaches a patient without a
-   physician state transition.
+   physician state transition, and the state-licensing invariant that a
+   physician can only act on a patient resident in a state the physician is
+   licensed in.
 3. **`ai-agent-runtime`** — a reactive agent that consumes a patient message,
    calls a local OpenAI-compatible model endpoint, and drafts a Recommendation
-   in `PENDING_REVIEW`.
+   with `payload_type = guidance` in `PENDING_REVIEW`. Differentiated payload
+   types (prescription, lab order, referral) are out of scope for the MVP but
+   the runtime is structured so they can be added without changing the loop.
 4. **`physician-web-app`** — a minimal web app: physician login, patient panel,
    and a recommendation review queue with approve / reject / modify.
 5. **`ios-cloud-sync`** — an iOS sync layer: the existing chat routes messages
    through the Core API; local Core Data becomes an offline mirror with
-   `serverId` + `syncState` tracking.
+   `serverId` + `syncState` tracking. Delivered recommendations render as a
+   generic inline action card within the chat conversation — the foundation
+   for differentiated prescription, lab, and referral cards in later slices.
 
 ### Modified Capabilities
 - The existing iOS message-send path (today: call an LLM provider directly)
@@ -74,6 +119,12 @@ committing to the full Phase 1 build.
 ### Compliance Impact
 - The physician-in-loop invariant becomes enforced code with exhaustive tests
   and an audit event on every state transition.
+- The state-licensing invariant — only a physician licensed in the patient's
+  state can act on that patient's recommendations — is enforced in code from
+  day one, even though the beachhead launches in a single state.
+- The PBC charter forbids monetizing PHI; the data model and audit surface are
+  shaped so that no marketing-analytics or data-sale extraction path exists
+  to be exercised.
 - **This MVP is explicitly local-development-only.** No real PHI, no AWS, no
   production traffic — so it does not itself require the AWS BAA, Zitadel, or
   production MedGemma. Those remain Phase 1 prerequisites for production.
@@ -150,13 +201,17 @@ committing to the full Phase 1 build.
 8. Documentation
 
 ## Open Questions
-- **MVP auth**: the Core API issues its own JWT for the MVP, with Zitadel
-  integration deferred to the next slice. Confirm this is acceptable as a
-  local-only stopgap.
+- **MVP auth**: the Core API issues its own JWT for the MVP, with the
+  production identity provider (AWS Cognito under the AWS-direct hosting
+  decision; ADR-002's Zitadel reference is now superseded by the AWS-direct
+  decision and should be revisited in a follow-up ADR). Confirm the
+  HMAC-JWT stopgap is acceptable for local-only development.
 - **Local model**: which MedGemma variant (4B vs 27B text) should the dev
   environment standardize on, given local hardware constraints?
 - **Physician web app stack**: the proposal recommends server-rendered Go for
   the MVP — confirm, or pull the production web-stack decision forward.
+- **Beachhead state**: which single state does the production practice launch
+  in? Affects physician licensing operations, not the MVP code.
 
 ## Stakeholder Sign-off
 - [ ] Engineering

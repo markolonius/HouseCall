@@ -39,24 +39,40 @@
 ## Phase 2: Core API
 
 ### Task 2.1: Auth
-- [ ] `POST /auth/login` — validate against `patients` / `physicians`, issue an
-      HMAC-signed JWT
-- [ ] JWT middleware — rejects missing/invalid/expired tokens; extracts
+- [x] `POST /auth/login` — validate against `patients` / `physicians`, issue an
+      HMAC-signed JWT (`internal/api/auth.go`; bcrypt comparison; opaque
+      "invalid credentials" on any mismatch to prevent enumeration)
+- [x] JWT middleware — rejects missing/invalid/expired tokens; extracts
       `tenant_id` + actor identity into the request context
+      (`internal/api/jwt.go` stdlib HMAC-HS256; Cognito JWKS swap replaces
+      `verifyToken` only — no domain or store changes)
 
 ### Task 2.2: REST endpoints
-- [ ] Conversations: list, create
-- [ ] Messages: list, create (patient send)
-- [ ] Recommendations: list (queue), get, review
-- [ ] All handlers tenant-scoped via middleware context
+- [x] Conversations: list (patient only), create (patient only)
+- [x] Messages: list, create (patient send; Phase 4 agent hook stubbed)
+- [x] Recommendations: list queue (physician, scoped to their patients via
+      `ListRecommendationsByPhysician`), get (patient sees only DELIVERED),
+      review (approve/modify/reject via `domain.TransitionReview`)
+- [x] All handlers tenant-scoped via `requireAuth` middleware context;
+      actor-type guards enforce patient-vs-physician boundaries
 
 ### Task 2.3: WebSocket hub
-- [ ] `/ws` with JWT-on-connect
-- [ ] Push `recommendation.delivered` to patients, `queue.updated` to physicians
+- [x] `/ws` with JWT-on-connect (token in `?token=` query param for
+      mobile clients that cannot set Upgrade headers)
+- [x] `hub.SendToPatient` delivers `recommendation.delivered` on review
+- [x] `hub.SendToPhysicians` ready for Phase 4 `queue.updated` push
 
 ### Task 2.4: Audit writer
-- [ ] `internal/audit` — writes `audit_events` with metadata only (no PHI)
-- [ ] Wired into message ingestion, agent interaction, and every review action
+- [x] `internal/audit.Writer` — writes `audit_events` with metadata only
+      (no PHI); errors logged but not propagated so audit never blocks
+      the clinical flow
+- [x] Wired into: `auth.login`, `conversation.created`, `message.created`,
+      `recommendation.reviewed` (the last two in a transaction via `store.Txn`)
+
+**Note**: `internal/domain/recommendation.go` (Phase 3 Task 3.1) was
+implemented here because `handleReviewRecommendation` requires
+`TransitionReview`. Phase 3 adds state-licensing enforcement and exhaustive
+tests.
 
 **Validation**: authenticated REST + WebSocket round-trips work against the
 compose stack; audit rows appear for each PHI-touching operation.

@@ -17,7 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/markolonius/housecall/backend/internal/api"
 	"github.com/markolonius/housecall/backend/internal/migrate"
+	"github.com/markolonius/housecall/backend/internal/store"
 )
 
 func main() {
@@ -70,6 +72,11 @@ func runMigrate(dsn, dir string) error {
 }
 
 func runServe(dsn, addr string) error {
+	secret := []byte(os.Getenv("JWT_SECRET"))
+	if len(secret) < 16 {
+		log.Fatal("JWT_SECRET must be set and at least 16 characters")
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -83,6 +90,9 @@ func runServe(dsn, addr string) error {
 		return fmt.Errorf("ping: %w", err)
 	}
 
+	s := store.New(pool)
+	rt := api.New(s, secret)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
@@ -94,6 +104,8 @@ func runServe(dsn, addr string) error {
 		}
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	rt.Mount(r)
 
 	srv := &http.Server{
 		Addr:              addr,

@@ -8,6 +8,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -298,6 +299,97 @@ func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID,
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// --- recommendations (additional) ---
+
+// ListRecommendationsByPhysician returns recommendations in the given state
+// for all patients who have an active care relationship with this physician,
+// within the tenant. This is the physician's review queue.
+func (s *Store) ListRecommendationsByPhysician(ctx context.Context, tenant TenantID, physicianID uuid.UUID, state string) ([]Recommendation, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT r.id, r.tenant_id, r.conversation_id, r.patient_id, r.state,
+		        r.payload_type, r.payload, r.draft_content, r.final_content,
+		        r.reviewed_by, r.reviewed_at, r.created_at
+		   FROM recommendations r
+		   JOIN care_relationships cr
+		     ON cr.tenant_id = r.tenant_id
+		    AND cr.patient_id = r.patient_id
+		  WHERE r.tenant_id = $1
+		    AND cr.physician_id = $2
+		    AND cr.active = true
+		    AND r.state = $3
+		  ORDER BY r.created_at`,
+		tenant.UUID(), physicianID, state,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Recommendation
+	for rows.Next() {
+		var r Recommendation
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State,
+			&r.PayloadType, &r.Payload, &r.DraftContent, &r.FinalContent,
+			&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// TxStore wraps a pgx.Tx and exposes the write methods needed for atomic
+// multi-operation sequences (e.g. state transition + audit event). Obtain
+// one via Store.Txn.
+type TxStore struct {
+	tx pgx.Tx
+}
+
+// Txn executes fn inside a transaction. fn receives a *TxStore with which
+// it may call write methods. The transaction is committed if fn returns nil;
+// rolled back otherwise.
+func (s *Store) Txn(ctx context.Context, fn func(*TxStore) error) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := fn(&TxStore{tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// UpdateRecommendationState sets the state (and optionally reviewed_by,
+// reviewed_at, final_content) for a recommendation within tx.
+func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error {
+	_, err := ts.tx.Exec(ctx,
+		`UPDATE recommendations
+		    SET state = $3, reviewed_by = $4, reviewed_at = NOW(), final_content = $5
+		  WHERE tenant_id = $1 AND id = $2`,
+		tenant.UUID(), id, state, reviewedBy, finalContent,
+	)
+	return err
+}
+
+// CreateAuditEvent writes an audit event within tx. PHI must not appear in
+// e.EventType or e.Metadata.
+func (ts *TxStore) CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error {
+	if e.Metadata == nil {
+		e.Metadata = mustJSON(map[string]any{})
+	}
+	_, err := ts.tx.Exec(ctx,
+		`INSERT INTO audit_events (tenant_id, actor_type, actor_id, event_type, metadata)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		tenant.UUID(), e.ActorType, e.ActorID, e.EventType, e.Metadata,
+	)
+	return err
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // --- audit events ---

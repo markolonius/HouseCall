@@ -2,12 +2,14 @@
 
 DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall?sslmode=disable
 TEST_DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall_test?sslmode=disable
+# Dev-only default. Override with a strong secret for any shared environment.
+JWT_SECRET ?= dev-secret-change-me-in-production
 
 build:
 	go build ./...
 
 run: build
-	DATABASE_URL=$(DATABASE_URL) go run ./cmd/server -cmd serve
+	DATABASE_URL=$(DATABASE_URL) JWT_SECRET=$(JWT_SECRET) go run ./cmd/server -cmd serve
 
 migrate:
 	DATABASE_URL=$(DATABASE_URL) go run ./cmd/server -cmd migrate

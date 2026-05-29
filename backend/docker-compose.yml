@@ -1,0 +1,33 @@
+# Local Postgres for HouseCall backend development.
+#
+# Only the database is containerized — Go and Xcode stay native on the host.
+# This pins Postgres to the same major version as production (RDS Postgres 16)
+# and removes the "brew upgraded my Postgres" footgun.
+#
+#   make db-up     # start Postgres, wait until healthy
+#   make db-down   # stop it (data persists in the named volume)
+#
+# The `server` service and `make seed` data land in Phase 7 (Task 7.1); this
+# file intentionally ships the postgres service only for now.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: housecall-postgres
+    environment:
+      POSTGRES_USER: housecall
+      POSTGRES_PASSWORD: housecall
+      POSTGRES_DB: housecall
+    ports:
+      - "5432:5432"
+    volumes:
+      - housecall-pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U housecall -d housecall"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  housecall-pgdata:

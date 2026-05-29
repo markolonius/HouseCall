@@ -36,21 +36,31 @@ backend/
 
 ## Local development
 
-### Prerequisites
+### Prerequisites (managed for you)
 
-- Go 1.25 or newer (the toolchain auto-upgrades when needed).
-- PostgreSQL 15 or newer, reachable on `localhost:5432`.
+Versions are pinned so you don't fight dependency drift:
+
+- **Go** — pinned by [`../.tool-versions`](../.tool-versions) via `mise`, and
+  by the `toolchain` directive in `go.mod`.
+- **Postgres 16** — runs in Docker (`docker-compose.yml`), matching production
+  (RDS Postgres 16). Not installed via brew, so a stray `brew upgrade` can't
+  move it.
+- **Xcode** — pinned by [`../.xcode-version`](../.xcode-version); install/select
+  with `xcodes`. (Xcode cannot be containerized; it stays native — see
+  [`../docs/WORKFLOW.md`](../docs/WORKFLOW.md).)
+- **gh, jq, mise, xcodes** — declared in [`../Brewfile`](../Brewfile).
 
 ### Mac mini quickstart (recommended)
 
-From the repository root, run the one-shot bootstrap. It is idempotent and
-installs `go`, `postgresql@16`, `gh`, `jq`, and `beads` via Homebrew, creates
-the `housecall` role + `housecall`/`housecall_test` databases, applies
-migrations, and wires up the beads issue graph:
+From the repository root, run the one-shot bootstrap. It is idempotent: it
+runs `brew bundle`, pins Go via `mise`, installs `beads`, starts the
+Dockerized Postgres, applies migrations, wires up the beads graph, and runs
+the environment doctor:
 
 ```bash
 scripts/dev-bootstrap.sh
 gh auth login          # if not already authenticated
+scripts/doctor.sh      # green/red preflight; run before each session
 ```
 
 Then drive development through the orchestrator from an interactive Claude
@@ -60,18 +70,26 @@ Code session (see [`../docs/WORKFLOW.md`](../docs/WORKFLOW.md)):
 /run-phase add-cloud-platform-mvp 3
 ```
 
-### One-time setup (manual / Linux)
+### Database commands
 
-If you are not on macOS or prefer to provision Postgres by hand:
+```bash
+cd backend
+make db-up      # start Postgres (Docker), wait until healthy
+make db-down    # stop Postgres (data persists in the housecall-pgdata volume)
+```
+
+The `housecall` and `housecall_test` databases are created automatically on
+first volume init (`docker/initdb/01-create-test-db.sql`).
+
+### One-time setup (manual / Linux, without Docker)
+
+If you are not on macOS, or prefer a host-native Postgres:
 
 ```bash
 sudo -u postgres psql -c "CREATE USER housecall WITH PASSWORD 'housecall' SUPERUSER;"
 sudo -u postgres psql -c "CREATE DATABASE housecall OWNER housecall;"
 sudo -u postgres psql -c "CREATE DATABASE housecall_test OWNER housecall;"
 ```
-
-`docker-compose.yml` is on the Phase 7 task list and will replace this manual
-step. Until then, a local Postgres works fine.
 
 ### Common commands
 

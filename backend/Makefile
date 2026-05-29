@@ -14,6 +14,14 @@ run: build
 migrate:
 	DATABASE_URL=$(DATABASE_URL) go run ./cmd/server -cmd migrate
 
+# Start the local Dockerized Postgres and wait until it is healthy.
+db-up:
+	docker compose up -d --wait postgres
+
+# Stop Postgres. Data persists in the named volume (housecall-pgdata).
+db-down:
+	docker compose down
+
 # Seeds one tenant + one physician + one patient + one active care
 # relationship. Implemented in Phase 7 (Task 7.1) — placeholder for now.
 seed:

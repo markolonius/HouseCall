@@ -22,7 +22,7 @@ Your job: drive every task in that phase to a merged-quality state through a cod
 ## Preconditions
 1. Confirm the change is approved and the phase exists: read `openspec/changes/$1/tasks.md` and locate `## Phase $2`. If the proposal is not approved or the phase doesn't exist, stop and tell the user.
 2. Confirm tooling is present: `command -v bd`, `command -v gh`, `command -v jq`, and `gh auth status`. If anything is missing, tell the user to run `scripts/dev-bootstrap.sh` and stop.
-3. Confirm Postgres is up (tests need it): `pg_isready -q -h localhost -p 5432`. If down, tell the user and stop.
+3. Confirm Postgres is up (tests need it). Run `scripts/doctor.sh`; if it reports Postgres unreachable, start it with `cd backend && make db-up` and re-check. If Docker itself isn't running, tell the user to start Docker Desktop and stop.
 4. Working tree must be clean. If not, stop and report.
 
 ## Setup

@@ -24,11 +24,42 @@ and it dispatches the coder/tester/reviewer as **native Claude Code
 subagents** via the Task tool. That works on every plan and on both the CLI
 and web — nothing depends on headless automation.
 
+## Reproducible environment
+
+The goal is "no dependency surprises" without the overhead of Nix or
+devcontainers — which don't help anyway, because **Xcode cannot be
+containerized or Nix-ified** (it needs Apple's signed toolchain native on
+macOS). So the iOS half is always native; we pin everything else instead:
+
+| Concern | How it's pinned | File |
+|---|---|---|
+| Go version | `mise` + the `go.mod` `toolchain` directive | [`.tool-versions`](../.tool-versions) |
+| Postgres | Docker (`postgres:16-alpine`), matches RDS 16 | [`backend/docker-compose.yml`](../backend/docker-compose.yml) |
+| Xcode | `.xcode-version`, selected via `xcodes` | [`.xcode-version`](../.xcode-version) |
+| brew tools | declarative Brewfile (`brew bundle check` detects drift) | [`Brewfile`](../Brewfile) |
+| Everything | `scripts/doctor.sh` preflight | [`scripts/doctor.sh`](../scripts/doctor.sh) |
+
+What we deliberately **don't** use: Nix/devbox/flakes and VS Code
+devcontainers — they reproduce the Go side but not Xcode, so they double the
+mental model for no real gain on a solo, mixed Go+iOS project.
+
+The tradeoff of hard pinning: when production moves (a new Go or Xcode major),
+you update the pin deliberately (`.tool-versions` / `.xcode-version`) rather
+than letting brew drag you along silently. That ~30 min of occasional
+housekeeping is the price of not debugging "works on my machine."
+
+**Keeping Xcode pinned:** disable automatic Xcode updates (App Store →
+Settings) and install versions with `xcodes install <v> && xcodes select <v>`.
+When you intentionally move, update `.xcode-version` to match
+`xcodebuild -version` (you can do `xcodebuild -version | awk 'NR==1{print $2}'
+> .xcode-version`). `doctor.sh` warns (does not fail) on a mismatch.
+
 ## One-time setup
 
 ```bash
-scripts/dev-bootstrap.sh     # brew installs, DB + role, migrations, bd init
+scripts/dev-bootstrap.sh     # brew bundle, mise(Go), Docker Postgres, migrate, bd init, doctor
 gh auth login                # authenticate the GitHub CLI
+scripts/doctor.sh            # green/red preflight — run before each session
 ```
 
 ## Running a phase

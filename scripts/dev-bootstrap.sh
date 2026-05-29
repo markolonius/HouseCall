@@ -2,9 +2,10 @@
 #
 # dev-bootstrap.sh — one-time HouseCall dev environment setup for a Mac mini.
 #
-# Idempotent: safe to re-run. Installs prerequisites via Homebrew, provisions
-# the local Postgres role + databases, applies migrations, and initializes the
-# beads issue graph + Claude Code integration.
+# Idempotent: safe to re-run. Installs prerequisites from the Brewfile, pins Go
+# via mise, starts the Dockerized Postgres, applies migrations, and initializes
+# the beads issue graph + Claude Code integration. Finishes by running the
+# environment doctor.
 #
 # Usage:  scripts/dev-bootstrap.sh
 #
@@ -17,101 +18,101 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# --- prerequisites -----------------------------------------------------------
-
 [[ "$(uname -s)" == "Darwin" ]] || warn "This script targets macOS; continuing anyway."
-
 command -v brew >/dev/null 2>&1 || die "Homebrew not found. Install from https://brew.sh then re-run."
 
-brew_install() {
-  local pkg="$1"
-  if brew list --versions "$pkg" >/dev/null 2>&1; then
-    log "$pkg already installed"
+# --- Homebrew packages (declared in Brewfile) -------------------------------
+
+log "Installing Brewfile dependencies"
+brew bundle --file="$REPO_ROOT/Brewfile"
+
+# --- beads (installed separately; brew formula/tap not assumed stable) ------
+
+if command -v bd >/dev/null 2>&1; then
+  log "beads already installed"
+else
+  log "Installing beads"
+  brew install beads 2>/dev/null \
+    || curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash \
+    || die "Could not install beads. See https://github.com/steveyegge/beads"
+fi
+
+# --- Go via mise ------------------------------------------------------------
+
+# Activate mise for interactive shells (idempotent).
+RC="$HOME/.zshrc"
+ACT='eval "$(mise activate zsh)"'
+if [[ -f "$RC" ]] && grep -qF "$ACT" "$RC"; then
+  log "mise already activated in ~/.zshrc"
+else
+  log "Adding mise activation to ~/.zshrc"
+  printf '\n# mise (tool-version manager)\n%s\n' "$ACT" >> "$RC"
+fi
+
+log "Installing pinned toolchains (.tool-versions)"
+mise install
+# Make mise shims available to the rest of THIS script.
+export PATH="$HOME/.local/share/mise/shims:$PATH"
+command -v go >/dev/null 2>&1 || die "go still not on PATH after mise install"
+log "Using $(go version)"
+
+# --- Xcode (informational) --------------------------------------------------
+
+if command -v xcodebuild >/dev/null 2>&1; then
+  have_xc="$(xcodebuild -version 2>/dev/null | awk 'NR==1{print $2}')"
+  want_xc="$(cat .xcode-version 2>/dev/null || true)"
+  if [[ -n "$want_xc" && "$have_xc" != "$want_xc" ]]; then
+    warn "Xcode $have_xc installed but .xcode-version pins $want_xc."
+    warn "  Align them: 'xcodes install $want_xc && xcodes select $want_xc', or edit .xcode-version."
   else
-    log "installing $pkg"
-    brew install "$pkg"
+    log "Xcode $have_xc matches .xcode-version"
   fi
-}
+  warn "Disable automatic Xcode updates (App Store > Settings) so the pin holds."
+else
+  warn "xcodebuild not found. Install Xcode for iOS work: 'xcodes install $(cat .xcode-version 2>/dev/null)'"
+fi
 
-log "Checking Homebrew packages"
-brew_install go
-brew_install postgresql@16
-brew_install gh
-brew_install jq
-brew_install beads   # Steve Yegge's bd issue tracker
+# --- Postgres (Docker) ------------------------------------------------------
 
-# Make sure this shell can see the keg-only postgres binaries.
-export PATH="$(brew --prefix postgresql@16)/bin:$PATH"
+docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop and re-run."
+log "Starting Dockerized Postgres"
+( cd backend && make db-up )
 
-# --- postgres ----------------------------------------------------------------
-
-log "Starting Postgres service"
-brew services start postgresql@16 >/dev/null 2>&1 || warn "could not start postgresql@16 service"
-
-# Wait for the server to accept connections.
-for _ in $(seq 1 30); do
-  if pg_isready -q -h localhost -p 5432 2>/dev/null; then break; fi
-  sleep 1
-done
-pg_isready -q -h localhost -p 5432 2>/dev/null || die "Postgres is not accepting connections on localhost:5432"
-
-log "Ensuring 'housecall' role and databases exist"
-psql -v ON_ERROR_STOP=1 -d postgres >/dev/null <<'SQL'
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'housecall') THEN
-    CREATE ROLE housecall LOGIN PASSWORD 'housecall';
-  END IF;
-END
-$$;
-SQL
-
-ensure_db() {
-  local db="$1"
-  if psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" postgres | grep -q 1; then
-    log "database $db already exists"
-  else
-    log "creating database $db"
-    createdb -O housecall "$db"
-  fi
-}
-ensure_db housecall
-ensure_db housecall_test
-
-# --- migrations --------------------------------------------------------------
+# --- Migrations -------------------------------------------------------------
 
 log "Applying migrations"
 ( cd backend && make migrate )
 
-# --- beads -------------------------------------------------------------------
+# --- beads init -------------------------------------------------------------
 
-if [[ ! -d .beads ]]; then
+if [[ -d .beads ]]; then
+  log "beads already initialized (.beads present)"
+else
   log "Initializing beads"
   bd init
-else
-  log "beads already initialized (.beads present)"
 fi
-
 log "Wiring beads <-> Claude Code"
 bd setup claude >/dev/null 2>&1 || warn "bd setup claude failed (non-fatal); run it manually if needed"
 
-# --- gh ----------------------------------------------------------------------
+# --- gh ---------------------------------------------------------------------
 
-if gh auth status >/dev/null 2>&1; then
-  log "GitHub CLI authenticated"
-else
-  warn "GitHub CLI not authenticated. Run 'gh auth login' before using the beads<->GitHub mirror."
-fi
+gh auth status >/dev/null 2>&1 || warn "GitHub CLI not authenticated. Run 'gh auth login' before the beads<->GitHub mirror."
+
+# --- doctor -----------------------------------------------------------------
+
+echo
+log "Running environment doctor"
+"$REPO_ROOT/scripts/doctor.sh" || true
 
 cat <<'NEXT'
 
 Bootstrap complete.
 
-Next steps:
-  1. (if prompted) run:  gh auth login
-  2. Sanity-check the backend:
-       cd backend && make test          # needs Postgres up (it is)
-  3. Drive a phase autonomously from an interactive Claude Code session:
-       /run-phase add-cloud-platform-mvp 3
+If this shell doesn't see `go` yet, open a new terminal (or run:
+  eval "$(mise activate zsh)"
+) so mise is active, then:
+
+  scripts/doctor.sh                          # re-verify
+  /run-phase add-cloud-platform-mvp 3        # drive a phase (interactive session)
 
 NEXT

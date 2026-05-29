@@ -407,7 +407,9 @@ type-state for the recommendation state machine — is covered in Go by the
 tests + audit approach §4 already commits to.
 
 ### ADR-002: Identity provider — self-hosted Zitadel
-**Date:** 2026-05-14 · **Status:** Accepted
+**Date:** 2026-05-14 · **Status:** **Superseded by ADR-004 (2026-05-29)** for
+the AWS-direct production path. The original decision is preserved below for
+historical reasoning; the live decision is in ADR-004.
 
 **Context:** The platform needs a HIPAA-suitable identity provider that supports
 the multi-tenant invariant (§1) and runs inside the AWS BAA boundary.
@@ -442,6 +444,97 @@ an OpenAI-compatible interface.
 **Rationale:** PHI never leaves the AWS BAA boundary, so no model-vendor BAA is
 needed; the OpenAI-compatible vLLM endpoint means the same client code runs in
 development (local model) and production.
+
+### ADR-004: Identity provider — AWS Cognito (supersedes ADR-002 for the AWS-direct path)
+**Date:** 2026-05-29 · **Status:** Accepted
+
+**Context:** Two prior decisions were in conflict and the cloud-MVP
+`design.md` §8 flagged the gap explicitly. ADR-002 (2026-05-14) chose
+self-hosted Zitadel because identity needed to run inside the AWS BAA
+boundary and Zitadel's `Instance > Organization > Project` model is the
+cleanest native fit for HouseCall's multi-tenancy invariant (§1). The
+cloud-MVP design landed on **AWS Cognito** for the AWS-direct production
+path and noted that ADR-002 "should be revisited in a follow-on ADR." The
+solo-founder launch decisions (`docs/LAUNCH_STRATEGY.md`) and the
+DTC-only Phase 1 GTM make the trade-off concrete enough to close.
+
+**Decision:** Use **AWS Cognito User Pools** for production identity on
+the AWS-direct path. Tenancy is modelled in the application data layer
+(the `tenants` table, owned by Core API in `add-cloud-platform-mvp`),
+not by the IdP. Cognito issues JWTs with a `custom:tenant_id` claim;
+the same JWT middleware in `internal/api` validates both MVP-local HMAC
+tokens (today) and Cognito-issued tokens (production).
+
+**Alternatives considered:**
+- *Self-hosted Zitadel (ADR-002)* — strongest native multi-tenancy
+  hierarchy and event-sourced audit, but its primary advantage
+  (IdP-managed `Instance > Org > Project` hierarchy with per-org admins)
+  doesn't pay off until practice-license and health-system-license
+  customers arrive and need to manage their own clinician pools. For
+  Phase 1's DTC-only launch with a solo founder, the operational tax of
+  running an IdP (patching, RDS replicas for the eventstore, blue/green
+  deploys, owning the security incident response surface for a critical
+  authn dependency) outweighs the architectural cleanness.
+- *Authentik* — re-examined 2026-05-29 against its current state.
+  Multi-tenancy via `django-tenants` is real but **Enterprise-gated**;
+  the architecture is one Django app over per-tenant Postgres schemas
+  rather than a model-level hierarchy. Runtime is heavier (server +
+  Celery worker + Redis + Postgres in Python/Django vs. Cognito's zero
+  ops or Zitadel's single Go binary + Postgres). Same fundamental fit
+  problem as Zitadel — its native multi-tenancy mainly matters when the
+  IdP itself enforces per-org admin scoping, which Phase 1 doesn't need
+  — without the AWS-managed operational savings Cognito offers.
+- *Hanko, Keycloak, Ory* — unchanged from ADR-002 alternatives.
+
+**Rationale:**
+- **Tenancy lives in the data model, not the IdP.** The `tenants` table
+  already exists in `backend/migrations/0001_init.sql` and every PHI row
+  is scoped to it at the schema layer (composite `(tenant_id, parent_id)`
+  FKs) and the application layer (every store function takes a
+  `TenantID`). The IdP's job is authenticating *people*; the
+  organization hierarchy is enforced by HouseCall code. A `custom:tenant_id`
+  claim on a Cognito JWT is sufficient — Stripe, Linear, Notion, and most
+  vertical-SaaS products use this pattern. Zitadel's IdP-managed
+  hierarchy is leverage we don't cash in until practice/health-system
+  customers manage their own user pools, which is GTM Phase 2/3.
+- **HIPAA boundary.** Cognito is HIPAA-eligible under the AWS BAA. It is
+  already inside the boundary because it *is* an AWS service. No
+  separate IdP-vendor BAA is needed.
+- **Operational savings for a solo founder.** Cognito eliminates an
+  entire operational surface: no IdP patching, no Postgres replica to
+  manage for the eventstore, no upgrade path, no blue/green for the
+  authn-critical dependency. The cognitive budget that ADR-002 would
+  have spent on running Zitadel is redirected to clinical protocols and
+  the physician-in-loop loop, which are differentiating.
+- **Audit trail.** Cognito events flow to CloudWatch and CloudTrail
+  (admin actions). For HIPAA §164.312(b), the application's own
+  `audit_events` table records every PHI-touching action with a
+  Cognito-derived `actor_id` — that's the source of truth. The IdP's
+  event log is a secondary signal, which Cognito provides.
+- **Reversibility.** Cognito's User Migration Lambda trigger lets a
+  migration to Zitadel or another OIDC provider re-hash passwords on
+  first login. Migration is not painless but it is not a one-way door —
+  this matters because the AWS-managed simplification is worth taking
+  even with non-zero exit cost.
+- **MVP code stays the same.** The Core API JWT middleware in Phase 2
+  validates HMAC-signed tokens today. Cognito-issued tokens are
+  validated through the same middleware with a JWKS verifier swap; the
+  domain and store layers do not change.
+
+**Re-evaluation trigger:** Re-open this ADR when the first practice-
+license or health-system-license customer is signed and requires
+per-org admin scoping that Cognito Groups + custom claims cannot model
+cleanly. At that point Zitadel or Authentik should be re-evaluated
+against the then-current state.
+
+**Follow-up work (not part of this ADR):**
+- Sweep the body of this document (§5 Authentication & Authorization,
+  §8 AWS Service Mapping, references to Zitadel in §2, §10, §12) and
+  replace Zitadel references with Cognito to match this decision. Until
+  that sweep lands, ADRs are the source of truth; body references that
+  still say "Zitadel" are out of date.
+- Update `add-cloud-platform-mvp` `design.md` §8 to point to this ADR
+  rather than saying "revisited in a follow-on ADR."
 
 ---
 

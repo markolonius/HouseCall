@@ -206,12 +206,14 @@ is added instead. The agent-to-model OpenAI-compatible call lives server-side.
 **Decision:** the Core API issues its own short-lived JWT (HMAC-signed) from
 `POST /auth/login`, validated against the `patients` / `physicians` tables. The
 production identity provider under the AWS-direct hosting decision is **AWS
-Cognito** (ADR-002 — which named Zitadel — is superseded for the AWS path and
-should be revisited in a follow-on ADR). Cognito wiring is **deferred to the
-next slice**: federating OIDC is disproportionate for a local-only MVP.
+Cognito** — resolved in **ADR-004** (`docs/ARCHITECTURE.md`), which supersedes
+ADR-002's self-hosted-Zitadel decision for the AWS-direct path. Cognito wiring
+is **deferred to the next slice**: federating OIDC is disproportionate for a
+local-only MVP.
 **Rationale:** keeps the MVP self-contained and runnable with `docker compose
 up`; the JWT middleware boundary is the same one Cognito-issued tokens will
-plug into later, so this is a stopgap at the edge, not a throwaway core.
+plug into later (JWKS verifier swap, no domain or store changes), so this is a
+stopgap at the edge, not a throwaway core.
 **Risk:** the MVP login is not production auth — mitigated by the MVP being
 local-development-only and by isolating all token logic behind one middleware.
 
@@ -277,11 +279,13 @@ appear in the MVP build.
 
 ## Deployment Considerations
 
-- **Non-goals (explicitly deferred):** AWS infrastructure, Zitadel, production
-  MedGemma hosting, HealthKit ingestion, the proactive monitoring loop,
-  escalation/triage, practice/health-system tenancy, billing, voice/multimodal.
+- **Non-goals (explicitly deferred):** AWS infrastructure, Cognito wiring
+  (production identity per ADR-004), production MedGemma hosting, HealthKit
+  ingestion, the proactive monitoring loop, escalation/triage,
+  practice/health-system tenancy, billing, voice/multimodal.
 - **No real PHI** touches this MVP — seed data only.
 - **Migration path:** the Core API JWT middleware and the `backend/` package
   boundaries are designed so the next slice can (a) replace MVP login with
-  Zitadel OIDC and (b) split the Agent Runtime into its own service without
-  reworking the domain or store layers.
+  Cognito-issued OIDC tokens validated through the same middleware (JWKS
+  swap, no domain or store changes) and (b) split the Agent Runtime into its
+  own service without reworking the domain or store layers.

@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# beads: keep the version-controlled exports (issues.jsonl, github-map.tsv),
+# but never commit the local embedded Dolt database or backups.
+.beads/embeddeddolt/
+.beads/*.db
+.beads/backups/
+
+# Go build output
+backend/server
+backend/**/*.test

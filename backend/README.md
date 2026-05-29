@@ -41,7 +41,28 @@ backend/
 - Go 1.25 or newer (the toolchain auto-upgrades when needed).
 - PostgreSQL 15 or newer, reachable on `localhost:5432`.
 
-### One-time setup
+### Mac mini quickstart (recommended)
+
+From the repository root, run the one-shot bootstrap. It is idempotent and
+installs `go`, `postgresql@16`, `gh`, `jq`, and `beads` via Homebrew, creates
+the `housecall` role + `housecall`/`housecall_test` databases, applies
+migrations, and wires up the beads issue graph:
+
+```bash
+scripts/dev-bootstrap.sh
+gh auth login          # if not already authenticated
+```
+
+Then drive development through the orchestrator from an interactive Claude
+Code session (see [`../docs/WORKFLOW.md`](../docs/WORKFLOW.md)):
+
+```
+/run-phase add-cloud-platform-mvp 3
+```
+
+### One-time setup (manual / Linux)
+
+If you are not on macOS or prefer to provision Postgres by hand:
 
 ```bash
 sudo -u postgres psql -c "CREATE USER housecall WITH PASSWORD 'housecall' SUPERUSER;"

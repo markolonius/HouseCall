@@ -821,3 +821,19 @@ For issues not covered in this guide:
 3. Check test files for usage examples
 4. Review audit logs for error details
 5. Enable debug logging in provider implementations
+
+## Automated Phase Workflow
+
+Implementation is driven by an OpenSpec → beads → worktree → coder/tester/reviewer
+→ PR loop. See [`docs/WORKFLOW.md`](docs/WORKFLOW.md) for the full description.
+
+- To implement a phase of an approved OpenSpec change, run the single command
+  `/run-phase <change-id> <phase>` (e.g. `/run-phase add-cloud-platform-mvp 3`).
+  The main session acts as the orchestrator and dispatches the
+  `coder`/`tester`/`reviewer` subagents itself.
+- **Do not invoke the `coder`, `tester`, or `reviewer` subagents directly**, and
+  do not implement phase tasks by hand — go through `/run-phase` so beads, the
+  GitHub mirror, the worktree, and the per-phase PR stay consistent.
+- The orchestrator may push its phase branch and open one PR, but never pushes
+  to `main` and never force-pushes.
+- One-time machine setup is `scripts/dev-bootstrap.sh` (macOS/Homebrew).

@@ -98,10 +98,10 @@ All three backend components — Core API Service, AI Agent Runtime, and
 Integration Workers — are built in **Go**, using a minimal / assemble-libraries
 approach rather than a batteries-included framework: a lightweight router
 (stdlib `net/http` or `chi`), a maintained WebSocket library, and `pgx` for
-PostgreSQL are representative choices. Go fits the long-lived WebSocket workload,
-deploys as a single static binary to Fargate, and shares a language with
-Zitadel (see §11 Decision Log for the Go-vs-Rust evaluation). The specific
-library set is finalized at backend kickoff.
+PostgreSQL are representative choices. Go fits the long-lived WebSocket workload
+and deploys as a single static binary to Fargate (see §11 Decision Log for the
+Go-vs-Rust evaluation). The specific library set is finalized at backend
+kickoff.
 
 ---
 
@@ -207,32 +207,37 @@ is enforced in the Core API, covered by tests, and audited on every transition.
 ## 5. Authentication & Authorization
 
 ### Identity
-Identity is **self-hosted Zitadel** (open source), run inside the AWS BAA
-boundary — no third-party identity vendor, no additional BAA. Chosen for native
-multi-tenant organizations (matching the DTC / practice / health-system tenancy
-model) and language-agnostic OIDC. Confirmed now that the backend stack is Go
-(see §2); Zitadel is also written in Go, so it shares the platform's language.
-See §11 Decision Log for the alternatives considered (Hanko, Keycloak, Authentik,
-Ory) and why each was ruled out.
+Identity is **AWS Cognito** (per ADR-004, which supersedes ADR-002's
+self-hosted-Zitadel decision for the AWS-direct path). Cognito is a
+HIPAA-eligible AWS service, so it sits inside the AWS BAA boundary with no
+separate identity-vendor BAA. Tenancy is **not** modelled in the IdP — the
+`Instance > Organization > Project` hierarchy lives in the Core API data
+layer (the `tenants` table, scoped on every PHI row), and Cognito carries a
+`custom:tenant_id` claim. See §11 Decision Log (ADR-004) for the full
+rationale and the Zitadel / Authentik alternatives considered, and the
+re-evaluation trigger (practice/health-system customers needing IdP-managed
+per-org admin scoping).
 
 - **Patients**: existing iOS auth (password / passcode / biometric) becomes the
-  *local unlock*. A separate cloud identity (Zitadel-issued OIDC tokens)
+  *local unlock*. A separate cloud identity (Cognito-issued OIDC tokens)
   authenticates API calls, with the local biometric gating access to the stored
   refresh token.
-- **Physicians**: web app auth via Zitadel. MFA mandatory.
+- **Physicians**: web app auth via Cognito. MFA mandatory.
 
 ### Authorization model
 - Role-based: `patient`, `physician`, `practice_admin`, `system_admin`.
-- Tenant-scoped: a token carries `tenant_id`; the API rejects any cross-tenant
-  access.
+- Tenant-scoped: a token carries `tenant_id` (the Cognito `custom:tenant_id`
+  claim); the API rejects any cross-tenant access.
 - Resource-scoped: a physician can only touch patients they have an active
   `CareRelationship` with (or, for `practice_admin`, within their tenant).
 - Every authorization decision that touches PHI emits an audit event.
 
 ### Open decisions
-- Physician license metadata (states licensed, NPI, DEA) — stored as Zitadel
-  custom claims/metadata vs. in the Core API `Physician` row. Leaning Core API
-  row as the source of truth, with Zitadel holding only auth identity.
+- Physician license metadata (states licensed, NPI, DEA) — stored as Cognito
+  custom attributes vs. in the Core API `Physician` row. Leaning Core API
+  row as the source of truth, with Cognito holding only auth identity.
+  (`add-pa-chronic-disease-launch` already treats the Core API row as the
+  source of truth for PA license status.)
 - How biometric local unlock binds to the cloud refresh token without weakening
   either.
 
@@ -319,7 +324,7 @@ All under an executed BAA. Managed services preferred.
 | Compute | ECS Fargate or Lambda | Core API + agent runtime as Go static binaries; Fargate likely for long-lived WebSocket |
 | System of record | RDS PostgreSQL | Encrypted, Multi-AZ; row-level security for tenancy |
 | Media | S3 | SSE-KMS, presigned URLs, lifecycle policies |
-| Identity | Self-hosted Zitadel (ECS Fargate) | OIDC; native multi-tenant orgs; runs inside the BAA boundary |
+| Identity | AWS Cognito (per ADR-004) | OIDC; HIPAA-eligible AWS service; tenancy modelled in the Core API `tenants` table, carried as a `custom:tenant_id` claim |
 | LLM inference | Self-hosted MedGemma — SageMaker endpoint or EC2/EKS + vLLM (GPU) | OpenAI-compatible interface; inside the BAA boundary |
 | Async jobs | SQS + worker tasks | Integration workers (HealthKit, labs) |
 | Secrets | Secrets Manager | Integration credentials, DB creds, signing keys |
@@ -366,9 +371,10 @@ say and do.
    `Physician.statesLicensed` model.
 3. A Phase 1 exit-criteria definition agreed (see PROJECT.md Phase 1).
 
-The backend stack (§2 — Go), §5 (identity — Zitadel), and §6 (model selection —
-MedGemma) decisions are now closed; Zitadel and MedGemma both run inside the AWS
-BAA boundary. Until item 1 is done, the iOS app cannot talk to a real backend
+The backend stack (§2 — Go), §5 (identity — AWS Cognito per ADR-004), and §6
+(model selection — MedGemma) decisions are now closed; Cognito is a
+HIPAA-eligible AWS service and MedGemma runs inside the AWS BAA boundary. Until
+item 1 is done, the iOS app cannot talk to a real backend
 and Phase 1 is blocked. Extending the iOS app in isolation (e.g., HealthKit
 capture into local Core Data) is possible in parallel but is throwaway-risk work
 until the sync layer exists.
@@ -405,6 +411,12 @@ Go fits best; fast compiles and onboarding; single static-binary deploys to
 Fargate; shared language with Zitadel. The one real Rust draw — compile-time
 type-state for the recommendation state machine — is covered in Go by the
 tests + audit approach §4 already commits to.
+
+> **Note (2026-05-29, ADR-004):** the "shared language with Zitadel"
+> sub-point is now moot — identity moved to AWS Cognito, which is not a
+> self-hosted Go service. The Go decision stands on its other merits
+> (WebSocket concurrency, single-binary deploys, fast onboarding); this
+> sub-point is left in place as part of the historical record.
 
 ### ADR-002: Identity provider — self-hosted Zitadel
 **Date:** 2026-05-14 · **Status:** **Superseded by ADR-004 (2026-05-29)** for
@@ -527,14 +539,13 @@ per-org admin scoping that Cognito Groups + custom claims cannot model
 cleanly. At that point Zitadel or Authentik should be re-evaluated
 against the then-current state.
 
-**Follow-up work (not part of this ADR):**
-- Sweep the body of this document (§5 Authentication & Authorization,
-  §8 AWS Service Mapping, references to Zitadel in §2, §10, §12) and
-  replace Zitadel references with Cognito to match this decision. Until
-  that sweep lands, ADRs are the source of truth; body references that
-  still say "Zitadel" are out of date.
-- Update `add-cloud-platform-mvp` `design.md` §8 to point to this ADR
-  rather than saying "revisited in a follow-on ADR."
+**Follow-up work (completed 2026-05-29):**
+- The body of this document (§2, §5 Authentication & Authorization, §8
+  AWS Service Mapping, §10, §12) has been swept to replace Zitadel
+  references with Cognito. Remaining "Zitadel" mentions are confined to
+  the historical ADR-001 / ADR-002 text and to this ADR's
+  alternatives-considered discussion.
+- `add-cloud-platform-mvp` `design.md` §8 now points to this ADR.
 
 ---
 
@@ -555,7 +566,7 @@ not any single one.
   defined cadence (not just backup-success metrics).
 - **Identity & access** — phishing-resistant MFA (WebAuthn/FIDO2) for all
   staff, admins, and remote access; SSO with conditional access; just-in-time
-  admin elevation; no shared accounts. Builds on ADR-002 (Zitadel).
+  admin elevation; no shared accounts. Builds on ADR-004 (AWS Cognito).
 - **Endpoints & email** — EDR on every endpoint (CrowdStrike / SentinelOne /
   Defender for Endpoint); modern email security with attachment sandboxing and
   URL rewriting; DMARC/SPF/DKIM enforced; Office macros disabled by policy.

@@ -99,19 +99,38 @@ patient's enrolled conditions and runs them in addition to (or instead of,
 when the message is a vitals check-in) the generic guidance strategy. The
 selection logic is hardcoded for Phase 1; a plug-in registry is deferred.
 
-### Decision: Vitals check-ins are server-scheduled, push-delivered
-The backend owns the check-in schedule (weekly during titration, monthly at
-maintenance, with titration state tracked per (patient, condition) pair).
-When a check-in is due, the backend creates a check-in conversation thread
-and delivers an APNs push to the patient. The patient submits vitals
-inline in the check-in conversation; the AI agent processes the
-submission against the protocol the same way as any other patient
-message.
+### Decision: Vitals check-ins are server-scheduled, push-delivered,
+with per-(patient, condition) cadence and a coalescing delivery layer
+The backend owns the check-in schedule. `titration_state` is tracked per
+(patient, condition) pair so that a patient at-target on lipids
+(monthly) while actively titrating BP meds (weekly) gets the clinically
+correct cadence on each condition independently. When a check-in is due,
+the backend creates a check-in conversation thread and delivers an APNs
+push to the patient. The patient submits vitals inline; the AI agent
+processes the submission against the patient's protocols the same way as
+any other message.
 
-**Alternatives considered**: client-scheduled check-ins driven by the iOS
-app. Rejected — clinical adherence requires server-side audit of whether a
-check-in was sent, opened, and responded to. The client cannot be trusted
-for the schedule.
+To avoid notification spam for multi-condition patients, the scheduler
+*coalesces*: when one or more (patient, condition) schedules fall due
+within a configurable window (default 72 hours), it creates one
+check-in conversation that captures all relevant vitals at once, and
+emits one APNs push. Each due (patient, condition) pair is still tracked
+individually for adherence-audit purposes — coalescing affects delivery,
+not the underlying schedule rows.
+
+**Alternatives considered, rejected**:
+- *Per-patient titration state*. Either forces the aggressive cadence
+  across all conditions (clinically wrong — over-checks at-target
+  patients) or loses fidelity (under-checks titrating ones). Per-condition
+  is the right data model; per-patient would force a painful migration
+  later.
+- *Client-scheduled check-ins driven by the iOS app*. Clinical adherence
+  requires server-side audit of whether a check-in was sent, opened, and
+  responded to. The client cannot be trusted for the schedule.
+- *No coalescing; one push per due schedule*. A three-condition patient in
+  titration would get three weekly pushes, training them to ignore the
+  notification. Coalescing solves it at the delivery layer without
+  compromising the data model.
 
 ### Decision: Lab orders and prescriptions are payload types on the
 existing `Recommendation` entity, not separate entities
@@ -143,20 +162,37 @@ class Z") is implemented and reachable in the prescribing UI even though
 the Phase 1 formulary contains no controlled substances. This avoids a
 quiet skip the day a controlled substance is added to a protocol.
 
-### Decision: PA license verification is a periodic batch job, not a
-real-time check
-On a daily schedule the backend queries the configured PA State Board of
-Medicine lookup (TBD: PA DOS Bureau of Professional and Occupational
-Affairs portal or NPDB Practitioner Data Bank) for the founder physician's
-license status and expiration date. The result is cached and surfaced on
-the physician web app's status bar. If the cached status is `expired` or
-`disciplinary action`, the physician-in-loop state machine refuses every
-`APPROVED` / `MODIFIED` transition with a state-board-status error.
+### Decision: PA license verification is manual re-attestation behind a
+pluggable interface; the gate is what matters, not the source
+The `internal/pa_compliance/license_verifier` interface defines a
+`Verify(physician_id) (Status, ExpiresAt, error)` method. The Phase 1
+implementation is a manual-attestation store: the founder physician runs
+a CLI command monthly that records a fresh status + expiration date and
+attaches a PDF of the official PALS (pals.pa.gov) lookup result. The
+physician-in-loop state machine refuses every `APPROVED` / `MODIFIED`
+transition when the cached status is older than 30 days or whose status
+is not `active`.
 
-**Alternatives considered**: real-time check on every transition. Rejected
-— state-board lookups are slow, rate-limited, and not always available;
-caching plus a hard gate on the cached status is sufficient and avoids
-production outages when the lookup endpoint is down.
+**Alternatives considered, rejected**:
+- *Automated PALS scraping*. PALS is an undocumented web portal with no
+  API and no stability guarantees. A markup change would silently break
+  the compliance gate, which is the worst possible failure mode.
+- *NPDB Practitioner Data Bank queries*. NPDB is an adverse-action /
+  malpractice-payment data bank, not a "is this license currently active"
+  lookup. It requires entity registration and authorized querying and
+  still does not cleanly answer the gate's question.
+- *Real-time check on every transition*. State-board lookups are slow,
+  rate-limited, and not always available; a cached status with a hard
+  staleness gate is sufficient and avoids production outages.
+
+**Why manual is right at Phase 1**: only one license is being verified
+(the founder's). Automated verification is built for panels of
+dozens-to-hundreds of clinicians where manual tracking breaks down. The
+compliance value lives in the *gate* (stale-or-not-active blocks every
+transition) and that gate fires identically regardless of how the status
+arrived. The trigger to revisit this decision is hiring clinician #2 in a
+non-PA state — at that point multiple licenses across multiple boards
+justify investing in an automated source per board.
 
 ## Risks / Trade-offs
 
@@ -195,14 +231,19 @@ For development environments:
 
 ## Open Questions
 
-- PA license verification source: PA DOS portal scrape vs. NPDB query
-  vs. manual-only with attached PDF for Phase 1?
 - Stripe price IDs: created in Stripe dashboard or via Stripe API at
   deploy time? (Decision affects whether tier definitions live in code or
   in Stripe.)
-- Check-in cadence titration-vs-maintenance state: tracked per (patient,
-  condition) pair (recommended) or per patient overall? Per-condition is
-  more accurate but adds complexity; per-patient is simpler but couples
-  cadences across conditions.
 - Waitlist capture for non-PA patients: email-only, or full intake captured
   for marketing? Privacy posture pushes toward email-only.
+
+## Resolved
+
+- *PA license verification source* — resolved: manual re-attestation
+  behind the pluggable verifier interface for Phase 1; revisit at
+  clinician #2 in a non-PA state. See the license-verification decision
+  above.
+- *Check-in cadence state granularity* — resolved: per-(patient, condition),
+  with a coalescing delivery layer (default 72-hour window) so multi-
+  condition patients receive one push covering all due conditions. See
+  the vitals-check-ins decision above.

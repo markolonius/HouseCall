@@ -33,29 +33,53 @@ schedule.
 
 ---
 
-### Requirement: Check-In Delivery
+### Requirement: Check-In Delivery With Coalescing
 
-When a check-in is due, the system SHALL create a new conversation thread
-of type `check_in`, queue an APNs push to the patient referencing the
-thread, and write a `check_in_responses` row in `pending` state. If the
-patient does not respond within the next cadence cycle, the system SHALL
-write an `audit_event` of type `check_in_missed`.
+The system SHALL coalesce check-in delivery for a patient whose due schedules fall within a configurable coalescing window (default 72 hours). When one or more `check_in_schedules` rows for a patient fall due within that window, the system SHALL create a single `conversations` row of type `check_in` covering every due (patient, condition) pair in the window, SHALL queue a single APNs push to the patient referencing that thread, and SHALL write one `check_in_responses` row per due schedule in `pending` state, all linked to the same conversation. When the patient does not respond before the next cadence cycle for a given schedule, the system SHALL write an `audit_event` of type `check_in_missed` for that schedule independently.
 
-#### Scenario: A due check-in is delivered
+#### Scenario: A single due check-in is delivered
 
-- **GIVEN** a `check_in_schedules` row whose `next_due_at` is in the past
+- **GIVEN** a patient with exactly one `check_in_schedules` row whose
+  `next_due_at` is in the past
 - **WHEN** the scheduler runs
 - **THEN** a `conversations` row of type `check_in` is created
-- **AND** an APNs push is queued for the patient
+- **AND** one APNs push is queued for the patient
 - **AND** a `check_in_responses` row is created with status `pending`
+  linked to the new conversation
 
-#### Scenario: A missed check-in is audited
+#### Scenario: Multiple due check-ins within the coalescing window are
+delivered as one push
+
+- **GIVEN** a patient with three `check_in_schedules` rows (one per
+  enrolled condition) whose `next_due_at` values all fall within the
+  configured coalescing window
+- **WHEN** the scheduler runs
+- **THEN** exactly one `conversations` row of type `check_in` is created
+  covering all three due conditions
+- **AND** exactly one APNs push is queued for the patient
+- **AND** three `check_in_responses` rows are created in `pending` state,
+  one per schedule, all linked to the same conversation
+
+#### Scenario: A check-in due outside the coalescing window is delivered
+separately
+
+- **GIVEN** a patient with two `check_in_schedules` rows whose
+  `next_due_at` values are separated by more than the configured
+  coalescing window
+- **WHEN** the scheduler runs at each due time in turn
+- **THEN** each due schedule produces its own `conversations` row,
+  APNs push, and `check_in_responses` row
+
+#### Scenario: A missed check-in is audited per schedule
 
 - **GIVEN** a `check_in_responses` row in `pending` state whose creation
-  is older than one cadence cycle
+  is older than that schedule's cadence cycle
 - **WHEN** the missed-check-in detector runs
 - **THEN** an `audit_event` of type `check_in_missed` is written
-- **AND** the patient's `check_in_schedules` row is re-queued
+  referencing the specific (patient, condition) schedule
+- **AND** the schedule's `check_in_schedules` row is re-queued
+- **AND** other `check_in_responses` rows linked to the same conversation
+  are evaluated independently
 
 ---
 

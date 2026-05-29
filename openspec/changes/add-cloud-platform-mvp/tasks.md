@@ -3,28 +3,38 @@
 ## Phase 1: Backend Module & Data Layer
 
 ### Task 1.1: Go module scaffold
-- [ ] Initialize `backend/go.mod` and the `cmd/server` + `internal/*` layout
-- [ ] Add the lightweight router, `pgx`, and a WebSocket library as dependencies
-- [ ] `Makefile` targets: `run`, `test`, `migrate`, `seed`
+- [x] Initialize `backend/go.mod` and the `cmd/server` + `internal/*` layout
+- [x] Add the lightweight router (`chi`), `pgx`, and a WebSocket library
+      (`coder/websocket`) as dependencies
+- [x] `Makefile` targets: `run`, `test`, `migrate`, `seed` (seed is a
+      placeholder pending Phase 7 Task 7.1)
 
 ### Task 1.2: PostgreSQL schema & migrations
-- [ ] Write migration files for `tenants`, `patients`, `physicians`,
+- [x] Write migration files for `tenants`, `patients`, `physicians`,
       `care_relationships`, `conversations`, `messages`, `recommendations`,
-      `audit_events`
-- [ ] Every PHI-bearing table has a non-null `tenant_id`
-- [ ] `patients.state` (USPS code) and `physicians.states_licensed`
+      `audit_events` (`migrations/0001_init.sql`)
+- [x] Every PHI-bearing table has a non-null `tenant_id`
+- [x] `patients.state` (USPS code) and `physicians.states_licensed`
       (`text[]`) are non-null
-- [ ] `recommendations.state` constrained to the state-machine values
-- [ ] `recommendations.payload_type` constrained to
+- [x] `recommendations.state` constrained to the state-machine values
+- [x] `recommendations.payload_type` constrained to
       (`guidance` | `prescription` | `lab_order` | `referral`),
       `recommendations.payload` is non-null JSONB
+- [x] Cross-table FKs are composite on `(tenant_id, parent_id)` so the
+      schema rejects rows whose parent belongs to a different tenant
+      (defence-in-depth beyond the store-layer `WHERE tenant_id` reads)
 
 ### Task 1.3: Store layer with tenant scoping
-- [ ] `internal/store` access functions — each takes a `tenant_id`; no
+- [x] `internal/store` access functions — each takes a `TenantID`; no
       query path omits it
-- [ ] Tests: a query for tenant A cannot read tenant B's rows
+- [x] Tests: a query for tenant A cannot read tenant B's rows
+      (8 isolation tests covering patients, physicians, panels,
+      conversations, messages, recommendations, audit events; 1
+      schema-level test asserting cross-tenant parent inserts fail)
 
-**Validation**: schema migrates cleanly; tenant-scoping tests pass.
+**Validation**: schema migrates cleanly (`make migrate` is idempotent);
+9/9 tenant-scoping tests pass under `make test`; `make run` boots and
+`/healthz` returns 200.
 
 ## Phase 2: Core API
 

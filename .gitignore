@@ -10,3 +10,9 @@
 # Go build output
 backend/server
 backend/**/*.test
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/

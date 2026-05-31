@@ -157,7 +157,7 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid transition", http.StatusUnprocessableEntity)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

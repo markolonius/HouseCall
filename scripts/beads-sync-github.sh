@@ -25,8 +25,9 @@ touch "$MAP"
 
 issue_for_bead() { awk -F'\t' -v b="$1" '$1==b {print $2; exit}' "$MAP"; }
 
-# Iterate every bead as compact JSON objects.
-bd list --json | jq -c '.[]' | while read -r bead; do
+# Iterate every bead as compact JSON objects. --all is required so closed
+# beads are included and their mirrored issues get reconciled (closed).
+bd list --all --json | jq -c '.[]' | while read -r bead; do
   id="$(jq -r '.id'     <<<"$bead")"
   title="$(jq -r '.title' <<<"$bead")"
   status="$(jq -r '.status // "open"' <<<"$bead")"

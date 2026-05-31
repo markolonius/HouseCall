@@ -80,26 +80,26 @@ compose stack; audit rows appear for each PHI-touching operation.
 ## Phase 3: Physician-in-Loop State Machine
 
 ### Task 3.1: State machine
-- [ ] `internal/domain` — `Transition(current, action, actor)` pure function
-- [ ] `DELIVERED` reachable only from `APPROVED` / `MODIFIED`
-- [ ] The agent has no code path beyond `DRAFT` → `PENDING_REVIEW`
+- [x] `internal/domain` — `Transition(current, action, actor)` pure function
+- [x] `DELIVERED` reachable only from `APPROVED` / `MODIFIED`
+- [x] The agent has no code path beyond `DRAFT` → `PENDING_REVIEW`
 
 ### Task 3.2: Enforcement & audit
-- [ ] State change + `audit_event` written in one DB transaction
-- [ ] Patient-visible content is set only on the `DELIVERED` transition
+- [x] State change + `audit_event` written in one DB transaction
+- [x] Patient-visible content is set only on the `DELIVERED` transition
 
 ### Task 3.3: State-licensing enforcement
-- [ ] `Transition` rejects any physician action when
+- [x] `Transition` rejects any physician action when
       `physician.states_licensed` does not include the
       recommendation's `patient.state`
-- [ ] The rejection emits an audit event and does not mutate state
+- [x] The rejection emits an audit event and does not mutate state
 
 ### Task 3.4: Tests
-- [ ] Exhaustive valid-transition tests
-- [ ] Representative invalid-transition tests (each returns an error)
-- [ ] Invariant test: `PENDING_REVIEW` / `REJECTED` content is never
+- [x] Exhaustive valid-transition tests
+- [x] Representative invalid-transition tests (each returns an error)
+- [x] Invariant test: `PENDING_REVIEW` / `REJECTED` content is never
       patient-visible
-- [ ] State-licensing test: a physician unlicensed in the patient's state
+- [x] State-licensing test: a physician unlicensed in the patient's state
       cannot approve, modify, or reject; the action is rejected and audited
 
 **Validation**: `go test ./internal/domain/...` green; invariant and

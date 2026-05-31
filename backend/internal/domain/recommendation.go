@@ -26,11 +26,15 @@ const (
 	ActorPhysician ActorType = "physician"
 )
 
-// Actor carries the type and identity of the entity requesting a transition.
-// It is intentionally small so callers cannot accidentally pass raw strings.
+// Actor carries the type, identity, and licensing information of the entity
+// requesting a transition.
 type Actor struct {
-	Type ActorType
-	ID   uuid.UUID
+	Type           ActorType
+	ID             uuid.UUID
+	// StatesLicensed is the set of USPS state codes in which this physician
+	// holds an active licence. Required for ActorPhysician; ignored for
+	// ActorAgent. An empty slice means the physician is licensed nowhere.
+	StatesLicensed []string
 }
 
 // Actions that any actor may request.
@@ -54,11 +58,17 @@ var (
 	// legal from the current state, or when the actor does not have permission
 	// to perform the action.
 	ErrInvalidTransition = errors.New("domain: invalid state transition")
+
+	// ErrUnlicensedState is returned by Transition when a physician actor
+	// attempts to approve, modify, or reject a recommendation whose patient
+	// resides in a state for which the physician holds no active licence.
+	// The recommendation state is NOT changed when this error is returned.
+	ErrUnlicensedState = errors.New("domain: physician not licensed in patient's state")
 )
 
 // Transition is the canonical pure state-machine function. It returns the next
-// state for a given (current, action, actor) triple, or ErrInvalidTransition if
-// the combination is illegal.
+// state for a given (current, action, actor, patientState) tuple, or an error
+// if the combination is illegal.
 //
 // Permitted transitions:
 //
@@ -72,7 +82,13 @@ var (
 // Invariants enforced:
 //   - DELIVERED is reachable ONLY from APPROVED or MODIFIED.
 //   - The agent actor has no code path beyond DRAFT → PENDING_REVIEW.
-func Transition(current, action string, actor Actor) (string, error) {
+//   - A physician actor whose StatesLicensed does not include patientState is
+//     rejected with ErrUnlicensedState for approve, modify, and reject actions.
+//     The state-licensing check fires before the lifecycle check so that an
+//     unlicensed physician cannot infer valid transitions from error messages.
+//     patientState is ignored for ActionDeliver (an internal-only step) and for
+//     ActorAgent (agents are not subject to licensing).
+func Transition(current, action string, actor Actor, patientState string) (string, error) {
 	switch actor.Type {
 	case ActorAgent:
 		// The agent is permitted exactly one transition.
@@ -82,6 +98,15 @@ func Transition(current, action string, actor Actor) (string, error) {
 		return "", ErrInvalidTransition
 
 	case ActorPhysician:
+		// State-licensing check: applies to the three review actions.
+		// ActionDeliver is an internal step triggered only after a successful
+		// approve/modify, so licensing has already been verified.
+		if action == ActionApprove || action == ActionModify || action == ActionReject {
+			if !isLicensedIn(actor.StatesLicensed, patientState) {
+				return "", ErrUnlicensedState
+			}
+		}
+
 		switch {
 		case current == StatePendingReview && action == ActionApprove:
 			return StateApproved, nil
@@ -101,6 +126,20 @@ func Transition(current, action string, actor Actor) (string, error) {
 	}
 }
 
+// isLicensedIn reports whether licences contains state (case-sensitive USPS
+// code comparison). Returns false when licences is empty or state is empty.
+func isLicensedIn(licences []string, state string) bool {
+	if state == "" {
+		return false
+	}
+	for _, s := range licences {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
 // ReviewResult is the computed outcome of a physician review action.
 type ReviewResult struct {
 	State        string
@@ -115,8 +154,11 @@ type ReviewResult struct {
 //   modify  → DELIVERED  (finalContent must be non-empty)
 //   reject  → REJECTED   (final_content not set)
 //
-// State-licensing enforcement (physician.states_licensed ∋ patient.state)
-// is added in Phase 3 (Task 3.3).
+// Deprecated: TransitionReview predates the two-step Transition flow introduced
+// in Task 3.1/3.2 and does not enforce state-licensing (Task 3.3). Use
+// Transition with ActorPhysician instead. This function is retained to avoid
+// breaking callers but must not be used in new code — it bypasses the
+// licensing invariant.
 func TransitionReview(current, action string, physicianID uuid.UUID, draftContent, finalContent string) (ReviewResult, error) {
 	if current != StatePendingReview {
 		return ReviewResult{}, ErrInvalidTransition

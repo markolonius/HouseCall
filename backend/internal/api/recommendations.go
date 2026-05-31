@@ -100,11 +100,59 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	actor := domain.Actor{Type: domain.ActorPhysician, ID: claims.ActorID}
+	// Load the physician's licence list and the patient's state so the pure
+	// domain function can enforce the state-licensing invariant. Both queries
+	// are tenant-scoped; neither result is logged (no PHI in audit metadata).
+	phys, err := rt.store.GetPhysician(ctx, claims.TenantID, claims.ActorID)
+	if errors.Is(err, store.ErrNotFound) {
+		// Should never happen because requireAuth validates the JWT actor, but
+		// treat it as a 403 rather than leaking internal state.
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	} else if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	patient, err := rt.store.GetPatient(ctx, claims.TenantID, rec.PatientID)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	actor := domain.Actor{
+		Type:           domain.ActorPhysician,
+		ID:             claims.ActorID,
+		StatesLicensed: phys.StatesLicensed,
+	}
 
 	// Step 1: validate the physician's action using the canonical pure state
 	// machine — this moves PENDING_REVIEW → APPROVED / MODIFIED / REJECTED.
-	midState, err := domain.Transition(rec.State, req.Action, actor)
+	// Transition also enforces the state-licensing invariant here.
+	midState, err := domain.Transition(rec.State, req.Action, actor, patient.State)
+	if errors.Is(err, domain.ErrUnlicensedState) {
+		// Write a rejection audit event without touching the recommendation
+		// state. This is a standalone (non-Txn) audit write: there is no state
+		// mutation to pair it with, so it does not need to be atomic with a
+		// state update. Errors from the audit write are intentionally not
+		// propagated so the HTTP response is always returned to the caller.
+		reviewedBy := claims.ActorID
+		_, _ = rt.store.CreateAuditEvent(ctx, claims.TenantID, store.AuditEvent{
+			ActorType: "physician",
+			ActorID:   &reviewedBy,
+			EventType: "recommendation.review_rejected",
+			Metadata: marshalJSON(map[string]any{
+				"recommendation_id": recID.String(),
+				"action":            req.Action,
+				"reason":            "unlicensed_state",
+			}),
+		})
+		http.Error(w, "forbidden: physician not licensed in patient's state", http.StatusForbidden)
+		return
+	}
 	if errors.Is(err, domain.ErrInvalidTransition) {
 		http.Error(w, "invalid transition", http.StatusUnprocessableEntity)
 		return
@@ -120,8 +168,9 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 	var finalContent *string
 	if midState == domain.StateApproved || midState == domain.StateModified {
 		// Transition APPROVED/MODIFIED → DELIVERED (cannot fail: both are
-		// valid source states in the pure machine).
-		delivered, err := domain.Transition(midState, domain.ActionDeliver, actor)
+		// valid source states in the pure machine; licensing is not re-checked
+		// for ActionDeliver as it was already verified in Step 1).
+		delivered, err := domain.Transition(midState, domain.ActionDeliver, actor, patient.State)
 		if err != nil {
 			// Should never happen given valid midState values above.
 			http.Error(w, "internal server error", http.StatusInternalServerError)

@@ -79,6 +79,12 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// modify requires a non-empty final_content.
+	if req.Action == domain.ActionModify && req.FinalContent == "" {
+		http.Error(w, "final_content required for modify", http.StatusUnprocessableEntity)
+		return
+	}
+
 	ctx := r.Context()
 	rec, err := rt.store.GetRecommendation(ctx, claims.TenantID, recID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -89,7 +95,11 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	result, err := domain.TransitionReview(rec.State, req.Action, claims.ActorID, rec.DraftContent, req.FinalContent)
+	actor := domain.Actor{Type: domain.ActorPhysician, ID: claims.ActorID}
+
+	// Step 1: validate the physician's action using the canonical pure state
+	// machine — this moves PENDING_REVIEW → APPROVED / MODIFIED / REJECTED.
+	midState, err := domain.Transition(rec.State, req.Action, actor)
 	if errors.Is(err, domain.ErrInvalidTransition) {
 		http.Error(w, "invalid transition", http.StatusUnprocessableEntity)
 		return
@@ -98,11 +108,39 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update state and write the audit event in a single transaction.
+	// Step 2: for approve/modify the workflow continues to DELIVERED in the
+	// same atomic commit.  Determine final_content here — it is set ONLY on
+	// the DELIVERED write, never on intermediate states.
+	finalState := midState
+	var finalContent *string
+	if midState == domain.StateApproved || midState == domain.StateModified {
+		// Transition APPROVED/MODIFIED → DELIVERED (cannot fail: both are
+		// valid source states in the pure machine).
+		delivered, err := domain.Transition(midState, domain.ActionDeliver, actor)
+		if err != nil {
+			// Should never happen given valid midState values above.
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		finalState = delivered
+
+		// Compute the patient-visible content only for the DELIVERED write.
+		content := rec.DraftContent
+		if req.FinalContent != "" {
+			content = req.FinalContent
+		}
+		finalContent = &content
+	}
+	// For REJECTED: finalContent remains nil — patients never see it.
+
+	// State change AND audit_event are written in a single DB transaction so
+	// they either both commit or both roll back.
 	reviewedBy := claims.ActorID
 	if err := rt.store.Txn(ctx, func(tx *store.TxStore) error {
+		// Write the final state. final_content is only non-nil when
+		// finalState == DELIVERED, enforcing the content-visibility gate.
 		if err := tx.UpdateRecommendationState(ctx, claims.TenantID, recID,
-			result.State, &reviewedBy, result.FinalContent); err != nil {
+			finalState, &reviewedBy, finalContent); err != nil {
 			return err
 		}
 		return tx.CreateAuditEvent(ctx, claims.TenantID, store.AuditEvent{
@@ -112,7 +150,7 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 			Metadata: marshalJSON(map[string]any{
 				"recommendation_id": recID.String(),
 				"action":            req.Action,
-				"new_state":         result.State,
+				"new_state":         finalState,
 			}),
 		})
 	}); err != nil {
@@ -120,8 +158,8 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Push a WebSocket event to the patient once a recommendation is delivered.
-	if result.State == domain.StateDelivered {
+	// Push a WebSocket event to the patient only once DELIVERED.
+	if finalState == domain.StateDelivered {
 		rt.hub.SendToPatient(claims.TenantID.String(), rec.PatientID.String(),
 			marshalJSON(map[string]any{
 				"type": "recommendation.delivered",
@@ -132,5 +170,5 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 			}))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"state": result.State})
+	writeJSON(w, http.StatusOK, map[string]string{"state": finalState})
 }

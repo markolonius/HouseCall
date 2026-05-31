@@ -72,9 +72,19 @@ else
   warn "xcodebuild not found. Install Xcode for iOS work: 'xcodes install $(cat .xcode-version 2>/dev/null)'"
 fi
 
-# --- Postgres (Docker) ------------------------------------------------------
+# --- Container runtime (Colima) + Postgres ----------------------------------
 
-docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop and re-run."
+# Colima provides the docker socket without Docker Desktop. Start it if it
+# isn't already running; this is a no-op if a VM is already up.
+if colima status >/dev/null 2>&1; then
+  log "Colima already running"
+else
+  log "Starting Colima"
+  colima start
+fi
+
+docker info >/dev/null 2>&1 || die "Docker socket unreachable even after 'colima start'. Inspect with 'colima status' and 'colima logs'."
+
 log "Starting Dockerized Postgres"
 ( cd backend && make db-up )
 

@@ -34,7 +34,7 @@ macOS). So the iOS half is always native; we pin everything else instead:
 | Concern | How it's pinned | File |
 |---|---|---|
 | Go version | `mise` + the `go.mod` `toolchain` directive | [`.tool-versions`](../.tool-versions) |
-| Postgres | Docker (`postgres:16-alpine`), matches RDS 16 | [`backend/docker-compose.yml`](../backend/docker-compose.yml) |
+| Postgres | Docker (`postgres:16-alpine`) via Colima, matches RDS 16 | [`backend/docker-compose.yml`](../backend/docker-compose.yml) |
 | Xcode | `.xcode-version`, selected via `xcodes` | [`.xcode-version`](../.xcode-version) |
 | brew tools | declarative Brewfile (`brew bundle check` detects drift) | [`Brewfile`](../Brewfile) |
 | Everything | `scripts/doctor.sh` preflight | [`scripts/doctor.sh`](../scripts/doctor.sh) |

@@ -44,11 +44,12 @@ Versions are pinned so you don't fight dependency drift:
   by the `toolchain` directive in `go.mod`.
 - **Postgres 16** — runs in Docker (`docker-compose.yml`), matching production
   (RDS Postgres 16). Not installed via brew, so a stray `brew upgrade` can't
-  move it.
+  move it. The container runtime is **Colima** (no Docker Desktop required).
 - **Xcode** — pinned by [`../.xcode-version`](../.xcode-version); install/select
   with `xcodes`. (Xcode cannot be containerized; it stays native — see
   [`../docs/WORKFLOW.md`](../docs/WORKFLOW.md).)
-- **gh, jq, mise, xcodes** — declared in [`../Brewfile`](../Brewfile).
+- **colima, docker CLI, docker-compose, gh, jq, mise, xcodes** — declared in
+  [`../Brewfile`](../Brewfile).
 
 ### Mac mini quickstart (recommended)
 

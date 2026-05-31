@@ -47,9 +47,13 @@ else
   warn "xcodebuild not found (fine if you're only doing backend work)"
 fi
 
-# --- Docker + Postgres ------------------------------------------------------
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  ok "Docker daemon running"
+# --- Colima + Postgres ------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+  bad "docker CLI not found (run scripts/dev-bootstrap.sh)"
+elif ! docker info >/dev/null 2>&1; then
+  bad "Docker socket unreachable (start the runtime: 'colima start')"
+else
+  ok "Docker socket reachable (Colima)"
   # Is Postgres reachable on localhost:5432? Pure-bash TCP probe, no client needed.
   if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then
     ok "Postgres reachable on localhost:5432"
@@ -57,8 +61,6 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   else
     bad "Postgres not reachable on :5432 (start it: cd backend && make db-up)"
   fi
-else
-  bad "Docker not running (start Docker Desktop, then 'cd backend && make db-up')"
 fi
 
 # --- CLIs the orchestrator needs --------------------------------------------

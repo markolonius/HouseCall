@@ -17,4 +17,9 @@ brew "gh"              # GitHub CLI (PRs, issue mirror)
 brew "jq"              # JSON parsing in the orchestration scripts
 brew "xcodes"          # pin/select Xcode (see .xcode-version)
 
-cask "docker"          # Docker Desktop — runs the local Postgres
+# Container runtime — Colima (lightweight, no Docker Desktop). The `docker`
+# CLI and the `docker compose` v2 plugin are separate brew formulae that
+# talk to whatever daemon socket Colima exposes.
+brew "colima"
+brew "docker"
+brew "docker-compose"

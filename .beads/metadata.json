@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "HouseCall",
+  "project_id": "08d2136d-9135-4077-b05e-7803efee9bd9"
+}

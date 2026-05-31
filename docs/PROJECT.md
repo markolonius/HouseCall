@@ -113,8 +113,15 @@ AI evaluates patient
 | Practice License | Solo physician or small practice licenses the platform for their panel |
 | Health System License | Enterprise licensing for large practices or health systems |
 
-- **Geography:** US only (initial launch)
-- **Patient population:** Adults (18+) initially; pediatric TBD
+- **Geography:** US only. Launch in **Pennsylvania** (founder is a
+  PA-licensed physician); expand FL → TN → GA → AZ → NC. See
+  [`LAUNCH_STRATEGY.md`](./LAUNCH_STRATEGY.md) for state-selection criteria,
+  entity structure (PA-PC + PBC + MSA), clinical staffing sequence, and
+  regulatory watch-outs (GLP-1 compounding, controlled-substance telehealth).
+- **Patient population:** Adults (18+) initially; pediatric TBD.
+- **Initial clinical focus:** Cardiometabolic chronic disease (diabetes,
+  hypertension, hyperlipidemia) at cash-pay $29–49/month. GLP-1s deferred
+  from Phase 1 pending FDA compounding posture.
 
 ---
 

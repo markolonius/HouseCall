@@ -89,10 +89,10 @@ compose stack; audit rows appear for each PHI-touching operation.
 - [x] Patient-visible content is set only on the `DELIVERED` transition
 
 ### Task 3.3: State-licensing enforcement
-- [ ] `Transition` rejects any physician action when
+- [x] `Transition` rejects any physician action when
       `physician.states_licensed` does not include the
       recommendation's `patient.state`
-- [ ] The rejection emits an audit event and does not mutate state
+- [x] The rejection emits an audit event and does not mutate state
 
 ### Task 3.4: Tests
 - [ ] Exhaustive valid-transition tests

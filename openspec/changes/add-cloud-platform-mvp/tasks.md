@@ -85,8 +85,8 @@ compose stack; audit rows appear for each PHI-touching operation.
 - [x] The agent has no code path beyond `DRAFT` → `PENDING_REVIEW`
 
 ### Task 3.2: Enforcement & audit
-- [ ] State change + `audit_event` written in one DB transaction
-- [ ] Patient-visible content is set only on the `DELIVERED` transition
+- [x] State change + `audit_event` written in one DB transaction
+- [x] Patient-visible content is set only on the `DELIVERED` transition
 
 ### Task 3.3: State-licensing enforcement
 - [ ] `Transition` rejects any physician action when

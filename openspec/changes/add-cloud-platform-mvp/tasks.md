@@ -95,11 +95,11 @@ compose stack; audit rows appear for each PHI-touching operation.
 - [x] The rejection emits an audit event and does not mutate state
 
 ### Task 3.4: Tests
-- [ ] Exhaustive valid-transition tests
-- [ ] Representative invalid-transition tests (each returns an error)
-- [ ] Invariant test: `PENDING_REVIEW` / `REJECTED` content is never
+- [x] Exhaustive valid-transition tests
+- [x] Representative invalid-transition tests (each returns an error)
+- [x] Invariant test: `PENDING_REVIEW` / `REJECTED` content is never
       patient-visible
-- [ ] State-licensing test: a physician unlicensed in the patient's state
+- [x] State-licensing test: a physician unlicensed in the patient's state
       cannot approve, modify, or reject; the action is rejected and audited
 
 **Validation**: `go test ./internal/domain/...` green; invariant and

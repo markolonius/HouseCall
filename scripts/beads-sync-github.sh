@@ -35,10 +35,10 @@ bd list --json | jq -c '.[]' | while read -r bead; do
   if [[ -z "$num" ]]; then
     # No mirror yet — create a GitHub issue for any non-closed bead.
     if [[ "$status" != "closed" && "$status" != "done" ]]; then
-      num="$(gh issue create \
+      url="$(gh issue create \
                 --title "$title" \
-                --body  "Tracked by beads issue \`$id\`. Managed by the OpenSpec/beads orchestrator; do not edit task scope here." \
-                --json number -q '.number')"
+                --body  "Tracked by beads issue \`$id\`. Managed by the OpenSpec/beads orchestrator; do not edit task scope here.")"
+      num="${url##*/}"   # gh prints the issue URL; the number is the last path segment
       printf '%s\t%s\n' "$id" "$num" >> "$MAP"
       echo "created issue #$num  <- $id"
     fi

@@ -244,5 +244,62 @@ func TestContentVisibility_DeliveredSetsContent(t *testing.T) {
 	}
 }
 
+// TestGetRecommendationForPhysician_NoCareRelationship verifies that a
+// physician who has no active care relationship with the patient cannot fetch
+// the recommendation via GetRecommendationForPhysician. This is the store-
+// level proof that the access-control JOIN works correctly:
+//   - The recommendation's state must remain PENDING_REVIEW after the attempt.
+//   - No audit_events row must be written (the handler never reaches the Txn).
+func TestGetRecommendationForPhysician_NoCareRelationship(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	ctx := context.Background()
+
+	// makeReviewFixture gives us: tenant + patient + physician with a care
+	// relationship + recommendation in PENDING_REVIEW.
+	tid, rec, _ := makeReviewFixture(t, s)
+
+	// Create a second physician in the same tenant but with NO care relationship
+	// to the existing patient.
+	outsider, err := s.CreatePhysician(ctx, tid, Physician{
+		Email:          "outsider@review.test",
+		FullName:       "Outsider Doc",
+		StatesLicensed: []string{"PA"},
+		PasswordHash:   "hash",
+	})
+	if err != nil {
+		t.Fatalf("create outsider physician: %v", err)
+	}
+
+	// GetRecommendationForPhysician must return ErrNotFound for the outsider.
+	_, err = s.GetRecommendationForPhysician(ctx, tid, outsider.ID, rec.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for outsider physician, got %v", err)
+	}
+
+	// The recommendation state must be unchanged.
+	got, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get recommendation after denied access: %v", err)
+	}
+	if got.State != "PENDING_REVIEW" {
+		t.Fatalf("recommendation state changed: got %q, want PENDING_REVIEW", got.State)
+	}
+
+	// No audit row must have been written (the handler would only write one
+	// inside the Txn, which is never reached when the fetch returns ErrNotFound).
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_events
+		  WHERE tenant_id = $1 AND event_type = 'recommendation.reviewed'`,
+		tid.UUID(),
+	).Scan(&count); err != nil {
+		t.Fatalf("count audit events: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("audit event was written despite denied access: count=%d", count)
+	}
+}
+
 // strPtr is a local helper so test helpers don't need to import a separate pkg.
 func strPtr(s string) *string { return &s }

@@ -339,6 +339,38 @@ func (s *Store) ListRecommendationsByPhysician(ctx context.Context, tenant Tenan
 	return out, rows.Err()
 }
 
+// GetRecommendationForPhysician returns the recommendation only when the
+// patient named in it has an active care relationship with physicianID in the
+// given tenant. It mirrors the JOIN used in ListRecommendationsByPhysician so
+// that the write path (review) enforces the same access control as the read
+// (list) path. ErrNotFound is returned when the recommendation does not exist,
+// belongs to another tenant, or the physician has no active care relationship
+// with the patient — the three cases are indistinguishable to the caller by
+// design (no information disclosure).
+func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant TenantID, physicianID uuid.UUID, id uuid.UUID) (Recommendation, error) {
+	var r Recommendation
+	err := s.pool.QueryRow(ctx,
+		`SELECT r.id, r.tenant_id, r.conversation_id, r.patient_id, r.state,
+		        r.payload_type, r.payload, r.draft_content, r.final_content,
+		        r.reviewed_by, r.reviewed_at, r.created_at
+		   FROM recommendations r
+		   JOIN care_relationships cr
+		     ON cr.tenant_id = r.tenant_id
+		    AND cr.patient_id = r.patient_id
+		  WHERE r.tenant_id = $1
+		    AND r.id = $2
+		    AND cr.physician_id = $3
+		    AND cr.active = true`,
+		tenant.UUID(), id, physicianID,
+	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State,
+		&r.PayloadType, &r.Payload, &r.DraftContent, &r.FinalContent,
+		&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Recommendation{}, ErrNotFound
+	}
+	return r, err
+}
+
 // TxStore wraps a pgx.Tx and exposes the write methods needed for atomic
 // multi-operation sequences (e.g. state transition + audit event). Obtain
 // one via Store.Txn.

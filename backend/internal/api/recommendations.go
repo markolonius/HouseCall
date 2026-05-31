@@ -86,7 +86,12 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	rec, err := rt.store.GetRecommendation(ctx, claims.TenantID, recID)
+	// Use GetRecommendationForPhysician so the physician's care relationship
+	// with the patient is verified in the same query. A physician who is not in
+	// an active care relationship with the patient receives 404 — identical to
+	// the "does not exist" response — to avoid disclosing the recommendation's
+	// existence. Tenant scoping is enforced inside the method.
+	rec, err := rt.store.GetRecommendationForPhysician(ctx, claims.TenantID, claims.ActorID, recID)
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

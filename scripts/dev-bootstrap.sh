@@ -85,6 +85,40 @@ fi
 
 docker info >/dev/null 2>&1 || die "Docker socket unreachable even after 'colima start'. Inspect with 'colima status' and 'colima logs'."
 
+# The Homebrew `docker-compose` formula installs the v2 plugin binary but
+# does not symlink it into ~/.docker/cli-plugins/, where the docker CLI
+# discovers plugins. Without that, `docker compose ...` is parsed as bare
+# `docker` and fails with "unknown shorthand flag: 'd' in -d". Machines that
+# previously ran Docker Desktop also tend to have a stale symlink here
+# pointing into /Applications/Docker.app — replace it.
+PLUGIN_DIR="$HOME/.docker/cli-plugins"
+PLUGIN_LINK="$PLUGIN_DIR/docker-compose"
+COMPOSE_BIN="$(brew --prefix docker-compose)/bin/docker-compose"
+mkdir -p "$PLUGIN_DIR"
+if [[ -x "$COMPOSE_BIN" ]]; then
+  current_target="$(readlink "$PLUGIN_LINK" 2>/dev/null || true)"
+  if [[ "$current_target" != "$COMPOSE_BIN" ]]; then
+    log "Wiring docker compose plugin -> $COMPOSE_BIN"
+    ln -sfn "$COMPOSE_BIN" "$PLUGIN_LINK"
+  else
+    log "docker compose plugin already wired"
+  fi
+else
+  warn "docker-compose brew binary not found at $COMPOSE_BIN — 'brew bundle' should have installed it."
+fi
+docker compose version >/dev/null 2>&1 || die "'docker compose' still not working. Check $PLUGIN_LINK."
+
+# Docker Desktop also leaves "credsStore": "desktop" in ~/.docker/config.json,
+# which makes every image pull fail with `docker-credential-desktop: not found`
+# once Desktop is uninstalled. Strip it if present; with no auths configured,
+# Docker will store any future creds directly in the config file.
+DOCKER_CFG="$HOME/.docker/config.json"
+if [[ -f "$DOCKER_CFG" ]] && [[ "$(jq -r '.credsStore // ""' "$DOCKER_CFG")" == "desktop" ]]; then
+  log "Removing stale 'credsStore: desktop' from $DOCKER_CFG"
+  cp "$DOCKER_CFG" "$DOCKER_CFG.bak"
+  jq 'del(.credsStore)' "$DOCKER_CFG.bak" > "$DOCKER_CFG"
+fi
+
 log "Starting Dockerized Postgres"
 ( cd backend && make db-up )
 

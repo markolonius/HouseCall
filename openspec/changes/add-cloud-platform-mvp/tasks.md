@@ -80,9 +80,9 @@ compose stack; audit rows appear for each PHI-touching operation.
 ## Phase 3: Physician-in-Loop State Machine
 
 ### Task 3.1: State machine
-- [ ] `internal/domain` — `Transition(current, action, actor)` pure function
-- [ ] `DELIVERED` reachable only from `APPROVED` / `MODIFIED`
-- [ ] The agent has no code path beyond `DRAFT` → `PENDING_REVIEW`
+- [x] `internal/domain` — `Transition(current, action, actor)` pure function
+- [x] `DELIVERED` reachable only from `APPROVED` / `MODIFIED`
+- [x] The agent has no code path beyond `DRAFT` → `PENDING_REVIEW`
 
 ### Task 3.2: Enforcement & audit
 - [ ] State change + `audit_event` written in one DB transaction

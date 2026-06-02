@@ -393,6 +393,22 @@ func (s *Store) Txn(ctx context.Context, fn func(*TxStore) error) error {
 	return tx.Commit(ctx)
 }
 
+// CreateRecommendation inserts a new recommendation within tx.
+// Use this when the create must be atomic with a subsequent state update
+// and audit event (e.g. the agent drafting flow: DRAFT → PENDING_REVIEW + audit).
+func (ts *TxStore) CreateRecommendation(ctx context.Context, tenant TenantID, r Recommendation) (Recommendation, error) {
+	err := ts.tx.QueryRow(ctx,
+		`INSERT INTO recommendations
+		   (tenant_id, conversation_id, patient_id, state, payload_type, payload, draft_content)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
+		           draft_content, final_content, reviewed_by, reviewed_at, created_at`,
+		tenant.UUID(), r.ConversationID, r.PatientID, r.State, r.PayloadType, r.Payload, r.DraftContent,
+	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+	return r, err
+}
+
 // UpdateRecommendationState sets the state (and optionally reviewed_by,
 // reviewed_at, final_content) for a recommendation within tx.
 func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error {

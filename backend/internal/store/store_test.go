@@ -308,6 +308,73 @@ func TestTenantIsolation_AuditEvents(t *testing.T) {
 	}
 }
 
+// TestUpdateRecommendationState_ReviewedAt verifies the reviewed_at stamping
+// contract that Phase 5's physician queue depends on:
+//
+//   - Agent DRAFT→PENDING_REVIEW (reviewedBy == nil): reviewed_at stays NULL.
+//   - Physician review (reviewedBy != nil):          reviewed_at is set.
+func TestUpdateRecommendationState_ReviewedAt(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	f := setupFixture(t, s)
+	ctx := context.Background()
+
+	tid := TenantID(f.A.Tenant.ID)
+
+	// --- Step 1: agent transition (nil reviewedBy) ---
+	// Create a fresh DRAFT recommendation, then transition to PENDING_REVIEW
+	// with a nil reviewedBy (simulating the agent path in drafter.go).
+	rec, err := s.CreateRecommendation(ctx, tid, Recommendation{
+		ConversationID: f.A.Conversation.ID,
+		PatientID:      f.A.Patient.ID,
+		State:          "DRAFT",
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"agent draft"}`),
+		DraftContent:   "agent draft",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	if err := s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationState(ctx, tid, rec.ID, "PENDING_REVIEW", nil, nil)
+	}); err != nil {
+		t.Fatalf("agent transition: %v", err)
+	}
+
+	after, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get after agent transition: %v", err)
+	}
+	if after.ReviewedAt != nil {
+		t.Errorf("agent DRAFT→PENDING_REVIEW: reviewed_at = %v, want nil", after.ReviewedAt)
+	}
+	if after.ReviewedBy != nil {
+		t.Errorf("agent DRAFT→PENDING_REVIEW: reviewed_by = %v, want nil", after.ReviewedBy)
+	}
+
+	// --- Step 2: physician review (non-nil reviewedBy) ---
+	// Simulate a physician approving — reviewed_at must now be stamped.
+	physicianID := f.A.Physician.ID
+	finalText := "Approved."
+	if err := s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationState(ctx, tid, rec.ID, "APPROVED", &physicianID, &finalText)
+	}); err != nil {
+		t.Fatalf("physician review transition: %v", err)
+	}
+
+	reviewed, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get after physician review: %v", err)
+	}
+	if reviewed.ReviewedAt == nil {
+		t.Errorf("physician APPROVED: reviewed_at is nil, want non-nil timestamp")
+	}
+	if reviewed.ReviewedBy == nil || *reviewed.ReviewedBy != physicianID {
+		t.Errorf("physician APPROVED: reviewed_by = %v, want %v", reviewed.ReviewedBy, physicianID)
+	}
+}
+
 func TestSchemaRejectsCrossTenantParent(t *testing.T) {
 	// The composite (tenant_id, parent_id) FKs added in 0001_init mean a
 	// conversation cannot be written under tenant A pointing at a patient

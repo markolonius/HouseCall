@@ -81,6 +81,14 @@ func (s *stubClient) Complete(_ context.Context, _ []agent.Message) (string, err
 	return s.text, s.err
 }
 
+// panicClient is a ModelClient whose Complete method always panics. Used to
+// verify that DraftAsync's recover() keeps the process alive.
+type panicClient struct{}
+
+func (p *panicClient) Complete(_ context.Context, _ []agent.Message) (string, error) {
+	panic("simulated model client panic")
+}
+
 // stubNotifier records the last event sent to physicians.
 type stubNotifier struct {
 	mu     sync.Mutex
@@ -429,5 +437,40 @@ func TestDraft_ErrorPath_StructuredForTask43(t *testing.T) {
 	var me *agent.ModelError
 	if !errors.As(modelErr, &me) {
 		t.Errorf("expected *agent.ModelError, got %T", modelErr)
+	}
+}
+
+// TestDraft_PanicRecovery verifies that a panic inside the model client does
+// NOT crash the server process: DraftAsync recovers, no recommendation is
+// persisted, and no queue.updated event is emitted.
+func TestDraft_PanicRecovery(t *testing.T) {
+	pool := testPool(t)
+	s := store.New(pool)
+	f := setupDrafterFixture(t, s)
+	ctx := context.Background()
+
+	notifier := &stubNotifier{}
+	d := agent.NewDrafter(&panicClient{}, s, notifier)
+
+	// DraftAsync must return without panicking — if the goroutine's panic
+	// propagates the test binary itself will crash here.
+	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
+
+	// Give the goroutine time to run and recover; the panic client returns
+	// immediately so 200 ms is very generous.
+	time.Sleep(200 * time.Millisecond)
+
+	// No recommendation must be created when the client panicked.
+	recs, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StatePendingReview)
+	if err != nil {
+		t.Fatalf("list recs: %v", err)
+	}
+	if len(recs) != 0 {
+		t.Errorf("expected 0 recommendations after panicking client, got %d", len(recs))
+	}
+
+	// No queue.updated notification should be emitted on panic.
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 queue.updated events after panicking client, got %d", notifier.count())
 	}
 }

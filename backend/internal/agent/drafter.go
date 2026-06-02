@@ -50,6 +50,18 @@ func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier) 
 // HTTP handler returns.
 func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, patient store.Patient) {
 	go func() {
+		// Recover from any panic inside draft() (nil-deref, driver bug, etc.)
+		// so a single drafting failure cannot crash the server process.
+		// middleware.Recoverer only protects HTTP handler goroutines; fire-and-
+		// forget goroutines must manage their own recovery.
+		// Log type only — never the recovered value itself, which may echo
+		// request content or PHI.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("agent: draft panicked conversation_id=%s: %T", conv.ID, r)
+			}
+		}()
+
 		ctx := context.Background()
 		if err := d.draft(ctx, tenantID, conv, patient); err != nil {
 			// Task 4.3 will slot the failure path (ai_interaction_failed audit)

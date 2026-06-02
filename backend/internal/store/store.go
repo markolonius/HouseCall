@@ -411,10 +411,19 @@ func (ts *TxStore) CreateRecommendation(ctx context.Context, tenant TenantID, r 
 
 // UpdateRecommendationState sets the state (and optionally reviewed_by,
 // reviewed_at, final_content) for a recommendation within tx.
+//
+// reviewed_at is only stamped when reviewedBy is non-nil — i.e. when a human
+// physician performs the review. Agent-driven transitions (reviewedBy == nil,
+// e.g. DRAFT→PENDING_REVIEW) must leave reviewed_at NULL so the Phase 5
+// physician queue can use "reviewed_at IS NOT NULL" as a reliable human-review
+// proxy.
 func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error {
 	_, err := ts.tx.Exec(ctx,
 		`UPDATE recommendations
-		    SET state = $3, reviewed_by = $4, reviewed_at = NOW(), final_content = $5
+		    SET state         = $3,
+		        reviewed_by   = $4,
+		        reviewed_at   = CASE WHEN $4::uuid IS NOT NULL THEN NOW() ELSE reviewed_at END,
+		        final_content = $5
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id, state, reviewedBy, finalContent,
 	)

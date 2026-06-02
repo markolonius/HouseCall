@@ -113,10 +113,10 @@ state-licensing tests pass.
 - [x] Timeout + error handling; failures do not surface as clinical content
 
 ### Task 4.2: Reactive drafting
-- [ ] On a persisted patient message: assemble tenant-scoped conversation
+- [x] On a persisted patient message: assemble tenant-scoped conversation
       context, call the model, create a `recommendation` in `DRAFT` with
       `payload_type = 'guidance'` and `payload = {"text": <model output>}`
-- [ ] Immediately transition `DRAFT` → `PENDING_REVIEW`, write the audit event,
+- [x] Immediately transition `DRAFT` → `PENDING_REVIEW`, write the audit event,
       emit `queue.updated`
 
 ### Task 4.3: Failure path

@@ -108,9 +108,9 @@ state-licensing tests pass.
 ## Phase 4: AI Agent Runtime
 
 ### Task 4.1: Model client
-- [ ] `internal/agent` — OpenAI-compatible HTTP client, configurable via
+- [x] `internal/agent` — OpenAI-compatible HTTP client, configurable via
       `AGENT_MODEL_BASE_URL`
-- [ ] Timeout + error handling; failures do not surface as clinical content
+- [x] Timeout + error handling; failures do not surface as clinical content
 
 ### Task 4.2: Reactive drafting
 - [ ] On a persisted patient message: assemble tenant-scoped conversation

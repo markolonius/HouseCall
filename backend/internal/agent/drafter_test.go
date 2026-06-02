@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -387,6 +388,186 @@ func TestDraft_TenantScoping(t *testing.T) {
 		t.Errorf("tenant A has %d PENDING_REVIEW recommendations, want 1", len(recsA))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 4.3: failure-path tests
+// ---------------------------------------------------------------------------
+
+// assertFailurePath is a shared helper for the four Task 4.3 failure-mode
+// tests. It:
+//
+//  1. Waits up to 2 s for the goroutine to finish (detected via audit row).
+//  2. Asserts zero recommendations exist for the fixture's conversation.
+//  3. Asserts exactly one ai_interaction_failed audit row exists with the
+//     expected coarse reason and no PHI / model-body content.
+//  4. Asserts no queue.updated event was emitted.
+func assertFailurePath(t *testing.T, pool *pgxpool.Pool, s *store.Store, f drafterFixture, notifier *stubNotifier, wantReason string) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Poll until the audit row appears (goroutine completes near-instantly with
+	// stub clients, but give it up to 2 s to be safe in CI).
+	deadline := time.Now().Add(2 * time.Second)
+	var auditRows int
+	for time.Now().Before(deadline) {
+		row := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM audit_events
+			  WHERE tenant_id = $1 AND event_type = 'ai_interaction_failed'`,
+			f.TenantID.UUID(),
+		)
+		if err := row.Scan(&auditRows); err == nil && auditRows > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// (a) Zero recommendations for this tenant's conversation.
+	recs, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StatePendingReview)
+	if err != nil {
+		t.Fatalf("list PENDING_REVIEW recs: %v", err)
+	}
+	// Filter to the fixture's conversation to be safe when tests run in parallel
+	// against the same DB.
+	for _, r := range recs {
+		if r.ConversationID == f.Conv.ID {
+			t.Errorf("found unexpected PENDING_REVIEW recommendation for conversation %s", f.Conv.ID)
+		}
+	}
+	drafts, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StateDraft)
+	if err != nil {
+		t.Fatalf("list DRAFT recs: %v", err)
+	}
+	for _, r := range drafts {
+		if r.ConversationID == f.Conv.ID {
+			t.Errorf("found unexpected DRAFT recommendation for conversation %s", f.Conv.ID)
+		}
+	}
+
+	// (b) Exactly one ai_interaction_failed audit row with correct reason and no PHI.
+	rows, err := pool.Query(ctx,
+		`SELECT metadata FROM audit_events
+		  WHERE tenant_id = $1 AND event_type = 'ai_interaction_failed'
+		    AND metadata->>'conversation_id' = $2`,
+		f.TenantID.UUID(),
+		f.Conv.ID.String(),
+	)
+	if err != nil {
+		t.Fatalf("query ai_interaction_failed audit rows: %v", err)
+	}
+	defer rows.Close()
+
+	var count int
+	for rows.Next() {
+		count++
+		var meta []byte
+		if err := rows.Scan(&meta); err != nil {
+			t.Fatalf("scan audit metadata: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(meta, &m); err != nil {
+			t.Fatalf("unmarshal audit metadata: %v", err)
+		}
+		// Reason must match expected coarse string.
+		if got, ok := m["reason"].(string); !ok || got != wantReason {
+			t.Errorf("audit reason = %q, want %q (metadata=%s)", got, wantReason, meta)
+		}
+		// conversation_id and patient_id must be present (identifiers only).
+		if _, ok := m["conversation_id"]; !ok {
+			t.Errorf("audit metadata missing conversation_id")
+		}
+		if _, ok := m["patient_id"]; !ok {
+			t.Errorf("audit metadata missing patient_id")
+		}
+		// Metadata must not contain any model-body / PHI fields.
+		for _, forbidden := range []string{"body", "content", "text", "error", "detail", "message"} {
+			if _, present := m[forbidden]; present {
+				t.Errorf("audit metadata must not contain field %q (PHI/body leak)", forbidden)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 ai_interaction_failed audit row, got %d", count)
+	}
+
+	// (c) No queue.updated emitted.
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 queue.updated events on failure, got %d", notifier.count())
+	}
+}
+
+// TestDraft_FailurePath_TransportError verifies that a transport-level error
+// (connection refused / net.Error) produces no recommendation and an
+// ai_interaction_failed audit event with reason "model_unavailable".
+func TestDraft_FailurePath_TransportError(t *testing.T) {
+	pool := testPool(t)
+	s := store.New(pool)
+	f := setupDrafterFixture(t, s)
+
+	// Simulate a transport error (net.Error). We use a real *net.OpError which
+	// implements net.Error, wrapped in the same way the http client would surface
+	// a connection-refused error.
+	transportErr := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	notifier := &stubNotifier{}
+	d := agent.NewDrafter(&stubClient{err: transportErr}, s, notifier)
+	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
+
+	assertFailurePath(t, pool, s, f, notifier, "model_unavailable")
+}
+
+// TestDraft_FailurePath_ModelError verifies that a non-2xx HTTP response from
+// the model endpoint produces no recommendation and an ai_interaction_failed
+// audit event with reason "model_error".
+func TestDraft_FailurePath_ModelError(t *testing.T) {
+	pool := testPool(t)
+	s := store.New(pool)
+	f := setupDrafterFixture(t, s)
+
+	modelErr := &agent.ModelError{StatusCode: 503}
+	notifier := &stubNotifier{}
+	d := agent.NewDrafter(&stubClient{err: modelErr}, s, notifier)
+	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
+
+	assertFailurePath(t, pool, s, f, notifier, "model_error")
+}
+
+// TestDraft_FailurePath_ParseError verifies that a well-formed HTTP response
+// whose body cannot be decoded (or has no usable choices) produces no
+// recommendation and an ai_interaction_failed audit event with reason
+// "parse_error".
+func TestDraft_FailurePath_ParseError(t *testing.T) {
+	pool := testPool(t)
+	s := store.New(pool)
+	f := setupDrafterFixture(t, s)
+
+	parseErr := &agent.ParseError{Detail: "response contained no choices"}
+	notifier := &stubNotifier{}
+	d := agent.NewDrafter(&stubClient{err: parseErr}, s, notifier)
+	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
+
+	assertFailurePath(t, pool, s, f, notifier, "parse_error")
+}
+
+// TestDraft_FailurePath_Timeout verifies that a context deadline exceeded error
+// produces no recommendation and an ai_interaction_failed audit event with
+// reason "timeout".
+func TestDraft_FailurePath_Timeout(t *testing.T) {
+	pool := testPool(t)
+	s := store.New(pool)
+	f := setupDrafterFixture(t, s)
+
+	notifier := &stubNotifier{}
+	d := agent.NewDrafter(&stubClient{err: context.DeadlineExceeded}, s, notifier)
+	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
+
+	assertFailurePath(t, pool, s, f, notifier, "timeout")
+}
+
+// ---------------------------------------------------------------------------
+// Compile-time interface checks (moved after failure-path block)
+// ---------------------------------------------------------------------------
 
 // TestDraft_ModelClientInterface verifies that the ModelClient interface is
 // satisfied by a struct that does NOT embed *agent.Client — confirming the

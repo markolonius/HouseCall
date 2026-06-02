@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
+	"net"
 
 	"github.com/google/uuid"
 	"github.com/markolonius/housecall/backend/internal/domain"
@@ -64,10 +66,30 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 
 		ctx := context.Background()
 		if err := d.draft(ctx, tenantID, conv, patient); err != nil {
-			// Task 4.3 will slot the failure path (ai_interaction_failed audit)
-			// here. For now we log without exposing error bodies that may echo
-			// request content (see ModelError.Body HIPAA note in client.go).
+			// Log type only — never the error message or body, which may echo
+			// request content or PHI (see ModelError.Body HIPAA note in
+			// client.go).
 			log.Printf("agent: draft failed conversation_id=%s: %T", conv.ID, err)
+
+			// Write the ai_interaction_failed audit event. The metadata contains
+			// only identifiers and a coarse reason derived from the error type —
+			// no PHI, no model error body, no error message text.
+			reason := draftFailureReason(err)
+			_, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+				ActorType: string(domain.ActorAgent),
+				ActorID:   nil, // agent has no user UUID
+				EventType: "ai_interaction_failed",
+				Metadata: mustMarshalJSON(map[string]any{
+					"conversation_id": conv.ID.String(),
+					"patient_id":      patient.ID.String(),
+					"reason":          reason,
+				}),
+			})
+			if auditErr != nil {
+				// A failed audit write must not crash the goroutine. Log the
+				// error type only — never the value, which could echo PHI.
+				log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+			}
 		}
 	}()
 }
@@ -174,6 +196,45 @@ func (d *Drafter) draft(ctx context.Context, tenantID store.TenantID, conv store
 	}))
 
 	return nil
+}
+
+// draftFailureReason maps a draft error to a coarse, safe string reason that
+// can appear in audit metadata. The mapping is entirely type-driven — the
+// error message, body, or any embedded content is never inspected, so no PHI
+// or model-response content can leak into audit rows.
+//
+//   - context.DeadlineExceeded                   → "timeout"
+//   - *ParseError                                → "parse_error"
+//   - *ModelError (connection refused / net err) → "model_unavailable"
+//   - *ModelError (non-2xx from the model)       → "model_error"
+//   - anything else                              → "internal_error"
+func draftFailureReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	var pe *ParseError
+	if errors.As(err, &pe) {
+		return "parse_error"
+	}
+	var me *ModelError
+	if errors.As(err, &me) {
+		// Distinguish a transport/connection failure (wrapped inside ModelError
+		// only when the HTTP client itself fails before a status code is
+		// available) from a well-formed non-2xx response. A net.Error or
+		// context.Canceled unwrapped from the error signals "unreachable";
+		// a StatusCode > 0 signals the model replied with an error status.
+		if me.StatusCode == 0 {
+			return "model_unavailable"
+		}
+		return "model_error"
+	}
+	// Transport errors that are not wrapped in *ModelError (e.g. connection
+	// refused before any HTTP response is parsed).
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return "model_unavailable"
+	}
+	return "internal_error"
 }
 
 func mustMarshalJSON(v any) []byte {

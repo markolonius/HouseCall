@@ -120,7 +120,7 @@ state-licensing tests pass.
       emit `queue.updated`
 
 ### Task 4.3: Failure path
-- [ ] Model endpoint unavailable → no recommendation created,
+- [x] Model endpoint unavailable → no recommendation created,
       `ai_interaction_failed` audit event written
 
 **Validation**: a patient message produces a `PENDING_REVIEW` recommendation;

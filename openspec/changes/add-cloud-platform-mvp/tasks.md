@@ -133,8 +133,8 @@ a forced model failure produces no recommendation and an audit event.
 - [x] Base `html/template` layout
 
 ### Task 5.2: Panel & queue
-- [ ] `GET /panel` — the physician's active care relationships
-- [ ] `GET /queue` — `PENDING_REVIEW` recommendations for their patients only
+- [x] `GET /panel` — the physician's active care relationships
+- [x] `GET /queue` — `PENDING_REVIEW` recommendations for their patients only
 
 ### Task 5.3: Review actions
 - [ ] `approve` / `reject` / `modify` (htmx) → Core API review endpoint

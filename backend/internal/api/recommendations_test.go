@@ -317,10 +317,32 @@ func TestHandler_PhysicianNotFound_Returns403(t *testing.T) {
 	}
 
 	// Delete the physician so GetPhysician returns ErrNotFound during the request.
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM physicians WHERE id = $1 AND tenant_id = $2`,
-		physician.ID, tid.UUID()); err != nil {
-		t.Fatalf("delete physician: %v", err)
+	//
+	// The care_relationships FK (ON DELETE RESTRICT) prevents a plain DELETE on
+	// physicians while care_relationships still references the physician — but we
+	// need the care_relationships row to survive so that GetRecommendationForPhysician
+	// can find the recommendation at request time (it JOINs on care_relationships).
+	// We use a dedicated connection with session_replication_role = replica to
+	// bypass FK enforcement for just this one DELETE, then restore the default.
+	// This is test-only infrastructure: the FK continues to protect production
+	// writes via every other connection.
+	{
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire conn for physician delete: %v", err)
+		}
+		defer conn.Release()
+		if _, err := conn.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+			t.Fatalf("set session_replication_role: %v", err)
+		}
+		if _, err := conn.Exec(ctx,
+			`DELETE FROM physicians WHERE id = $1 AND tenant_id = $2`,
+			physician.ID, tid.UUID()); err != nil {
+			t.Fatalf("delete physician: %v", err)
+		}
+		if _, err := conn.Exec(ctx, `SET session_replication_role = DEFAULT`); err != nil {
+			t.Fatalf("reset session_replication_role: %v", err)
+		}
 	}
 
 	// --- build the real router ---

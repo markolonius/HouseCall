@@ -137,8 +137,8 @@ a forced model failure produces no recommendation and an audit event.
 - [x] `GET /queue` — `PENDING_REVIEW` recommendations for their patients only
 
 ### Task 5.3: Review actions
-- [ ] `approve` / `reject` / `modify` (htmx) → Core API review endpoint
-- [ ] `modify` allows editing `final_content` before delivery
+- [x] `approve` / `reject` / `modify` (htmx) → Core API review endpoint
+- [x] `modify` allows editing `final_content` before delivery
 
 **Validation**: a physician can log in, see only their patients' pending
 recommendations, and drive each of the three actions.

@@ -1201,6 +1201,77 @@ func auditEventSummary(fs *fakeStore) []string {
 	return out
 }
 
+// TestReview_PhysicianNotFound verifies that when the session actor's physician
+// record cannot be resolved (review.ErrActorNotFound), the web handler redirects
+// to /web/login (treating it as an auth anomaly, not a normal 404).
+func TestReview_PhysicianNotFound(t *testing.T) {
+	// Build a store where the recommendation exists but the physician record does
+	// not (physByID is empty → GetPhysician returns ErrNotFound → ErrActorNotFound).
+	patient := store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenantID,
+		State:    "CA",
+	}
+	rec := store.Recommendation{
+		ID:           testRecID,
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        domain.StatePendingReview,
+		PayloadType:  "guidance",
+		DraftContent: "Drink water",
+	}
+	fs := &fakeStore{
+		physicians:   map[string]store.Physician{},
+		physByID:     map[uuid.UUID]store.Physician{}, // empty → GetPhysician returns ErrNotFound
+		patientsByID: map[uuid.UUID]store.Patient{testPatientID: patient},
+		recsByID:     map[uuid.UUID]store.Recommendation{testRecID: rec},
+		recsByPhys: map[string][]store.Recommendation{
+			testPhysID.String(): {rec},
+		},
+		updatedStates: make(map[uuid.UUID]string),
+	}
+
+	h := buildHandler(t, fs)
+	resp := postReview(t, h, testRecID, domain.ActionApprove, "")
+
+	// Physician-not-found is an auth/session anomaly → redirect to login.
+	if resp.Code != http.StatusSeeOther && resp.Code != http.StatusFound {
+		t.Fatalf("physician not found: want redirect (302/303), got %d", resp.Code)
+	}
+	loc := resp.Header().Get("Location")
+	if !strings.Contains(loc, "/web/login") {
+		t.Fatalf("physician not found: expected redirect to /web/login, got %q", loc)
+	}
+	// State must not have been mutated.
+	if _, changed := fs.updatedStates[testRecID]; changed {
+		t.Error("physician not found: state must not be mutated")
+	}
+}
+
+// TestReview_ExactlyOneAuditEvent verifies that a successful web review
+// produces exactly ONE recommendation.reviewed audit event — the atomic event
+// written by review.Execute — and not a second out-of-transaction event.
+func TestReview_ExactlyOneAuditEvent(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	resp := postReview(t, h, testRecID, domain.ActionApprove, "")
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("approve: want 303, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+
+	var count int
+	for _, e := range fs.auditEvents {
+		if e.EventType == "recommendation.reviewed" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 recommendation.reviewed audit event, got %d (events: %v)",
+			count, auditEventSummary(fs))
+	}
+}
+
 // Prevent unused import error — errors is used in fakeStore implementations.
 var _ = errors.New
 var _ = fmt.Sprintf

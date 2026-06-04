@@ -91,6 +91,13 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 	// Delegate to the shared, transport-agnostic review logic. This ensures the
 	// web app and the JSON API drive identical state-machine semantics.
 	result, err := review.Execute(ctx, rt.store, claims.TenantID, claims.ActorID, recID, req.Action, req.FinalContent)
+	if errors.Is(err, review.ErrActorNotFound) {
+		// Physician record not found for the session actor — treat as 403 (session
+		// anomaly) rather than leaking internal state, preserving the original
+		// pre-refactor contract.
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

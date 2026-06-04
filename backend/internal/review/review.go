@@ -20,6 +20,13 @@ import (
 	"github.com/markolonius/housecall/backend/internal/store"
 )
 
+// ErrActorNotFound is returned by Execute when the physician record cannot be
+// resolved for the session actor. This is distinct from store.ErrNotFound
+// (recommendation not found / no care relationship) so transports can map each
+// case to the correct HTTP status: recommendation-not-found → 404,
+// physician-not-found → 403 (session/auth anomaly, not a lookup miss).
+var ErrActorNotFound = errors.New("review: actor (physician) not found")
+
 // Store is the minimum set of store operations that Execute requires.
 // *store.Store satisfies this interface in production; test fakes supply their
 // own implementation so tests can run without a real database connection.
@@ -96,7 +103,10 @@ func Execute(
 	phys, err := s.GetPhysician(ctx, tenant, physicianID)
 	if errors.Is(err, store.ErrNotFound) {
 		// Should never happen if the JWT actor was validated, but guard anyway.
-		return Result{}, store.ErrNotFound
+		// Return ErrActorNotFound (distinct from store.ErrNotFound) so transports
+		// can map physician-not-found to 403 rather than 404 — a missing actor
+		// is a session/auth anomaly, not a normal lookup miss.
+		return Result{}, ErrActorNotFound
 	} else if err != nil {
 		return Result{}, err
 	}

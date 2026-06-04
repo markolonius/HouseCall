@@ -446,6 +446,13 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	result, err := review.Execute(ctx, h.reviewStore(), claims.TenantID, claims.ActorID, recID, action, finalContent)
 
+	if errors.Is(err, review.ErrActorNotFound) {
+		// Physician record not found for the session actor — the session is no
+		// longer valid. Redirect to login (same policy as requireWebAuth for any
+		// auth anomaly).
+		http.Redirect(w, r, "/web/login", http.StatusSeeOther)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -466,12 +473,12 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeAudit(ctx, claims.TenantID, "physician", &claims.ActorID, "web.recommendation.reviewed", map[string]any{
-		"actor_id":          claims.ActorID.String(),
-		"recommendation_id": result.RecommendationID.String(),
-		"action":            action,
-		"new_state":         result.FinalState,
-	})
+	// The recommendation.reviewed audit event is written atomically inside
+	// review.Execute's TxnW — do NOT write a second event here. Writing it
+	// outside the transaction would (a) duplicate the event on the web path
+	// while the API path emits only one, and (b) break atomicity (the audit
+	// row would be written even if the state update rolled back).
+	_ = result // result used for redirect; audit already handled
 
 	// Redirect back to the queue (PRG pattern: prevents double-submit on reload).
 	http.Redirect(w, r, "/web/queue", http.StatusSeeOther)

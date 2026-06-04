@@ -9,6 +9,11 @@
 
 {{define "content"}}
 <h2 style="margin-bottom:1.25rem;font-size:1.25rem;">Pending Review Queue</h2>
+
+{{if .Error}}
+<div class="flash-error">{{.Error}}</div>
+{{end}}
+
 {{if .Recommendations}}
 <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08);">
   <thead>
@@ -17,6 +22,7 @@
       <th style="padding:.65rem 1rem;">Type</th>
       <th style="padding:.65rem 1rem;">Draft</th>
       <th style="padding:.65rem 1rem;">Created</th>
+      <th style="padding:.65rem 1rem;">Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -26,6 +32,47 @@
       <td style="padding:.65rem 1rem;">{{.PayloadType}}</td>
       <td style="padding:.65rem 1rem;">{{.DraftContent}}</td>
       <td style="padding:.65rem 1rem;font-size:.85rem;color:#6b7280;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+      <td style="padding:.65rem 1rem;">
+        {{/* Approve: no edit needed — physician confirms draft content */}}
+        <form method="POST" action="/web/recommendations/{{.ID}}/review" style="display:inline;">
+          <input type="hidden" name="action" value="approve">
+          <button type="submit"
+            style="background:#1d6f42;color:#fff;border:none;padding:.35rem .75rem;border-radius:4px;cursor:pointer;font-size:.85rem;">
+            Approve
+          </button>
+        </form>
+
+        {{/* Reject */}}
+        <form method="POST" action="/web/recommendations/{{.ID}}/review" style="display:inline;margin-left:.4rem;">
+          <input type="hidden" name="action" value="reject">
+          <button type="submit"
+            style="background:#9b1c1c;color:#fff;border:none;padding:.35rem .75rem;border-radius:4px;cursor:pointer;font-size:.85rem;">
+            Reject
+          </button>
+        </form>
+
+        {{/* Modify: inline textarea + submit button */}}
+        <details style="display:inline-block;margin-left:.4rem;vertical-align:top;">
+          <summary style="cursor:pointer;background:#1d3557;color:#fff;border:none;padding:.35rem .75rem;border-radius:4px;font-size:.85rem;list-style:none;display:inline-block;">
+            Modify &amp; Deliver
+          </summary>
+          <div style="margin-top:.5rem;padding:.75rem;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;">
+            <form method="POST" action="/web/recommendations/{{.ID}}/review">
+              <input type="hidden" name="action" value="modify">
+              <label style="display:block;font-size:.85rem;margin-bottom:.35rem;">
+                Edited content (required):
+              </label>
+              <textarea name="final_content" rows="3"
+                style="width:100%;padding:.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:.85rem;resize:vertical;"
+                placeholder="Enter edited recommendation text…"></textarea>
+              <button type="submit"
+                style="margin-top:.5rem;background:#1d3557;color:#fff;border:none;padding:.35rem .75rem;border-radius:4px;cursor:pointer;font-size:.85rem;">
+                Deliver Modified
+              </button>
+            </form>
+          </div>
+        </details>
+      </td>
     </tr>
     {{end}}
   </tbody>

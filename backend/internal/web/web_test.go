@@ -21,6 +21,7 @@ package web_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/markolonius/housecall/backend/internal/domain"
 	"github.com/markolonius/housecall/backend/internal/store"
 	"github.com/markolonius/housecall/backend/internal/web"
 	"golang.org/x/crypto/bcrypt"
@@ -45,13 +47,21 @@ var testSecret = []byte("web-test-secret-32-bytes!!!!!!!")
 // fakeStore implements the store methods the web package calls so tests can
 // run without a database.
 type fakeStore struct {
-	physicians      map[string]store.Physician      // keyed by email
-	patients        map[string]store.Patient        // keyed by email
-	panelPatients   []store.Patient                 // returned by ListPatientsByPhysician
-	queueRecs       []store.Recommendation          // returned by ListRecommendationsByPhysician
+	physicians    map[string]store.Physician    // keyed by email
+	patients      map[string]store.Patient      // keyed by email
+	panelPatients []store.Patient               // returned by ListPatientsByPhysician
+	queueRecs     []store.Recommendation        // returned by ListRecommendationsByPhysician
 	// physicianForPanel / Rec scoping: keyed by physician id string
-	panelByPhys     map[string][]store.Patient
-	recsByPhys      map[string][]store.Recommendation
+	panelByPhys map[string][]store.Patient
+	recsByPhys  map[string][]store.Recommendation
+
+	// review action support (task 5.3)
+	recsByID      map[uuid.UUID]store.Recommendation // all recs by ID (for GetRecommendationForPhysician)
+	physByID      map[uuid.UUID]store.Physician      // physicians by ID (for GetPhysician)
+	patientsByID  map[uuid.UUID]store.Patient        // patients by ID (for GetPatient)
+	auditEvents   []store.AuditEvent                 // captured audit events
+	updatedStates map[uuid.UUID]string               // final state per recommendation (set by Txn)
+	txnErr        error                              // if set, Txn returns this error
 }
 
 func (f *fakeStore) GetPhysicianByEmail(_ context.Context, tenant store.TenantID, email string) (store.Physician, error) {
@@ -120,6 +130,86 @@ func (f *fakeStore) ListRecommendationsByPhysician(_ context.Context, tenant sto
 	return out, nil
 }
 
+// ---- review action methods (task 5.3) ----
+
+func (f *fakeStore) GetRecommendationForPhysician(_ context.Context, tenant store.TenantID, physicianID, recID uuid.UUID) (store.Recommendation, error) {
+	r, ok := f.recsByID[recID]
+	if !ok || r.TenantID != tenant {
+		return store.Recommendation{}, store.ErrNotFound
+	}
+	// Check that the physician has an active care relationship (simulated by
+	// verifying the physician is listed in recsByPhys for the patient).
+	if f.recsByPhys != nil {
+		found := false
+		for _, rec := range f.recsByPhys[physicianID.String()] {
+			if rec.ID == recID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return store.Recommendation{}, store.ErrNotFound
+		}
+	}
+	return r, nil
+}
+
+func (f *fakeStore) GetPhysician(_ context.Context, tenant store.TenantID, id uuid.UUID) (store.Physician, error) {
+	p, ok := f.physByID[id]
+	if !ok || p.TenantID != tenant {
+		return store.Physician{}, store.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakeStore) GetPatient(_ context.Context, tenant store.TenantID, id uuid.UUID) (store.Patient, error) {
+	p, ok := f.patientsByID[id]
+	if !ok || p.TenantID != tenant {
+		return store.Patient{}, store.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakeStore) CreateAuditEvent(_ context.Context, _ store.TenantID, e store.AuditEvent) (store.AuditEvent, error) {
+	f.auditEvents = append(f.auditEvents, e)
+	return e, nil
+}
+
+// TxnW simulates a transaction by calling fn with a fakeTxWriter that
+// captures UpdateRecommendationState calls into f.updatedStates and
+// CreateAuditEvent calls into f.auditEvents.
+func (f *fakeStore) TxnW(_ context.Context, fn func(store.TxWriter) error) error {
+	if f.txnErr != nil {
+		return f.txnErr
+	}
+	if f.updatedStates == nil {
+		f.updatedStates = make(map[uuid.UUID]string)
+	}
+	return fn(&fakeTxWriter{f: f})
+}
+
+// fakeTxWriter implements store.TxWriter for DB-free tests.
+type fakeTxWriter struct{ f *fakeStore }
+
+func (t *fakeTxWriter) UpdateRecommendationState(_ context.Context, _ store.TenantID, id uuid.UUID, state string, _ *uuid.UUID, content *string) error {
+	if t.f.updatedStates == nil {
+		t.f.updatedStates = make(map[uuid.UUID]string)
+	}
+	t.f.updatedStates[id] = state
+	// Update the recommendation in recsByID so subsequent reads reflect the new state.
+	if rec, ok := t.f.recsByID[id]; ok {
+		rec.State = state
+		rec.FinalContent = content
+		t.f.recsByID[id] = rec
+	}
+	return nil
+}
+
+func (t *fakeTxWriter) CreateAuditEvent(_ context.Context, _ store.TenantID, e store.AuditEvent) error {
+	t.f.auditEvents = append(t.f.auditEvents, e)
+	return nil
+}
+
 // storeAdapter wraps fakeStore to satisfy the web.StoreQuerier interface.
 type storeAdapter struct{ f *fakeStore }
 
@@ -133,6 +223,26 @@ func (a *storeAdapter) ListPatientsByPhysician(ctx context.Context, t store.Tena
 
 func (a *storeAdapter) ListRecommendationsByPhysician(ctx context.Context, t store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error) {
 	return a.f.ListRecommendationsByPhysician(ctx, t, physicianID, state)
+}
+
+func (a *storeAdapter) GetRecommendationForPhysician(ctx context.Context, t store.TenantID, physicianID, recID uuid.UUID) (store.Recommendation, error) {
+	return a.f.GetRecommendationForPhysician(ctx, t, physicianID, recID)
+}
+
+func (a *storeAdapter) GetPhysician(ctx context.Context, t store.TenantID, id uuid.UUID) (store.Physician, error) {
+	return a.f.GetPhysician(ctx, t, id)
+}
+
+func (a *storeAdapter) GetPatient(ctx context.Context, t store.TenantID, id uuid.UUID) (store.Patient, error) {
+	return a.f.GetPatient(ctx, t, id)
+}
+
+func (a *storeAdapter) CreateAuditEvent(ctx context.Context, t store.TenantID, e store.AuditEvent) (store.AuditEvent, error) {
+	return a.f.CreateAuditEvent(ctx, t, e)
+}
+
+func (a *storeAdapter) TxnW(ctx context.Context, fn func(store.TxWriter) error) error {
+	return a.f.TxnW(ctx, fn)
 }
 
 // noopAuditWriter discards all audit events for tests that don't need a DB.
@@ -731,6 +841,364 @@ func TestNavLinks_PanelAndQueue(t *testing.T) {
 			t.Errorf("%s: page must contain nav link to /web/queue", path)
 		}
 	}
+}
+
+// ---- review action tests (task 5.3) ---------------------------------------------
+
+// testRecID is a stable recommendation UUID used across review action tests.
+var testRecID = uuid.MustParse("55555555-0000-0000-0000-000000000005")
+
+// newFakeStoreForReview returns a fakeStore pre-populated with a PENDING_REVIEW
+// recommendation, a physician (with given states_licensed), and their patient (in state patientState).
+func newFakeStoreForReview(physStates []string, patientState string) *fakeStore {
+	phys := store.Physician{
+		ID:             testPhysID,
+		TenantID:       testTenantID,
+		Email:          "doc@clinic.example",
+		StatesLicensed: physStates,
+	}
+	patient := store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenantID,
+		State:    patientState,
+	}
+	rec := store.Recommendation{
+		ID:           testRecID,
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        domain.StatePendingReview,
+		PayloadType:  "guidance",
+		DraftContent: "Drink plenty of water and rest",
+	}
+	return &fakeStore{
+		physicians:   map[string]store.Physician{"doc@clinic.example": phys},
+		physByID:     map[uuid.UUID]store.Physician{testPhysID: phys},
+		patientsByID: map[uuid.UUID]store.Patient{testPatientID: patient},
+		recsByID:     map[uuid.UUID]store.Recommendation{testRecID: rec},
+		// recsByPhys wires the care-relationship check in GetRecommendationForPhysician.
+		recsByPhys: map[string][]store.Recommendation{
+			testPhysID.String(): {rec},
+		},
+		updatedStates: make(map[uuid.UUID]string),
+	}
+}
+
+// postReview sends a POST to /web/recommendations/{id}/review with the given
+// action and optional final_content, using the session cookie for testPhysID.
+func postReview(t *testing.T, h http.Handler, recID uuid.UUID, action, finalContent string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{"action": {action}}
+	if finalContent != "" {
+		form.Set("final_content", finalContent)
+	}
+	req := httptest.NewRequest(http.MethodPost,
+		"/web/recommendations/"+recID.String()+"/review",
+		strings.NewReader(form.Encode()),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestReview_Unauthenticated verifies that an unauthenticated POST to the
+// review endpoint redirects to login.
+func TestReview_Unauthenticated(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	form := url.Values{"action": {"approve"}}
+	req := httptest.NewRequest(http.MethodPost,
+		"/web/recommendations/"+testRecID.String()+"/review",
+		strings.NewReader(form.Encode()),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestReview_NonPhysician verifies that a patient JWT is rejected.
+func TestReview_NonPhysician(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	form := url.Values{"action": {"approve"}}
+	req := httptest.NewRequest(http.MethodPost,
+		"/web/recommendations/"+testRecID.String()+"/review",
+		strings.NewReader(form.Encode()),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(makeCookie(t, testTenantID, testPatientID, "patient"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestReview_Approve verifies that POSTing action=approve:
+//   - Redirects back to /web/queue (303)
+//   - Drives the recommendation to DELIVERED
+//   - Sets final_content to the draft (no override provided)
+//   - Writes a recommendation.reviewed audit event
+func TestReview_Approve(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionApprove, "")
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("approve: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/web/queue" {
+		t.Fatalf("approve: want redirect to /web/queue, got %q", loc)
+	}
+
+	// The recommendation must have reached DELIVERED.
+	if got := fs.updatedStates[testRecID]; got != domain.StateDelivered {
+		t.Fatalf("approve: want state DELIVERED, got %q", got)
+	}
+
+	// A recommendation.reviewed audit event must have been written.
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionApprove, domain.StateDelivered)
+}
+
+// TestReview_Reject verifies that POSTing action=reject drives the
+// recommendation to REJECTED and redirects to the queue.
+func TestReview_Reject(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionReject, "")
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("reject: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	if got := fs.updatedStates[testRecID]; got != domain.StateRejected {
+		t.Fatalf("reject: want state REJECTED, got %q", got)
+	}
+
+	// Verify final_content is nil (patients must never see a rejected rec's content).
+	if r, ok := fs.recsByID[testRecID]; ok && r.FinalContent != nil {
+		t.Error("reject: final_content must remain nil for REJECTED recommendations")
+	}
+
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionReject, domain.StateRejected)
+}
+
+// TestReview_Modify verifies that POSTing action=modify with final_content:
+//   - Drives the recommendation to DELIVERED
+//   - Sets final_content to the physician's edited value
+//   - Redirects to the queue
+func TestReview_Modify(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+	editedContent := "Take ibuprofen 400 mg twice daily"
+
+	rec := postReview(t, h, testRecID, domain.ActionModify, editedContent)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("modify: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	if got := fs.updatedStates[testRecID]; got != domain.StateDelivered {
+		t.Fatalf("modify: want state DELIVERED, got %q", got)
+	}
+
+	// final_content must equal the physician's edited text.
+	r := fs.recsByID[testRecID]
+	if r.FinalContent == nil {
+		t.Fatal("modify: final_content must be set after delivery")
+	}
+	if *r.FinalContent != editedContent {
+		t.Fatalf("modify: final_content = %q, want %q", *r.FinalContent, editedContent)
+	}
+
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionModify, domain.StateDelivered)
+}
+
+// TestReview_ModifyMissingFinalContent verifies that a modify action without
+// final_content is rejected (400) and state is not mutated.
+func TestReview_ModifyMissingFinalContent(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionModify, "")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("modify without content: want 400, got %d", rec.Code)
+	}
+	// State must not have changed.
+	if _, changed := fs.updatedStates[testRecID]; changed {
+		t.Error("modify without content: state must not be mutated")
+	}
+}
+
+// TestReview_UnlicensedPhysician verifies that an unlicensed physician:
+//   - Receives a 403 response with the queue re-rendered
+//   - Does NOT mutate state
+//   - Has a recommendation.review_rejected audit event written
+func TestReview_UnlicensedPhysician(t *testing.T) {
+	// Physician licensed in NY, patient in CA.
+	fs := newFakeStoreForReview([]string{"NY"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionApprove, "")
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unlicensed: want 403, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// The recommendation state must NOT have been updated.
+	if _, changed := fs.updatedStates[testRecID]; changed {
+		t.Error("unlicensed: state must not be mutated when physician is unlicensed")
+	}
+
+	// A review_rejected audit event must have been written.
+	found := false
+	for _, e := range fs.auditEvents {
+		if e.EventType == "recommendation.review_rejected" {
+			var meta map[string]any
+			if err := json.Unmarshal(e.Metadata, &meta); err == nil {
+				if meta["reason"] == "unlicensed_state" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("unlicensed: expected recommendation.review_rejected audit event with reason=unlicensed_state")
+	}
+
+	// Queue page must be re-rendered (not a redirect).
+	body := rec.Body.String()
+	if !strings.Contains(body, "not licensed in the patient") {
+		t.Error("unlicensed: response body must contain physician-facing error message")
+	}
+}
+
+// TestReview_NotOwnPatient verifies that a physician cannot act on a
+// recommendation belonging to a patient outside their care relationship.
+func TestReview_NotOwnPatient(t *testing.T) {
+	// testPhysID2 is NOT in testPhysID's recsByPhys.
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	// Change the rec to belong to phys2's patient.
+	unrelatedRec := store.Recommendation{
+		ID:           uuid.MustParse("66666666-0000-0000-0000-000000000006"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID2,
+		State:        domain.StatePendingReview,
+		PayloadType:  "guidance",
+		DraftContent: "Another recommendation",
+	}
+	fs.recsByID[unrelatedRec.ID] = unrelatedRec
+	// testPhysID's recsByPhys does NOT include unrelatedRec, so GetRecommendationForPhysician returns 404.
+
+	h := buildHandler(t, fs)
+
+	form := url.Values{"action": {"approve"}}
+	req := httptest.NewRequest(http.MethodPost,
+		"/web/recommendations/"+unrelatedRec.ID.String()+"/review",
+		strings.NewReader(form.Encode()),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("not-own-patient: want 404, got %d", rec.Code)
+	}
+}
+
+// TestReview_InvalidRecID verifies that a non-UUID recommendation id returns 400.
+func TestReview_InvalidRecID(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	form := url.Values{"action": {"approve"}}
+	req := httptest.NewRequest(http.MethodPost, "/web/recommendations/not-a-uuid/review",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid id: want 400, got %d", rec.Code)
+	}
+}
+
+// TestReview_QueueShowsActionForms verifies that the queue page renders Approve,
+// Reject, and Modify controls for a PENDING_REVIEW recommendation.
+func TestReview_QueueShowsActionForms(t *testing.T) {
+	rec := store.Recommendation{
+		ID:           testRecID,
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        domain.StatePendingReview,
+		PayloadType:  "guidance",
+		DraftContent: "Take vitamin D",
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{rec},
+	}
+	h := buildHandler(t, fs)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("queue with rec: want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+
+	// Must contain review action forms.
+	if !strings.Contains(body, `value="approve"`) {
+		t.Error("queue must contain an approve action")
+	}
+	if !strings.Contains(body, `value="reject"`) {
+		t.Error("queue must contain a reject action")
+	}
+	if !strings.Contains(body, `value="modify"`) {
+		t.Error("queue must contain a modify action")
+	}
+	// final_content textarea for the modify flow.
+	if !strings.Contains(body, `name="final_content"`) {
+		t.Error("queue must contain a final_content input for the modify flow")
+	}
+}
+
+// assertAuditEvent is a helper that verifies the fakeStore has an audit event
+// of the given type with matching action and new_state metadata fields.
+func assertAuditEvent(t *testing.T, fs *fakeStore, eventType, action, newState string) {
+	t.Helper()
+	for _, e := range fs.auditEvents {
+		if e.EventType != eventType {
+			continue
+		}
+		var meta map[string]any
+		if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+			continue
+		}
+		if meta["action"] == action && meta["new_state"] == newState {
+			return
+		}
+	}
+	t.Errorf("expected audit event type=%q action=%q new_state=%q; got events: %v",
+		eventType, action, newState, auditEventSummary(fs))
+}
+
+func auditEventSummary(fs *fakeStore) []string {
+	var out []string
+	for _, e := range fs.auditEvents {
+		out = append(out, e.EventType+":"+string(e.Metadata))
+	}
+	return out
 }
 
 // Prevent unused import error — errors is used in fakeStore implementations.

@@ -371,6 +371,14 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 	return r, err
 }
 
+// TxWriter is the minimum write interface needed inside a transaction. It is
+// satisfied by *TxStore in production and by test fakes that do not require a
+// real database connection.
+type TxWriter interface {
+	UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error
+	CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error
+}
+
 // TxStore wraps a pgx.Tx and exposes the write methods needed for atomic
 // multi-operation sequences (e.g. state transition + audit event). Obtain
 // one via Store.Txn.
@@ -391,6 +399,17 @@ func (s *Store) Txn(ctx context.Context, fn func(*TxStore) error) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// TxnW executes fn inside a transaction, passing a TxWriter interface value
+// rather than the concrete *TxStore. This allows callers that accept a
+// store.TxWriter (e.g. internal/review) to share the same transaction without
+// an import cycle. The transaction is committed if fn returns nil; rolled back
+// otherwise.
+func (s *Store) TxnW(ctx context.Context, fn func(TxWriter) error) error {
+	return s.Txn(ctx, func(tx *TxStore) error {
+		return fn(tx)
+	})
 }
 
 // CreateRecommendation inserts a new recommendation within tx.

@@ -21,6 +21,13 @@ type StoreQuerier interface {
 	GetPhysicianByEmail(ctx context.Context, tenant store.TenantID, email string) (store.Physician, error)
 	ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error)
 	ListRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error)
+
+	// Review action methods (task 5.3).
+	GetRecommendationForPhysician(ctx context.Context, tenant store.TenantID, physicianID, recID uuid.UUID) (store.Recommendation, error)
+	GetPhysician(ctx context.Context, tenant store.TenantID, id uuid.UUID) (store.Physician, error)
+	GetPatient(ctx context.Context, tenant store.TenantID, id uuid.UUID) (store.Patient, error)
+	CreateAuditEvent(ctx context.Context, tenant store.TenantID, e store.AuditEvent) (store.AuditEvent, error)
+	TxnW(ctx context.Context, fn func(store.TxWriter) error) error
 }
 
 // AuditQuerier is the audit-write interface used by the Handler.

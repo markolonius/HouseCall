@@ -26,6 +26,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/markolonius/housecall/backend/internal/audit"
+	"github.com/markolonius/housecall/backend/internal/domain"
+	"github.com/markolonius/housecall/backend/internal/review"
 	"github.com/markolonius/housecall/backend/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,6 +57,14 @@ type Handler struct {
 		GetPhysicianByEmail(ctx context.Context, tenant store.TenantID, email string) (store.Physician, error)
 		ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error)
 		ListRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error)
+
+		// Review action methods (task 5.3). These satisfy review.Store so the
+		// handler can pass storeQ directly to review.Execute in tests.
+		GetRecommendationForPhysician(ctx context.Context, tenant store.TenantID, physicianID, recID uuid.UUID) (store.Recommendation, error)
+		GetPhysician(ctx context.Context, tenant store.TenantID, id uuid.UUID) (store.Physician, error)
+		GetPatient(ctx context.Context, tenant store.TenantID, id uuid.UUID) (store.Patient, error)
+		CreateAuditEvent(ctx context.Context, tenant store.TenantID, e store.AuditEvent) (store.AuditEvent, error)
+		TxnW(ctx context.Context, fn func(store.TxWriter) error) error
 	}
 	auditQ interface {
 		Write(ctx context.Context, tenant store.TenantID, actorType string, actorID *uuid.UUID, eventType string, metadata map[string]any)
@@ -122,6 +132,7 @@ func (h *Handler) Mount(r chi.Router) {
 			})
 			r.Get("/panel", h.handlePanel)
 			r.Get("/queue", h.handleQueue)
+			r.Post("/recommendations/{id}/review", h.handleReview)
 		})
 	})
 }
@@ -319,6 +330,15 @@ func (h *Handler) listRecommendationsByPhysician(ctx context.Context, tenant sto
 	return h.store.ListRecommendationsByPhysician(ctx, tenant, physicianID, state)
 }
 
+// reviewStore returns the review.Store implementation to use. In tests storeQ
+// satisfies review.Store directly; in production the concrete *store.Store does.
+func (h *Handler) reviewStore() review.Store {
+	if h.storeQ != nil {
+		return h.storeQ
+	}
+	return h.store
+}
+
 // ---- panel handler ----
 
 type panelPageData struct {
@@ -354,6 +374,9 @@ func (h *Handler) handlePanel(w http.ResponseWriter, r *http.Request) {
 
 type queuePageData struct {
 	Recommendations []store.Recommendation
+	// Error is shown as a flash banner when a review action fails (e.g.
+	// unlicensed-state rejection). Empty string means no error.
+	Error string
 }
 
 func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +401,97 @@ func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{Recommendations: recs}); err != nil {
 		log.Printf("web: render queue template: %v", err)
+	}
+}
+
+// ---- review handler (task 5.3) ----
+
+// handleReview processes POST /web/recommendations/{id}/review.
+// It accepts application/x-www-form-urlencoded with fields:
+//   - action: "approve" | "reject" | "modify"
+//   - final_content: required for "modify"; accepted (but not required) for "approve"
+//
+// On success it redirects to /web/queue (303).
+// On ErrUnlicensedState it renders the queue with an error banner (state is NOT
+// mutated; the rejection audit event was already written by review.Execute).
+// On a care-relationship / access failure it returns 403/404.
+func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
+	claims, ok := webClaimsFromCtx(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/web/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form submission", http.StatusBadRequest)
+		return
+	}
+
+	recIDStr := chi.URLParam(r, "id")
+	recID, err := uuid.Parse(recIDStr)
+	if err != nil {
+		http.Error(w, "invalid recommendation id", http.StatusBadRequest)
+		return
+	}
+
+	action := r.FormValue("action")
+	finalContent := r.FormValue("final_content")
+
+	// modify requires a non-empty final_content.
+	if action == domain.ActionModify && finalContent == "" {
+		http.Error(w, "final_content required for modify", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	result, err := review.Execute(ctx, h.reviewStore(), claims.TenantID, claims.ActorID, recID, action, finalContent)
+
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, domain.ErrUnlicensedState) {
+		// Render the queue with an error banner. State was NOT mutated; the audit
+		// event was already written by review.Execute.
+		h.renderQueueWithError(w, r, claims, "Action rejected: you are not licensed in the patient's state.")
+		return
+	}
+	if errors.Is(err, domain.ErrInvalidTransition) {
+		http.Error(w, "invalid transition", http.StatusUnprocessableEntity)
+		return
+	}
+	if err != nil {
+		log.Printf("web: review recommendation %s: %v", recIDStr, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeAudit(ctx, claims.TenantID, "physician", &claims.ActorID, "web.recommendation.reviewed", map[string]any{
+		"actor_id":          claims.ActorID.String(),
+		"recommendation_id": result.RecommendationID.String(),
+		"action":            action,
+		"new_state":         result.FinalState,
+	})
+
+	// Redirect back to the queue (PRG pattern: prevents double-submit on reload).
+	http.Redirect(w, r, "/web/queue", http.StatusSeeOther)
+}
+
+// renderQueueWithError re-fetches the queue and renders it with an error banner.
+func (h *Handler) renderQueueWithError(w http.ResponseWriter, r *http.Request, claims webClaims, errMsg string) {
+	recs, err := h.listRecommendationsByPhysician(r.Context(), claims.TenantID, claims.ActorID, "PENDING_REVIEW")
+	if err != nil {
+		log.Printf("web: queue store error on error render: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{
+		Recommendations: recs,
+		Error:           errMsg,
+	}); err != nil {
+		log.Printf("web: render queue error template: %v", err)
 	}
 }
 

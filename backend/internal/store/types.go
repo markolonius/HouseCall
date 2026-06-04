@@ -28,6 +28,17 @@ type Patient struct {
 	CreatedAt    time.Time
 }
 
+// PanelPatient is the slim read model for the physician panel. It deliberately
+// omits PasswordHash (a credential) and Email so neither can reach a
+// physician-facing template's data context — only the fields the panel renders
+// plus the ids needed for scoping/links are loaded.
+type PanelPatient struct {
+	ID       uuid.UUID
+	TenantID TenantID
+	FullName string
+	State    string
+}
+
 type Physician struct {
 	ID             uuid.UUID
 	TenantID       TenantID

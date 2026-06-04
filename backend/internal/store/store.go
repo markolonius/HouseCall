@@ -131,9 +131,12 @@ func (s *Store) CreateCareRelationship(ctx context.Context, tenant TenantID, pat
 	return cr, err
 }
 
-func (s *Store) ListPatientsByPhysician(ctx context.Context, tenant TenantID, physicianID uuid.UUID) ([]Patient, error) {
+// ListPatientsByPhysician returns the slim PanelPatient read model for the
+// physician's active care relationships. It does not select password_hash or
+// email so credentials/extra PHI never enter the web panel's template context.
+func (s *Store) ListPatientsByPhysician(ctx context.Context, tenant TenantID, physicianID uuid.UUID) ([]PanelPatient, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT p.id, p.tenant_id, p.email, p.full_name, p.state, p.password_hash, p.created_at
+		`SELECT p.id, p.tenant_id, p.full_name, p.state
 		   FROM patients p
 		   JOIN care_relationships cr
 		     ON cr.tenant_id = p.tenant_id
@@ -148,10 +151,10 @@ func (s *Store) ListPatientsByPhysician(ctx context.Context, tenant TenantID, ph
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Patient
+	var out []PanelPatient
 	for rows.Next() {
-		var p Patient
-		if err := rows.Scan(&p.ID, &p.TenantID, &p.Email, &p.FullName, &p.State, &p.PasswordHash, &p.CreatedAt); err != nil {
+		var p PanelPatient
+		if err := rows.Scan(&p.ID, &p.TenantID, &p.FullName, &p.State); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

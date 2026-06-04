@@ -55,7 +55,7 @@ type Handler struct {
 	// test-injectable interfaces (nil in production).
 	storeQ interface {
 		GetPhysicianByEmail(ctx context.Context, tenant store.TenantID, email string) (store.Physician, error)
-		ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error)
+		ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.PanelPatient, error)
 		ListRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error)
 
 		// Review action methods (task 5.3). These satisfy review.Store so the
@@ -314,7 +314,7 @@ func (h *Handler) writeAudit(ctx context.Context, tenant store.TenantID, actorTy
 
 // listPatientsByPhysician routes to the test-injectable interface if set,
 // otherwise to the concrete store.
-func (h *Handler) listPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+func (h *Handler) listPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.PanelPatient, error) {
 	if h.storeQ != nil {
 		return h.storeQ.ListPatientsByPhysician(ctx, tenant, physicianID)
 	}
@@ -342,7 +342,7 @@ func (h *Handler) reviewStore() review.Store {
 // ---- panel handler ----
 
 type panelPageData struct {
-	Patients []store.Patient
+	Patients []store.PanelPatient
 }
 
 func (h *Handler) handlePanel(w http.ResponseWriter, r *http.Request) {

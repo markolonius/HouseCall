@@ -42,11 +42,16 @@ var testSecret = []byte("web-test-secret-32-bytes!!!!!!!")
 
 // ---- fake store ----------------------------------------------------------------
 
-// fakeStore implements just the two store methods the web package calls so
-// tests can run without a database.
+// fakeStore implements the store methods the web package calls so tests can
+// run without a database.
 type fakeStore struct {
-	physicians map[string]store.Physician // keyed by email
-	patients   map[string]store.Patient   // keyed by email
+	physicians      map[string]store.Physician      // keyed by email
+	patients        map[string]store.Patient        // keyed by email
+	panelPatients   []store.Patient                 // returned by ListPatientsByPhysician
+	queueRecs       []store.Recommendation          // returned by ListRecommendationsByPhysician
+	// physicianForPanel / Rec scoping: keyed by physician id string
+	panelByPhys     map[string][]store.Patient
+	recsByPhys      map[string][]store.Recommendation
 }
 
 func (f *fakeStore) GetPhysicianByEmail(_ context.Context, tenant store.TenantID, email string) (store.Physician, error) {
@@ -65,11 +70,69 @@ func (f *fakeStore) GetPatientByEmail(_ context.Context, tenant store.TenantID, 
 	return p, nil
 }
 
+// ListPatientsByPhysician returns patients scoped to tenant + physicianID.
+// Uses panelByPhys if populated, otherwise falls back to panelPatients for
+// simple tests that only have one physician.
+func (f *fakeStore) ListPatientsByPhysician(_ context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+	if f.panelByPhys != nil {
+		key := physicianID.String()
+		rows := f.panelByPhys[key]
+		// Enforce tenant isolation: return only patients with matching tenant.
+		var out []store.Patient
+		for _, p := range rows {
+			if p.TenantID == tenant {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
+	// Simple fallback: filter panelPatients by tenant.
+	var out []store.Patient
+	for _, p := range f.panelPatients {
+		if p.TenantID == tenant {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// ListRecommendationsByPhysician returns PENDING_REVIEW recs scoped to
+// tenant + physicianID. Uses recsByPhys if populated.
+func (f *fakeStore) ListRecommendationsByPhysician(_ context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error) {
+	if f.recsByPhys != nil {
+		key := physicianID.String()
+		rows := f.recsByPhys[key]
+		var out []store.Recommendation
+		for _, r := range rows {
+			if r.TenantID == tenant && r.State == state {
+				out = append(out, r)
+			}
+		}
+		return out, nil
+	}
+	// Simple fallback: filter queueRecs by tenant and state.
+	var out []store.Recommendation
+	for _, r := range f.queueRecs {
+		if r.TenantID == tenant && r.State == state {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // storeAdapter wraps fakeStore to satisfy the web.StoreQuerier interface.
 type storeAdapter struct{ f *fakeStore }
 
 func (a *storeAdapter) GetPhysicianByEmail(ctx context.Context, t store.TenantID, e string) (store.Physician, error) {
 	return a.f.GetPhysicianByEmail(ctx, t, e)
+}
+
+func (a *storeAdapter) ListPatientsByPhysician(ctx context.Context, t store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+	return a.f.ListPatientsByPhysician(ctx, t, physicianID)
+}
+
+func (a *storeAdapter) ListRecommendationsByPhysician(ctx context.Context, t store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error) {
+	return a.f.ListRecommendationsByPhysician(ctx, t, physicianID, state)
 }
 
 // noopAuditWriter discards all audit events for tests that don't need a DB.
@@ -407,6 +470,266 @@ func assertRedirectToLogin(t *testing.T, rec *httptest.ResponseRecorder) {
 	loc := rec.Header().Get("Location")
 	if !strings.Contains(loc, "/web/login") {
 		t.Errorf("expected redirect to /web/login, got %q", loc)
+	}
+}
+
+// ---- panel tests ----------------------------------------------------------------
+
+// testPhysID2 / testTenantID2 represent a second physician in a second tenant
+// used to verify isolation.
+var (
+	testTenantID2 = store.TenantID(uuid.MustParse("dddddddd-0000-0000-0000-000000000004"))
+	testPhysID2   = uuid.MustParse("eeeeeeee-0000-0000-0000-000000000005")
+	testPatientID2 = uuid.MustParse("ffffffff-0000-0000-0000-000000000006")
+)
+
+// TestPanel_Unauthenticated verifies that GET /web/panel without a session
+// cookie redirects to the login form.
+func TestPanel_Unauthenticated(t *testing.T) {
+	h := buildHandler(t, &fakeStore{physicians: map[string]store.Physician{}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/panel", nil)
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestPanel_NonPhysician verifies that a patient JWT is rejected for /web/panel.
+func TestPanel_NonPhysician(t *testing.T) {
+	h := buildHandler(t, &fakeStore{physicians: map[string]store.Physician{}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/panel", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPatientID, "patient"))
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestPanel_ShowsOnlySessionPhysicianPatients verifies that GET /web/panel
+// renders only the care-relationship patients for the session physician, and
+// does NOT render patients belonging to a second physician in another tenant.
+func TestPanel_ShowsOnlySessionPhysicianPatients(t *testing.T) {
+	phys1Patient := store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenantID,
+		FullName: "Alice Smith",
+		State:    "CA",
+	}
+	phys2Patient := store.Patient{
+		ID:       testPatientID2,
+		TenantID: testTenantID2,
+		FullName: "Bob Jones",
+		State:    "NY",
+	}
+
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		panelByPhys: map[string][]store.Patient{
+			testPhysID.String():  {phys1Patient},
+			testPhysID2.String(): {phys2Patient},
+		},
+	}
+
+	h := buildHandler(t, fs)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/panel", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Alice Smith") {
+		t.Error("panel must show phys1's patient (Alice Smith)")
+	}
+	// Bob Jones belongs to testPhysID2 under testTenantID2; must not appear.
+	if strings.Contains(body, "Bob Jones") {
+		t.Error("panel must NOT show another physician's patient (Bob Jones)")
+	}
+}
+
+// TestPanel_EmptyPanel verifies that an empty panel renders without error.
+func TestPanel_EmptyPanel(t *testing.T) {
+	fs := &fakeStore{
+		physicians:  map[string]store.Physician{},
+		panelPatients: nil,
+	}
+	h := buildHandler(t, fs)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/panel", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "No active patients") {
+		t.Error("empty panel must show the empty-state message")
+	}
+}
+
+// ---- queue tests ----------------------------------------------------------------
+
+// TestQueue_Unauthenticated verifies that GET /web/queue without a session
+// cookie redirects to the login form.
+func TestQueue_Unauthenticated(t *testing.T) {
+	h := buildHandler(t, &fakeStore{physicians: map[string]store.Physician{}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestQueue_NonPhysician verifies that a patient JWT is rejected for /web/queue.
+func TestQueue_NonPhysician(t *testing.T) {
+	h := buildHandler(t, &fakeStore{physicians: map[string]store.Physician{}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPatientID, "patient"))
+	h.ServeHTTP(rec, req)
+	assertRedirectToLogin(t, rec)
+}
+
+// TestQueue_ShowsOnlySessionPhysicianRecs verifies that GET /web/queue renders
+// PENDING_REVIEW recommendations for the session physician only, and does NOT
+// render recommendations belonging to a second physician in another tenant.
+func TestQueue_ShowsOnlySessionPhysicianRecs(t *testing.T) {
+	phys1Rec := store.Recommendation{
+		ID:          uuid.MustParse("11111111-0000-0000-0000-000000000001"),
+		TenantID:    testTenantID,
+		PatientID:   testPatientID,
+		State:       "PENDING_REVIEW",
+		PayloadType: "guidance",
+		DraftContent: "Rest and hydrate",
+	}
+	phys2Rec := store.Recommendation{
+		ID:          uuid.MustParse("22222222-0000-0000-0000-000000000002"),
+		TenantID:    testTenantID2,
+		PatientID:   testPatientID2,
+		State:       "PENDING_REVIEW",
+		PayloadType: "prescription",
+		DraftContent: "Take ibuprofen",
+	}
+
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		recsByPhys: map[string][]store.Recommendation{
+			testPhysID.String():  {phys1Rec},
+			testPhysID2.String(): {phys2Rec},
+		},
+	}
+
+	h := buildHandler(t, fs)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Rest and hydrate") {
+		t.Error("queue must show phys1's recommendation draft")
+	}
+	// Take ibuprofen belongs to testPhysID2 / testTenantID2; must not appear.
+	if strings.Contains(body, "Take ibuprofen") {
+		t.Error("queue must NOT show another physician's recommendation")
+	}
+}
+
+// TestQueue_OnlyPendingReview verifies that the queue does not surface
+// recommendations in other states (DRAFT, APPROVED, etc.) even if the fake
+// returns them mixed — i.e. the fake enforces the state filter and the
+// handler passes the correct state argument.
+func TestQueue_OnlyPendingReview(t *testing.T) {
+	pending := store.Recommendation{
+		ID:          uuid.MustParse("33333333-0000-0000-0000-000000000003"),
+		TenantID:    testTenantID,
+		PatientID:   testPatientID,
+		State:       "PENDING_REVIEW",
+		PayloadType: "guidance",
+		DraftContent: "Drink water",
+	}
+	draft := store.Recommendation{
+		ID:          uuid.MustParse("44444444-0000-0000-0000-000000000004"),
+		TenantID:    testTenantID,
+		PatientID:   testPatientID,
+		State:       "DRAFT",
+		PayloadType: "guidance",
+		DraftContent: "This is a draft",
+	}
+
+	// Use simple queueRecs fallback — the fake filters by state.
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{pending, draft},
+	}
+
+	h := buildHandler(t, fs)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Drink water") {
+		t.Error("queue must show PENDING_REVIEW recommendation")
+	}
+	if strings.Contains(body, "This is a draft") {
+		t.Error("queue must NOT show DRAFT recommendation")
+	}
+}
+
+// TestQueue_EmptyQueue verifies that an empty queue renders without error.
+func TestQueue_EmptyQueue(t *testing.T) {
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  nil,
+	}
+	h := buildHandler(t, fs)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "No pending recommendations") {
+		t.Error("empty queue must show the empty-state message")
+	}
+}
+
+// TestNavLinks_PanelAndQueue verifies that the layout nav includes links to
+// both /web/panel and /web/queue when viewing authenticated pages.
+func TestNavLinks_PanelAndQueue(t *testing.T) {
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		panelPatients: nil,
+	}
+	h := buildHandler(t, fs)
+
+	for _, path := range []string{"/web/panel", "/web/queue"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: want 200, got %d", path, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `href="/web/panel"`) {
+			t.Errorf("%s: page must contain nav link to /web/panel", path)
+		}
+		if !strings.Contains(body, `href="/web/queue"`) {
+			t.Errorf("%s: page must contain nav link to /web/queue", path)
+		}
 	}
 }
 

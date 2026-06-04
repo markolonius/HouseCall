@@ -44,11 +44,17 @@ type Handler struct {
 	store     *store.Store
 	secret    []byte
 	audit     *audit.Writer
-	templates *template.Template
+	// templates is a per-page template set keyed by page name (e.g. "login",
+	// "panel", "queue"). Each value is the layout cloned with only that page's
+	// block definitions, so {{define "content"}} in different page files do not
+	// collide inside a single shared *template.Template.
+	templates map[string]*template.Template
 
 	// test-injectable interfaces (nil in production).
 	storeQ interface {
 		GetPhysicianByEmail(ctx context.Context, tenant store.TenantID, email string) (store.Physician, error)
+		ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error)
+		ListRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error)
 	}
 	auditQ interface {
 		Write(ctx context.Context, tenant store.TenantID, actorType string, actorID *uuid.UUID, eventType string, metadata map[string]any)
@@ -70,9 +76,33 @@ func New(s *store.Store, secret []byte, aw *audit.Writer) (*Handler, error) {
 	}, nil
 }
 
-// parseTemplates parses all html/template files embedded in the templates/ dir.
-func parseTemplates() (*template.Template, error) {
-	return template.ParseFS(templateFS, "templates/*.html")
+// pageTemplates maps each page name to the set of template files it needs.
+// The layout is always included first so {{block}} definitions in the page
+// file can override the layout's default (empty) blocks. Each page gets its
+// own template set so {{define "content"}} in different page files do not
+// overwrite each other in a shared set.
+var pageTemplates = map[string][]string{
+	"login": {"templates/layout.html", "templates/login.html"},
+	"panel": {"templates/layout.html", "templates/panel.html"},
+	"queue": {"templates/layout.html", "templates/queue.html"},
+}
+
+// parseTemplates builds a per-page template set from the embedded FS.
+func parseTemplates() (map[string]*template.Template, error) {
+	sets := make(map[string]*template.Template, len(pageTemplates))
+	for name, files := range pageTemplates {
+		t, err := template.ParseFS(templateFS, files...)
+		if err != nil {
+			return nil, err
+		}
+		sets[name] = t
+	}
+	return sets, nil
+}
+
+// tmpl returns the template set for the named page, or nil if not found.
+func (h *Handler) tmpl(name string) *template.Template {
+	return h.templates[name]
 }
 
 // Mount registers all physician web app routes on r under a /web prefix.
@@ -87,10 +117,11 @@ func (h *Handler) Mount(r chi.Router) {
 		// Authenticated, physician-only routes.
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireWebAuth)
-			// Root redirect; 5.2/5.3 will add real pages here.
 			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 				http.Redirect(w, req, "/web/queue", http.StatusSeeOther)
 			})
+			r.Get("/panel", h.handlePanel)
+			r.Get("/queue", h.handleQueue)
 		})
 	})
 }
@@ -270,12 +301,92 @@ func (h *Handler) writeAudit(ctx context.Context, tenant store.TenantID, actorTy
 	h.audit.Write(ctx, tenant, actorType, actorID, eventType, metadata)
 }
 
+// listPatientsByPhysician routes to the test-injectable interface if set,
+// otherwise to the concrete store.
+func (h *Handler) listPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+	if h.storeQ != nil {
+		return h.storeQ.ListPatientsByPhysician(ctx, tenant, physicianID)
+	}
+	return h.store.ListPatientsByPhysician(ctx, tenant, physicianID)
+}
+
+// listRecommendationsByPhysician routes to the test-injectable interface if set,
+// otherwise to the concrete store.
+func (h *Handler) listRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error) {
+	if h.storeQ != nil {
+		return h.storeQ.ListRecommendationsByPhysician(ctx, tenant, physicianID, state)
+	}
+	return h.store.ListRecommendationsByPhysician(ctx, tenant, physicianID, state)
+}
+
+// ---- panel handler ----
+
+type panelPageData struct {
+	Patients []store.Patient
+}
+
+func (h *Handler) handlePanel(w http.ResponseWriter, r *http.Request) {
+	claims, ok := webClaimsFromCtx(r.Context())
+	if !ok {
+		// requireWebAuth already guarantees this; defensive check.
+		http.Redirect(w, r, "/web/login", http.StatusSeeOther)
+		return
+	}
+
+	patients, err := h.listPatientsByPhysician(r.Context(), claims.TenantID, claims.ActorID)
+	if err != nil {
+		log.Printf("web: panel store error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeAudit(r.Context(), claims.TenantID, "physician", &claims.ActorID, "web.panel.viewed", map[string]any{
+		"actor_id": claims.ActorID.String(),
+	})
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl("panel").ExecuteTemplate(w, "layout", panelPageData{Patients: patients}); err != nil {
+		log.Printf("web: render panel template: %v", err)
+	}
+}
+
+// ---- queue handler ----
+
+type queuePageData struct {
+	Recommendations []store.Recommendation
+}
+
+func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
+	claims, ok := webClaimsFromCtx(r.Context())
+	if !ok {
+		// requireWebAuth already guarantees this; defensive check.
+		http.Redirect(w, r, "/web/login", http.StatusSeeOther)
+		return
+	}
+
+	recs, err := h.listRecommendationsByPhysician(r.Context(), claims.TenantID, claims.ActorID, "PENDING_REVIEW")
+	if err != nil {
+		log.Printf("web: queue store error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeAudit(r.Context(), claims.TenantID, "physician", &claims.ActorID, "web.queue.viewed", map[string]any{
+		"actor_id": claims.ActorID.String(),
+	})
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{Recommendations: recs}); err != nil {
+		log.Printf("web: render queue template: %v", err)
+	}
+}
+
 // ---- template renderer ----
 
 func (h *Handler) renderLogin(w http.ResponseWriter, status int, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := h.templates.ExecuteTemplate(w, "layout", loginPageData{Error: errMsg}); err != nil {
+	if err := h.tmpl("login").ExecuteTemplate(w, "layout", loginPageData{Error: errMsg}); err != nil {
 		log.Printf("web: render login template: %v", err)
 	}
 }

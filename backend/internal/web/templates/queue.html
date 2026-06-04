@@ -1,0 +1,36 @@
+{{template "layout" .}}
+
+{{define "title"}}Review Queue — HouseCall{{end}}
+
+{{define "nav"}}
+<a href="/web/panel">Panel</a>
+<a href="/web/queue">Queue</a>
+{{end}}
+
+{{define "content"}}
+<h2 style="margin-bottom:1.25rem;font-size:1.25rem;">Pending Review Queue</h2>
+{{if .Recommendations}}
+<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+  <thead>
+    <tr style="background:#1d3557;color:#fff;text-align:left;">
+      <th style="padding:.65rem 1rem;">ID</th>
+      <th style="padding:.65rem 1rem;">Type</th>
+      <th style="padding:.65rem 1rem;">Draft</th>
+      <th style="padding:.65rem 1rem;">Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Recommendations}}
+    <tr style="border-top:1px solid #e5e7eb;">
+      <td style="padding:.65rem 1rem;font-family:monospace;font-size:.8rem;">{{.ID}}</td>
+      <td style="padding:.65rem 1rem;">{{.PayloadType}}</td>
+      <td style="padding:.65rem 1rem;">{{.DraftContent}}</td>
+      <td style="padding:.65rem 1rem;font-size:.85rem;color:#6b7280;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p style="color:#6b7280;">No pending recommendations to review.</p>
+{{end}}
+{{end}}

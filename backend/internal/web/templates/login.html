@@ -1,0 +1,36 @@
+{{template "layout" .}}
+
+{{define "title"}}Login — HouseCall{{end}}
+
+{{define "content"}}
+<div style="max-width:420px;margin:3rem auto;background:#fff;padding:2rem;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.12);">
+  <h2 style="margin-bottom:1.5rem;font-size:1.25rem;">Physician Sign In</h2>
+  {{if .Error}}
+  <div class="flash-error">{{.Error}}</div>
+  {{end}}
+  <form method="POST" action="/web/login" autocomplete="off">
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;font-size:.875rem;margin-bottom:.25rem;">Tenant ID</label>
+      <input type="text" name="tenant_id" required
+             style="width:100%;padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:.95rem;"
+             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+    </div>
+    <div style="margin-bottom:1rem;">
+      <label style="display:block;font-size:.875rem;margin-bottom:.25rem;">Email</label>
+      <input type="email" name="email" required
+             style="width:100%;padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:.95rem;"
+             autocomplete="username">
+    </div>
+    <div style="margin-bottom:1.5rem;">
+      <label style="display:block;font-size:.875rem;margin-bottom:.25rem;">Password</label>
+      <input type="password" name="password" required
+             style="width:100%;padding:.5rem .75rem;border:1px solid #ccc;border-radius:4px;font-size:.95rem;"
+             autocomplete="current-password">
+    </div>
+    <button type="submit"
+            style="width:100%;padding:.6rem;background:#1d3557;color:#fff;border:none;border-radius:4px;font-size:1rem;cursor:pointer;">
+      Sign In
+    </button>
+  </form>
+</div>
+{{end}}

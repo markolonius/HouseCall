@@ -108,19 +108,19 @@ state-licensing tests pass.
 ## Phase 4: AI Agent Runtime
 
 ### Task 4.1: Model client
-- [ ] `internal/agent` — OpenAI-compatible HTTP client, configurable via
+- [x] `internal/agent` — OpenAI-compatible HTTP client, configurable via
       `AGENT_MODEL_BASE_URL`
-- [ ] Timeout + error handling; failures do not surface as clinical content
+- [x] Timeout + error handling; failures do not surface as clinical content
 
 ### Task 4.2: Reactive drafting
-- [ ] On a persisted patient message: assemble tenant-scoped conversation
+- [x] On a persisted patient message: assemble tenant-scoped conversation
       context, call the model, create a `recommendation` in `DRAFT` with
       `payload_type = 'guidance'` and `payload = {"text": <model output>}`
-- [ ] Immediately transition `DRAFT` → `PENDING_REVIEW`, write the audit event,
+- [x] Immediately transition `DRAFT` → `PENDING_REVIEW`, write the audit event,
       emit `queue.updated`
 
 ### Task 4.3: Failure path
-- [ ] Model endpoint unavailable → no recommendation created,
+- [x] Model endpoint unavailable → no recommendation created,
       `ai_interaction_failed` audit event written
 
 **Validation**: a patient message produces a `PENDING_REVIEW` recommendation;

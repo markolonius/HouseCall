@@ -4,20 +4,24 @@ package api
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/markolonius/housecall/backend/internal/agent"
 	"github.com/markolonius/housecall/backend/internal/audit"
 	"github.com/markolonius/housecall/backend/internal/store"
 )
 
 // Router holds shared dependencies for all HTTP handlers.
 type Router struct {
-	store  *store.Store
-	hub    *Hub
-	secret []byte
-	audit  *audit.Writer
+	store   *store.Store
+	hub     *Hub
+	secret  []byte
+	audit   *audit.Writer
+	drafter *agent.Drafter
 }
 
 // New constructs a Router. secret is the HMAC-SHA256 key used to sign and
 // verify JWTs; it must be non-empty (validated at startup in cmd/server).
+// Wire the Drafter after construction via SetDrafter to break the circular
+// dependency (Router → Drafter → Router as PhysicianNotifier).
 func New(s *store.Store, secret []byte) *Router {
 	return &Router{
 		store:  s,
@@ -26,6 +30,20 @@ func New(s *store.Store, secret []byte) *Router {
 		audit:  audit.New(s),
 	}
 }
+
+// SendToPhysicians broadcasts event to all physicians connected via WebSocket
+// in the given tenant. It implements agent.PhysicianNotifier so the Router can
+// be passed directly to agent.NewDrafter in cmd/server.
+func (rt *Router) SendToPhysicians(tenantID string, event []byte) {
+	rt.hub.SendToPhysicians(tenantID, event)
+}
+
+// SetDrafter wires the AI Agent Runtime drafter after construction. This
+// breaks the circular dependency between Router (which needs the Drafter) and
+// the Drafter (which needs the Router as a PhysicianNotifier): construct the
+// Router first — with a nil drafter — then construct the Drafter pointing at
+// the Router, then call SetDrafter.
+func (rt *Router) SetDrafter(d *agent.Drafter) { rt.drafter = d }
 
 // Mount registers all API and WebSocket routes on r.
 func (rt *Router) Mount(r chi.Router) {

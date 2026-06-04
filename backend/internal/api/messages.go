@@ -83,6 +83,21 @@ func (rt *Router) handleCreateMessage(w http.ResponseWriter, r *http.Request) {
 			"conversation_id": convID.String(),
 			"message_id":      msg.ID.String(),
 		})
-	// Phase 4 (Task 4.2): trigger AI Agent Runtime here after persisting the message.
+
+	// Task 4.2: trigger reactive drafting asynchronously after the message is
+	// persisted. DraftAsync spawns a goroutine — the patient's response is
+	// returned immediately; drafting proceeds in the background. We load the
+	// patient here (tenant-scoped) so the drafter has the patient.State needed
+	// for the domain.Transition call without a second DB round-trip inside the
+	// goroutine startup path.
+	if rt.drafter != nil {
+		patient, err := rt.store.GetPatient(r.Context(), claims.TenantID, claims.ActorID)
+		if err == nil {
+			rt.drafter.DraftAsync(claims.TenantID, conv, patient)
+		}
+		// If the patient lookup fails (unexpected), we skip drafting and log
+		// nothing that includes PHI — the message is already persisted.
+	}
+
 	writeJSON(w, http.StatusCreated, msg)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/markolonius/housecall/backend/internal/agent"
 	"github.com/markolonius/housecall/backend/internal/api"
 	"github.com/markolonius/housecall/backend/internal/migrate"
 	"github.com/markolonius/housecall/backend/internal/store"
@@ -91,7 +92,22 @@ func runServe(dsn, addr string) error {
 	}
 
 	s := store.New(pool)
+
+	// Two-phase construction breaks the circular dependency:
+	//   Router → Drafter → Router (as PhysicianNotifier).
+	//
+	// 1. Build Router with no drafter yet.
 	rt := api.New(s, secret)
+
+	// 2. Build Drafter pointing at the Router (which satisfies
+	//    agent.PhysicianNotifier via rt.SendToPhysicians).
+	agentCfg := agent.ClientConfigFromEnv()
+	log.Printf("agent: model config %s", agentCfg)
+	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt)
+
+	// 3. Wire the drafter into the Router before the server starts accepting
+	//    requests.
+	rt.SetDrafter(drafter)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

@@ -1,0 +1,32 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{block "title" .}}HouseCall{{end}}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+  header { background: #1d3557; color: #fff; padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.02em; }
+  nav { display: flex; gap: 1rem; margin-left: auto; }
+  nav a { color: #a8dadc; text-decoration: none; font-size: 0.9rem; }
+  nav a:hover { color: #fff; }
+  main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .flash-error { background: #fde8e8; border: 1px solid #f5a0a0; color: #9b1c1c; padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; }
+</style>
+{{block "head" .}}{{end}}
+</head>
+<body>
+<header>
+  <h1>HouseCall — Physician Portal</h1>
+  <nav>
+    {{block "nav" .}}{{end}}
+  </nav>
+</header>
+<main>
+  {{block "content" .}}{{end}}
+</main>
+</body>
+</html>
+{{end}}

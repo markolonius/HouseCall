@@ -19,8 +19,10 @@ import (
 
 	"github.com/markolonius/housecall/backend/internal/agent"
 	"github.com/markolonius/housecall/backend/internal/api"
+	"github.com/markolonius/housecall/backend/internal/audit"
 	"github.com/markolonius/housecall/backend/internal/migrate"
 	"github.com/markolonius/housecall/backend/internal/store"
+	"github.com/markolonius/housecall/backend/internal/web"
 )
 
 func main() {
@@ -122,6 +124,13 @@ func runServe(dsn, addr string) error {
 	})
 
 	rt.Mount(r)
+
+	// Physician web app — server-rendered, mounted under /web.
+	webHandler, err := web.New(s, secret, audit.New(s))
+	if err != nil {
+		return fmt.Errorf("web handler: %w", err)
+	}
+	webHandler.Mount(r)
 
 	srv := &http.Server{
 		Addr:              addr,

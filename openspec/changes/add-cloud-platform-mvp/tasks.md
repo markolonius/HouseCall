@@ -129,16 +129,16 @@ a forced model failure produces no recommendation and an audit event.
 ## Phase 5: Physician Web App
 
 ### Task 5.1: Auth & shell
-- [ ] `internal/web` — login form, session cookie wrapping the JWT
-- [ ] Base `html/template` layout
+- [x] `internal/web` — login form, session cookie wrapping the JWT
+- [x] Base `html/template` layout
 
 ### Task 5.2: Panel & queue
-- [ ] `GET /panel` — the physician's active care relationships
-- [ ] `GET /queue` — `PENDING_REVIEW` recommendations for their patients only
+- [x] `GET /panel` — the physician's active care relationships
+- [x] `GET /queue` — `PENDING_REVIEW` recommendations for their patients only
 
 ### Task 5.3: Review actions
-- [ ] `approve` / `reject` / `modify` (htmx) → Core API review endpoint
-- [ ] `modify` allows editing `final_content` before delivery
+- [x] `approve` / `reject` / `modify` (htmx) → Core API review endpoint
+- [x] `modify` allows editing `final_content` before delivery
 
 **Validation**: a physician can log in, see only their patients' pending
 recommendations, and drive each of the three actions.

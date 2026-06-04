@@ -250,3 +250,122 @@ func TestHandler_UnlicensedPhysicianReview_IsAudited(t *testing.T) {
 		}
 	}
 }
+
+// TestHandler_PhysicianNotFound_Returns403 verifies that when the JWT names a
+// physician that no longer exists in the DB (an auth anomaly), the
+// handleReviewRecommendation endpoint returns HTTP 403 — not 404.
+//
+// Before the review.Execute refactor the handler called rt.store.GetPhysician
+// directly and mapped its ErrNotFound to 403 with an explicit comment
+// ("treat it as a 403 rather than leaking internal state"). After refactoring
+// to shared review.Execute, the sentinel review.ErrActorNotFound must be
+// propagated and mapped identically. This test guards that regression.
+func TestHandler_PhysicianNotFound_Returns403(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	// --- fixture ---
+
+	tenant, err := s.CreateTenant(ctx, "dtc", "api-handler-phys-notfound-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	tid := store.TenantID(tenant.ID)
+
+	patient, err := s.CreatePatient(ctx, tid, store.Patient{
+		Email:        "patient@physnotfound.test",
+		FullName:     "Pat",
+		State:        "CA",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("create patient: %v", err)
+	}
+
+	// Create a physician only to get a valid UUID for the JWT; then delete it
+	// so GetPhysician returns ErrNotFound when the handler runs.
+	physician, err := s.CreatePhysician(ctx, tid, store.Physician{
+		Email:          "ghost@physnotfound.test",
+		FullName:       "Ghost Doc",
+		StatesLicensed: []string{"CA"},
+		PasswordHash:   "hash",
+	})
+	if err != nil {
+		t.Fatalf("create physician: %v", err)
+	}
+
+	if _, err := s.CreateCareRelationship(ctx, tid, patient.ID, physician.ID); err != nil {
+		t.Fatalf("care relationship: %v", err)
+	}
+
+	conv, err := s.CreateConversation(ctx, tid, patient.ID, "phys-notfound test conv")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	rec, err := s.CreateRecommendation(ctx, tid, store.Recommendation{
+		ConversationID: conv.ID,
+		PatientID:      patient.ID,
+		State:          domain.StatePendingReview,
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"draft"}`),
+		DraftContent:   "draft content",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	// Delete the physician so GetPhysician returns ErrNotFound during the request.
+	//
+	// The care_relationships FK (ON DELETE RESTRICT) prevents a plain DELETE on
+	// physicians while care_relationships still references the physician — but we
+	// need the care_relationships row to survive so that GetRecommendationForPhysician
+	// can find the recommendation at request time (it JOINs on care_relationships).
+	// We use a dedicated connection with session_replication_role = replica to
+	// bypass FK enforcement for just this one DELETE, then restore the default.
+	// This is test-only infrastructure: the FK continues to protect production
+	// writes via every other connection.
+	{
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire conn for physician delete: %v", err)
+		}
+		defer conn.Release()
+		if _, err := conn.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+			t.Fatalf("set session_replication_role: %v", err)
+		}
+		if _, err := conn.Exec(ctx,
+			`DELETE FROM physicians WHERE id = $1 AND tenant_id = $2`,
+			physician.ID, tid.UUID()); err != nil {
+			t.Fatalf("delete physician: %v", err)
+		}
+		if _, err := conn.Exec(ctx, `SET session_replication_role = DEFAULT`); err != nil {
+			t.Fatalf("reset session_replication_role: %v", err)
+		}
+	}
+
+	// --- build the real router ---
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	// JWT references the now-deleted physician.
+	token := signedJWT(apiTestSecret, tid.String(), physician.ID.String(), "physician")
+
+	body, _ := json.Marshal(map[string]string{"action": domain.ActionApprove})
+	url := fmt.Sprintf("/api/recommendations/%s/review", rec.ID.String())
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, req)
+
+	// Physician-not-found must be a 403 (session/auth anomaly), NOT 404.
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("expected HTTP 403 for deleted physician, got %d (body: %s)",
+			rw.Code, rw.Body.String())
+	}
+}

@@ -146,7 +146,7 @@ recommendations, and drive each of the three actions.
 ## Phase 6: iOS Cloud Sync
 
 ### Task 6.1: Core Data migration
-- [ ] Add `serverId` + `syncState` to `Conversation` and `Message`
+- [x] Add `serverId` + `syncState` to `Conversation` and `Message`
       (lightweight migration)
 
 ### Task 6.2: Sync client

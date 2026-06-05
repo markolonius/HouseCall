@@ -53,6 +53,12 @@ struct PersistenceController {
                     forKey: NSPersistentStoreFileProtectionKey
                 )
 
+                // Enable lightweight migration so additive model changes (e.g. new
+                // optional attributes for cloud sync metadata) upgrade existing stores
+                // automatically without a manual mapping model.
+                storeDescription.shouldMigrateStoreAutomatically = true
+                storeDescription.shouldInferMappingModelAutomatically = true
+
                 // Disable iCloud sync for PHI security
                 storeDescription.setOption(true as NSObject, forKey: NSPersistentHistoryTrackingKey)
                 storeDescription.setOption(true as NSObject, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)

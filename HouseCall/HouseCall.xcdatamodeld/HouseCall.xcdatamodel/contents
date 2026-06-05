@@ -32,6 +32,9 @@
         <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="isActive" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
         <attribute name="llmProvider" attributeType="String" defaultValueString="openai"/>
+        <!-- Cloud sync metadata — NOT PHI; plain text, no encryption needed -->
+        <attribute name="serverId" optional="YES" attributeType="String"/>
+        <attribute name="syncState" optional="YES" attributeType="String"/>
         <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Message" inverseName="conversation" inverseEntity="Message"/>
     </entity>
 
@@ -44,6 +47,9 @@
         <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="tokenCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="streamingComplete" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <!-- Cloud sync metadata — NOT PHI; plain text, no encryption needed -->
+        <attribute name="serverId" optional="YES" attributeType="String"/>
+        <attribute name="syncState" optional="YES" attributeType="String"/>
         <relationship name="conversation" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Conversation" inverseName="messages" inverseEntity="Conversation"/>
     </entity>
 

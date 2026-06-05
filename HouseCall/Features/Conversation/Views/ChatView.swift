@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 /// Main chat view for displaying and interacting with AI conversations
 struct ChatView: View {
@@ -334,7 +335,7 @@ struct ChatView: View {
         messageRepository: messageRepo
     )
 
-    return NavigationStack {
+    NavigationStack {
         ChatView(viewModel: viewModel)
     }
 }

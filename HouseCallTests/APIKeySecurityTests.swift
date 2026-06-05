@@ -8,6 +8,7 @@
 
 import Testing
 import Foundation
+import CoreData
 @testable import HouseCall
 
 @Suite("API Key Security Tests")
@@ -273,14 +274,14 @@ struct APIKeySecurityTests {
         let auditLogger = AuditLogger(context: context)
 
         // Log an event that might reference API keys
-        auditLogger.log(
-            eventType: .settingsChanged,
+        try? auditLogger.log(
+            event: .settingsChanged,
             userId: UUID(),
-            details: [
+            details: AuditEventDetails(additionalInfo: [
                 "setting": "provider",
                 "provider": "openai"
                 // API key should NEVER be in details
-            ]
+            ])
         )
 
         // Fetch events and verify no API keys

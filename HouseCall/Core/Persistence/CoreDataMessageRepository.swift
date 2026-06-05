@@ -72,14 +72,14 @@ class CoreDataMessageRepository: MessageRepositoryProtocol {
 
         // Log audit event (no content in logs for PHI protection)
         try? auditLogger.log(
-            eventType: .messageCreated,
+            event: .messageCreated,
             userId: userId,
-            details: [
+            details: AuditEventDetails(additionalInfo: [
                 "messageId": message.id!.uuidString,
                 "conversationId": conversationId.uuidString,
                 "role": role.rawValue,
                 "streamingComplete": String(streamingComplete)
-            ]
+            ])
         )
 
         return message
@@ -217,7 +217,7 @@ class CoreDataMessageRepository: MessageRepositoryProtocol {
 
         do {
             let decryptedData = try encryptionManager.decrypt(
-                data: encryptedContent,
+                encryptedData: encryptedContent,
                 for: userId
             )
             guard let content = String(data: decryptedData, encoding: .utf8) else {

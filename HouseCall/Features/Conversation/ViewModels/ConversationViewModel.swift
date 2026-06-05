@@ -225,11 +225,11 @@ class ConversationViewModel: ObservableObject {
 extension LLMError {
     var userFriendlyMessage: String {
         switch self {
-        case .notConfigured:
+        case .notConfigured, .invalidConfiguration:
             return "AI service not configured. Please check your settings."
-        case .authentication:
+        case .authenticationFailed:
             return "API authentication failed. Please check your API key in settings."
-        case .network:
+        case .networkError:
             return "Unable to connect to AI service. Please check your internet connection."
         case .rateLimit:
             return "Too many requests. Please wait a moment and try again."
@@ -237,11 +237,11 @@ extension LLMError {
             return "Request timed out. Please try again."
         case .invalidResponse:
             return "Received an invalid response from AI service."
-        case .providerError(let message):
+        case .providerError(_, let message):
             return "AI service error: \(message)"
-        case .streamingCancelled:
+        case .cancelled:
             return "AI response was cancelled."
-        case .unknown:
+        case .streamingError:
             return "An unexpected error occurred. Please try again."
         }
     }

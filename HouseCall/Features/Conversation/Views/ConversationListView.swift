@@ -7,6 +7,8 @@
 //
 
 import SwiftUI
+import Combine
+import CoreData
 
 /// View displaying a list of all conversations for the current user
 struct ConversationListView: View {
@@ -254,8 +256,8 @@ class ConversationListViewModel: ObservableObject {
                 )
 
                 // Log conversation creation
-                auditLogger.log(
-                    eventType: .conversationCreated,
+                try? auditLogger.log(
+                    event: .conversationCreated,
                     userId: userId,
                     details: AuditEventDetails(
                         additionalInfo: [
@@ -284,8 +286,8 @@ class ConversationListViewModel: ObservableObject {
             try conversationRepository.deleteConversation(id: conversationId)
 
             // Log deletion
-            auditLogger.log(
-                eventType: .conversationDeleted,
+            try? auditLogger.log(
+                event: .conversationDeleted,
                 userId: userId,
                 details: AuditEventDetails(
                     additionalInfo: [
@@ -322,10 +324,10 @@ class ConversationListViewModel: ObservableObject {
 
     // Create some preview conversations
     let userId = UUID()
-    _ = try? conversationRepo.createConversation(userId: userId, provider: .openai, title: "Health Consultation")
-    _ = try? conversationRepo.createConversation(userId: userId, provider: .claude, title: "Symptom Check")
+    let _ = try? conversationRepo.createConversation(userId: userId, provider: .openai, title: "Health Consultation")
+    let _ = try? conversationRepo.createConversation(userId: userId, provider: .claude, title: "Symptom Check")
 
-    return ConversationListView(
+    ConversationListView(
         userId: userId,
         conversationRepository: conversationRepo,
         messageRepository: messageRepo

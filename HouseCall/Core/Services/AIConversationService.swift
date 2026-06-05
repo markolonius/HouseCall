@@ -83,8 +83,8 @@ class AIConversationService: ObservableObject {
         )
 
         // Log conversation creation
-        auditLogger.log(
-            eventType: .conversationCreated,
+        try? auditLogger.log(
+            event: .conversationCreated,
             userId: userId,
             details: AuditEventDetails(
                 additionalInfo: [
@@ -112,8 +112,8 @@ class AIConversationService: ObservableObject {
 
         // Verify user owns this conversation
         guard conversation.userId == userId else {
-            auditLogger.log(
-                eventType: .unauthorizedAccess,
+            try? auditLogger.log(
+                event: .unauthorizedAccess,
                 userId: userId,
                 details: AuditEventDetails(
                     message: "Attempted to access conversation owned by different user",
@@ -127,8 +127,8 @@ class AIConversationService: ObservableObject {
         let fetchedMessages = try messageRepository.fetchAllMessages(conversationId: conversationId)
 
         // Log conversation access
-        auditLogger.log(
-            eventType: .conversationAccessed,
+        try? auditLogger.log(
+            event: .conversationAccessed,
             userId: userId,
             details: AuditEventDetails(
                 additionalInfo: [
@@ -166,8 +166,8 @@ class AIConversationService: ObservableObject {
         )
 
         // Log provider switch
-        auditLogger.log(
-            eventType: .conversationProviderSwitched,
+        try? auditLogger.log(
+            event: .conversationProviderSwitched,
             userId: userId,
             details: AuditEventDetails(
                 additionalInfo: [
@@ -222,8 +222,8 @@ class AIConversationService: ObservableObject {
         )
 
         // Log message creation
-        auditLogger.log(
-            eventType: .messageCreated,
+        try? auditLogger.log(
+            event: .messageCreated,
             userId: userId,
             details: AuditEventDetails(
                 additionalInfo: [
@@ -276,8 +276,8 @@ class AIConversationService: ObservableObject {
         let chatMessages = try buildChatContext(conversationId: conversationId)
 
         // Log AI interaction start
-        auditLogger.log(
-            eventType: .aiStreamingStarted,
+        try? auditLogger.log(
+            event: .aiStreamingStarted,
             userId: userId,
             details: AuditEventDetails(
                 additionalInfo: [
@@ -313,8 +313,8 @@ class AIConversationService: ObservableObject {
             streamingMessageId = nil
 
             // Log failure
-            auditLogger.log(
-                eventType: .aiInteractionFailed,
+            try? auditLogger.log(
+                event: .aiInteractionFailed,
                 userId: userId,
                 details: AuditEventDetails(
                     errorMessage: error.localizedDescription,
@@ -344,8 +344,8 @@ class AIConversationService: ObservableObject {
 
         // Log interruption
         if let conversationId = currentConversation?.id {
-            auditLogger.log(
-                eventType: .aiStreamingInterrupted,
+            try? auditLogger.log(
+                event: .aiStreamingInterrupted,
                 userId: userId,
                 details: AuditEventDetails(
                     message: "User cancelled streaming",
@@ -396,8 +396,8 @@ class AIConversationService: ObservableObject {
                 )
 
                 // Log successful interaction
-                auditLogger.log(
-                    eventType: .aiStreamingCompleted,
+                try? auditLogger.log(
+                    event: .aiStreamingCompleted,
                     userId: userId,
                     details: AuditEventDetails(
                         additionalInfo: [
@@ -419,8 +419,8 @@ class AIConversationService: ObservableObject {
                 errorMessage = "Failed to save AI response: \(error.localizedDescription)"
 
                 // Log save failure
-                auditLogger.log(
-                    eventType: .aiInteractionFailed,
+                try? auditLogger.log(
+                    event: .aiInteractionFailed,
                     userId: userId,
                     details: AuditEventDetails(
                         errorMessage: "Failed to save streamed response",
@@ -436,8 +436,8 @@ class AIConversationService: ObservableObject {
             errorMessage = error.localizedDescription
 
             // Log failure
-            auditLogger.log(
-                eventType: .aiInteractionFailed,
+            try? auditLogger.log(
+                event: .aiInteractionFailed,
                 userId: userId,
                 details: AuditEventDetails(
                     errorMessage: error.localizedDescription,
@@ -457,8 +457,8 @@ class AIConversationService: ObservableObject {
                 try messageRepository.deleteMessage(id: messageId)
             } catch {
                 // Log deletion failure
-                auditLogger.log(
-                    eventType: .dataDeleted,
+                try? auditLogger.log(
+                    event: .dataDeleted,
                     userId: userId,
                     details: AuditEventDetails(
                         errorMessage: "Failed to delete incomplete message",

@@ -66,12 +66,12 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
 
         // Log audit event
         try? auditLogger.log(
-            eventType: .conversationCreated,
+            event: .conversationCreated,
             userId: userId,
-            details: [
+            details: AuditEventDetails(additionalInfo: [
                 "conversationId": conversation.id!.uuidString,
                 "provider": provider.rawValue
-            ]
+            ])
         )
 
         return conversation
@@ -163,13 +163,13 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
 
         // Log audit event for provider switch
         try? auditLogger.log(
-            eventType: .conversationProviderSwitched,
+            event: .conversationProviderSwitched,
             userId: conversation.userId!,
-            details: [
+            details: AuditEventDetails(additionalInfo: [
                 "conversationId": conversation.id!.uuidString,
                 "oldProvider": oldProvider ?? "unknown",
                 "newProvider": provider.rawValue
-            ]
+            ])
         )
     }
 
@@ -195,12 +195,12 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
 
         // Log audit event
         try? auditLogger.log(
-            eventType: .conversationDeleted,
+            event: .conversationDeleted,
             userId: userId,
-            details: [
+            details: AuditEventDetails(additionalInfo: [
                 "conversationId": id.uuidString,
-                "messageCount": messageCount
-            ]
+                "messageCount": String(messageCount)
+            ])
         )
     }
 
@@ -218,7 +218,7 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
 
         do {
             let decryptedData = try encryptionManager.decrypt(
-                data: encryptedTitle,
+                encryptedData: encryptedTitle,
                 for: userId
             )
             guard let title = String(data: decryptedData, encoding: .utf8) else {

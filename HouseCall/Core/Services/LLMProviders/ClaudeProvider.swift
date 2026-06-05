@@ -253,7 +253,7 @@ class ClaudeProvider: LLMProvider {
 
 // MARK: - Claude Configuration
 
-struct ClaudeConfig {
+struct ClaudeConfig: Codable {
     var model: String
     var temperature: Double
     var maxTokens: Int

@@ -273,7 +273,7 @@ struct SecurityTests {
         let logs = try auditLogger.fetchLogs(userId: userId)
 
         // Verify conversation_created event logged
-        let creationLogs = logs.filter { $0.eventType == .conversationCreated.rawValue }
+        let creationLogs = logs.filter { $0.eventType == AuditEventType.conversationCreated.rawValue }
         #expect(!creationLogs.isEmpty)
     }
 
@@ -298,7 +298,7 @@ struct SecurityTests {
         let logs = try auditLogger.fetchLogs(userId: userId)
 
         // Find message creation log
-        let messageLogs = logs.filter { $0.eventType == .messageCreated.rawValue }
+        let messageLogs = logs.filter { $0.eventType == AuditEventType.messageCreated.rawValue }
         #expect(!messageLogs.isEmpty)
 
         // Verify log does NOT contain message content (PHI protection)
@@ -330,7 +330,7 @@ struct SecurityTests {
         let logs = try auditLogger.fetchLogs(userId: userId)
 
         // Verify provider switch logged
-        let switchLogs = logs.filter { $0.eventType == .conversationProviderSwitched.rawValue }
+        let switchLogs = logs.filter { $0.eventType == AuditEventType.conversationProviderSwitched.rawValue }
         #expect(!switchLogs.isEmpty)
 
         // Verify log contains old and new provider
@@ -359,7 +359,7 @@ struct SecurityTests {
         let logs = try auditLogger.fetchLogs(userId: userId)
 
         // Verify deletion logged
-        let deletionLogs = logs.filter { $0.eventType == .conversationDeleted.rawValue }
+        let deletionLogs = logs.filter { $0.eventType == AuditEventType.conversationDeleted.rawValue }
         #expect(!deletionLogs.isEmpty)
     }
 
@@ -382,8 +382,8 @@ struct SecurityTests {
         let latestLog = logs.first!
 
         // Verify timestamp is between before and after
-        #expect(latestLog.timestamp >= beforeTime)
-        #expect(latestLog.timestamp <= afterTime)
+        #expect((latestLog.timestamp ?? Date.distantPast) >= beforeTime)
+        #expect((latestLog.timestamp ?? Date.distantFuture) <= afterTime)
 
         // Verify timestamp precision (should be within milliseconds)
         let timeDiff = afterTime.timeIntervalSince(beforeTime)
@@ -558,10 +558,10 @@ struct SecurityTests {
         let authService = AuthenticationService.shared
 
         // Verify validateSession method exists and can be called
-        let isValid = authService.validateSession()
+        let sessionUser = authService.validateSession()
 
         // The result depends on whether there's an active session
         // This test just verifies the mechanism exists
-        #expect(isValid == true || isValid == false)
+        #expect(sessionUser != nil || sessionUser == nil)
     }
 }

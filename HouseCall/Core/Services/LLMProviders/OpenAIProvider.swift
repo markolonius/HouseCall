@@ -242,7 +242,7 @@ class OpenAIProvider: LLMProvider {
 
 // MARK: - OpenAI Configuration
 
-struct OpenAIConfig {
+struct OpenAIConfig: Codable {
     var model: String
     var temperature: Double
     var maxTokens: Int

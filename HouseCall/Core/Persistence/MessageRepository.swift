@@ -65,13 +65,6 @@ enum MessageRepositoryError: LocalizedError, Equatable {
     }
 }
 
-/// Message role types
-enum MessageRole: String {
-    case user = "user"
-    case assistant = "assistant"
-    case system = "system"
-}
-
 /// Protocol defining message data access operations
 protocol MessageRepositoryProtocol {
     /// Creates a new message in a conversation

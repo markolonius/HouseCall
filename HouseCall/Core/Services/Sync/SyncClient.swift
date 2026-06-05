@@ -36,17 +36,26 @@ enum SyncError: LocalizedError, Equatable {
     case decodeFailed(String)
     /// The server returned a non-2xx status other than 401.
     case serverError(Int)
+    /// A non-localhost base URL was provided without HTTPS.
+    case insecureBaseURL
 
     var errorDescription: String? {
         switch self {
         case .unauthorized:
             return "Session expired. Please log in again."
-        case .offline(let reason):
-            return "Network unavailable: \(reason)"
-        case .decodeFailed(let context):
-            return "Response decode error: \(context)"
+        case .offline:
+            // The associated reason value is intentionally excluded from the
+            // user-visible description — it may originate from system error
+            // messages that could inadvertently carry sensitive context.
+            return "Network unavailable. Check your connection and try again."
+        case .decodeFailed:
+            // The associated context value is intentionally excluded from the
+            // user-visible description to avoid leaking internal type details.
+            return "Response decode error. Please try again."
         case .serverError(let code):
             return "Server error (\(code))."
+        case .insecureBaseURL:
+            return "Non-localhost base URLs must use https://."
         }
     }
 
@@ -56,6 +65,7 @@ enum SyncError: LocalizedError, Equatable {
         case (.offline(let a), .offline(let b)): return a == b
         case (.decodeFailed(let a), .decodeFailed(let b)): return a == b
         case (.serverError(let a), .serverError(let b)): return a == b
+        case (.insecureBaseURL, .insecureBaseURL): return true
         default: return false
         }
     }
@@ -151,15 +161,12 @@ final class SyncClient {
         baseURL: URL = URL(string: "http://localhost:8080")!,
         session: URLSession? = nil,
         keychainManager: KeychainManager = .shared
-    ) {
+    ) throws {
         // Enforce TLS for any non-localhost target.
         let host = baseURL.host ?? ""
         let isLocalhost = host == "localhost" || host == "127.0.0.1" || host == "::1"
-        if !isLocalhost {
-            precondition(
-                baseURL.scheme == "https",
-                "SyncClient: non-localhost base URLs must use https://"
-            )
+        if !isLocalhost && baseURL.scheme != "https" {
+            throw SyncError.insecureBaseURL
         }
 
         self.baseURL = baseURL
@@ -249,7 +256,7 @@ final class SyncClient {
     ///
     /// Maps to `GET /api/conversations`.
     func listConversations() async throws -> [ConversationDTO] {
-        let request = try authorisedRequest(method: "GET", path: "api/conversations")
+        let request = try authorisedRequest(method: "GET", path: "/api/conversations")
         return try await perform(request)
     }
 
@@ -259,7 +266,7 @@ final class SyncClient {
     func listMessages(conversationID: String) async throws -> [MessageDTO] {
         let request = try authorisedRequest(
             method: "GET",
-            path: "api/conversations/\(conversationID)/messages"
+            path: "/api/conversations/\(conversationID)/messages"
         )
         return try await perform(request)
     }
@@ -273,7 +280,7 @@ final class SyncClient {
         let payload = try JSONEncoder().encode(["content": content])
         let request = try authorisedRequest(
             method: "POST",
-            path: "api/conversations/\(conversationID)/messages",
+            path: "/api/conversations/\(conversationID)/messages",
             body: payload
         )
         return try await perform(request)
@@ -287,7 +294,7 @@ final class SyncClient {
     func getRecommendation(recommendationID: String) async throws -> RecommendationDTO {
         let request = try authorisedRequest(
             method: "GET",
-            path: "api/recommendations/\(recommendationID)"
+            path: "/api/recommendations/\(recommendationID)"
         )
         return try await perform(request)
     }

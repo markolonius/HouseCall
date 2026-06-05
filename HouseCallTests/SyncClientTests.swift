@@ -175,7 +175,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -216,7 +216,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -246,7 +246,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -267,7 +267,7 @@ struct SyncClientTests {
         let kc = makeKeychain()
         let session = makeOfflineSession()
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -298,7 +298,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -323,7 +323,7 @@ struct SyncClientTests {
         let kc = makeKeychain(jwt: nil)   // no JWT stored
         let session = makeOfflineSession()  // session doesn't matter — JWT check fires first
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -350,7 +350,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -432,7 +432,7 @@ struct SyncClientTests {
         }
         defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
 
-        let client = SyncClient(
+        let client = try SyncClient(
             baseURL: URL(string: "http://localhost:8080")!,
             session: session,
             keychainManager: kc
@@ -448,10 +448,86 @@ struct SyncClientTests {
     // MARK: - JWT is never exposed in error descriptions
 
     @Test("SyncError descriptions do not contain the JWT value")
-    func testErrorDescriptionsDoNotExposeJWT() {
-        let jwt = "super.secret.jwt"
-        let error = SyncError.unauthorized
-        let desc = error.errorDescription ?? ""
-        #expect(!desc.contains(jwt))
+    func testErrorDescriptionsDoNotExposeJWT() async throws {
+        let jwt = "super.secret.jwt.value"
+
+        // (a) Static error cases — assert that if a future edit accidentally
+        //     interpolates the token into these cases, this test catches it.
+        let cases: [SyncError] = [
+            .unauthorized,
+            .offline(jwt),
+            .decodeFailed(jwt),
+            .serverError(503),
+            .insecureBaseURL,
+        ]
+        for error in cases {
+            let desc = error.errorDescription ?? ""
+            #expect(!desc.contains(jwt), "errorDescription for \(error) must not contain the JWT")
+            let debugDesc = String(describing: error)
+            // .offline and .decodeFailed carry the reason in their debug
+            // representation, which is acceptable for internal use; what
+            // matters is that ONLY a sanitised localised string is shown.
+            // We do NOT assert on debugDesc here — only on errorDescription.
+            _ = debugDesc
+        }
+
+        // (b) End-to-end: JWT in Keychain → real offline error → description
+        //     must not contain the JWT.
+        let kc = makeKeychain(jwt: jwt)
+        let offlineSession = makeOfflineSession()
+        let client = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: offlineSession,
+            keychainManager: kc
+        )
+
+        do {
+            _ = try await client.listConversations()
+            Issue.record("Expected SyncError.offline but no error was thrown")
+        } catch let syncError as SyncError {
+            let desc = syncError.errorDescription ?? ""
+            #expect(!desc.contains(jwt),
+                    "errorDescription of thrown error must not contain the JWT")
+            let debugDesc = String(describing: syncError)
+            #expect(!debugDesc.contains(jwt),
+                    "String(describing:) of thrown error must not contain the JWT")
+        }
+    }
+
+    // MARK: - TLS enforcement in initialiser
+
+    @Test("Non-localhost http:// base URL throws SyncError.insecureBaseURL")
+    func testNonLocalhostHTTPThrows() throws {
+        #expect(throws: SyncError.insecureBaseURL) {
+            try SyncClient(
+                baseURL: URL(string: "http://api.example.com")!,
+                keychainManager: makeKeychain()
+            )
+        }
+    }
+
+    @Test("https:// remote base URL initialises without throwing")
+    func testHTTPSRemoteURLSucceeds() throws {
+        // Should not throw — https is safe for remote hosts.
+        _ = try SyncClient(
+            baseURL: URL(string: "https://api.example.com")!,
+            session: makeOfflineSession(),
+            keychainManager: makeKeychain()
+        )
+    }
+
+    @Test("localhost http:// base URL initialises without throwing")
+    func testLocalhostHTTPSucceeds() throws {
+        // localhost plaintext exemption must be preserved.
+        _ = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: makeOfflineSession(),
+            keychainManager: makeKeychain()
+        )
+        _ = try SyncClient(
+            baseURL: URL(string: "http://127.0.0.1:8080")!,
+            session: makeOfflineSession(),
+            keychainManager: makeKeychain()
+        )
     }
 }

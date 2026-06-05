@@ -150,9 +150,9 @@ recommendations, and drive each of the three actions.
       (lightweight migration)
 
 ### Task 6.2: Sync client
-- [ ] New `SyncClient` — REST calls to the Core API using the JWT from
+- [x] New `SyncClient` — REST calls to the Core API using the JWT from
       `AuthenticationService`'s keychain session
-- [ ] WebSocket listener for `recommendation.delivered`
+- [x] WebSocket listener for `recommendation.delivered`
 
 ### Task 6.3: Wire into the chat flow
 - [ ] `AIConversationService` message send → `SyncClient` POST instead of a

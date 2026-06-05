@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 /// Displays a single message bubble in the chat interface
 struct MessageBubbleView: View {

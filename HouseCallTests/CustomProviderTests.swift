@@ -539,9 +539,9 @@ private class MockKeychainManager: KeychainManager {
 // MARK: - Mock Audit Logger
 
 private class MockAuditLogger: AuditLogger {
-    var loggedEvents: [(AuditEventType, UUID?, [String: Any]?)] = []
+    var loggedEvents: [(AuditEventType, UUID?)] = []
 
-    override func log(eventType: AuditEventType, userId: UUID?, details: [String: Any]?) {
-        loggedEvents.append((eventType, userId, details))
+    override func log(event: AuditEventType, userId: UUID? = nil, details: AuditEventDetails) throws {
+        loggedEvents.append((event, userId))
     }
 }

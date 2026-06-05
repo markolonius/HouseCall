@@ -59,6 +59,9 @@ enum AuditEventType: String, Codable {
     case messageSent = "message_sent"
     case messageReceived = "message_received"
 
+    // Settings Events
+    case settingsChanged = "settings_changed"
+
     // AI Interaction Events
     case aiInteraction = "ai_interaction"
     case aiInteractionFailed = "ai_interaction_failed"
@@ -387,5 +390,36 @@ class AuditLogger {
         } catch {
             throw AuditLogError.fetchFailed(error)
         }
+    }
+
+    // MARK: - Convenience Methods for Tests
+
+    /// Fetches all raw AuditLogEntry objects for a specific user
+    func fetchLogs(userId: UUID) throws -> [AuditLogEntry] {
+        let fetchRequest: NSFetchRequest<AuditLogEntry> = AuditLogEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "userId == %@", userId as CVarArg)
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+
+        do {
+            return try context.fetch(fetchRequest)
+        } catch {
+            throw AuditLogError.fetchFailed(error)
+        }
+    }
+
+    /// Decrypts the details of an AuditLogEntry and returns as a JSON string
+    func decryptDetails(_ entry: AuditLogEntry) throws -> String {
+        guard let encryptedDetails = entry.encryptedDetails else {
+            throw AuditLogError.invalidData
+        }
+        let decryptionUserId = entry.userId ?? systemUserId
+        let decryptedData = try encryptionManager.decrypt(
+            encryptedData: encryptedDetails,
+            for: decryptionUserId
+        )
+        guard let string = String(data: decryptedData, encoding: .utf8) else {
+            throw AuditLogError.invalidData
+        }
+        return string
     }
 }

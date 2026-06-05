@@ -9,6 +9,7 @@
 import Foundation
 import UIKit
 import SwiftUI
+import Combine
 
 /// Manages screen capture protection for HIPAA compliance
 /// Detects screenshot attempts and provides privacy screen overlay
@@ -60,7 +61,7 @@ class ScreenProtectionManager: ObservableObject {
         if let userId = AuthenticationService.shared.getCurrentUser()?.id {
             do {
                 try auditLogger.log(
-                    eventType: .dataAccessed,
+                    event: .dataAccessed,
                     userId: userId,
                     details: AuditEventDetails(
                         message: "Screenshot captured - PHI may have been exported",
@@ -78,7 +79,7 @@ class ScreenProtectionManager: ObservableObject {
             // Log screenshot without user context (shouldn't happen in authenticated flow)
             do {
                 try auditLogger.log(
-                    eventType: .dataAccessed,
+                    event: .dataAccessed,
                     userId: nil,
                     details: AuditEventDetails(
                         message: "Screenshot captured - no authenticated user",

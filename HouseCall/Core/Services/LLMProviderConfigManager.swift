@@ -148,6 +148,20 @@ class LLMProviderConfigManager: ObservableObject {
         return nil
     }
 
+    // MARK: - Provider Configuration Access
+
+    /// Get the configuration for a provider as an Any (for testability)
+    func getProviderConfig(for provider: LLMProviderType) -> Any? {
+        switch provider {
+        case .openai:
+            return loadOpenAIConfig()
+        case .claude:
+            return loadClaudeConfig()
+        case .custom:
+            return loadCustomProviderConfig()
+        }
+    }
+
     // MARK: - Provider Instance Creation
 
     /// Create an instance of the active provider
@@ -214,18 +228,3 @@ class LLMProviderConfigManager: ObservableObject {
     }
 }
 
-// MARK: - Codable Extensions
-
-extension OpenAIConfig: Codable {}
-extension ClaudeConfig: Codable {}
-
-extension CustomProviderConfig: Codable {
-    enum CodingKeys: String, CodingKey {
-        case baseURL
-        case endpoint
-        case model
-        case temperature
-        case maxTokens
-        case requiresAuth
-    }
-}

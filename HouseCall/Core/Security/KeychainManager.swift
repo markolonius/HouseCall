@@ -51,7 +51,7 @@ class KeychainManager {
         static let authMethod = "com.housecall.auth-method"
     }
 
-    private init() {}
+    init() {}
 
     // MARK: - Generic Keychain Operations
 
@@ -224,6 +224,43 @@ class KeychainManager {
             return nil
         }
         return byte == 1
+    }
+
+    // MARK: - String Convenience Methods
+
+    /// Saves a string value to keychain
+    /// - Parameters:
+    ///   - string: String value to store
+    ///   - forKey: Unique identifier for the item
+    func save(_ string: String, forKey key: String) throws {
+        guard let data = string.data(using: .utf8) else {
+            throw KeychainError.encodingFailed
+        }
+        try save(data: data, for: key)
+    }
+
+    /// Saves a string value to keychain (alternate label for testability)
+    func set(key: String, value: String) throws {
+        try save(value, forKey: key)
+    }
+
+    /// Retrieves a string value from keychain
+    /// - Parameter key: Unique identifier for the item
+    /// - Returns: String value, or nil if not found
+    func get(key: String) throws -> String? {
+        guard let data = try retrieve(for: key) else {
+            return nil
+        }
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw KeychainError.decodingFailed
+        }
+        return string
+    }
+
+    /// Deletes an item from keychain by key name
+    /// - Parameter key: Unique identifier for the item
+    func delete(key: String) throws {
+        try delete(for: key)
     }
 
     // MARK: - Cleanup

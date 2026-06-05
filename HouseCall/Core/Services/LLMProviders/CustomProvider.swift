@@ -272,7 +272,7 @@ class CustomProvider: LLMProvider {
 
 // MARK: - Custom Provider Configuration
 
-struct CustomProviderConfig {
+struct CustomProviderConfig: Codable {
     /// Base URL for the custom provider (e.g., "http://localhost:11434")
     var baseURL: String
 

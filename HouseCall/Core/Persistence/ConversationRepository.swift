@@ -61,13 +61,6 @@ enum ConversationRepositoryError: LocalizedError, Equatable {
     }
 }
 
-/// LLM Provider types
-enum LLMProviderType: String, CaseIterable {
-    case openai = "openai"
-    case claude = "claude"
-    case custom = "custom"
-}
-
 /// Protocol defining conversation data access operations
 protocol ConversationRepositoryProtocol {
     /// Creates a new conversation

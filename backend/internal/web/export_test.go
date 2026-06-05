@@ -19,7 +19,7 @@ type WebClaims = webClaims
 // Exposed so web_test can supply a fake without importing store.Store.
 type StoreQuerier interface {
 	GetPhysicianByEmail(ctx context.Context, tenant store.TenantID, email string) (store.Physician, error)
-	ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error)
+	ListPatientsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.PanelPatient, error)
 	ListRecommendationsByPhysician(ctx context.Context, tenant store.TenantID, physicianID uuid.UUID, state string) ([]store.Recommendation, error)
 
 	// Review action methods (task 5.3).

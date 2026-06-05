@@ -49,10 +49,10 @@ var testSecret = []byte("web-test-secret-32-bytes!!!!!!!")
 type fakeStore struct {
 	physicians    map[string]store.Physician    // keyed by email
 	patients      map[string]store.Patient      // keyed by email
-	panelPatients []store.Patient               // returned by ListPatientsByPhysician
+	panelPatients []store.PanelPatient          // returned by ListPatientsByPhysician
 	queueRecs     []store.Recommendation        // returned by ListRecommendationsByPhysician
 	// physicianForPanel / Rec scoping: keyed by physician id string
-	panelByPhys map[string][]store.Patient
+	panelByPhys map[string][]store.PanelPatient
 	recsByPhys  map[string][]store.Recommendation
 
 	// review action support (task 5.3)
@@ -83,12 +83,12 @@ func (f *fakeStore) GetPatientByEmail(_ context.Context, tenant store.TenantID, 
 // ListPatientsByPhysician returns patients scoped to tenant + physicianID.
 // Uses panelByPhys if populated, otherwise falls back to panelPatients for
 // simple tests that only have one physician.
-func (f *fakeStore) ListPatientsByPhysician(_ context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+func (f *fakeStore) ListPatientsByPhysician(_ context.Context, tenant store.TenantID, physicianID uuid.UUID) ([]store.PanelPatient, error) {
 	if f.panelByPhys != nil {
 		key := physicianID.String()
 		rows := f.panelByPhys[key]
 		// Enforce tenant isolation: return only patients with matching tenant.
-		var out []store.Patient
+		var out []store.PanelPatient
 		for _, p := range rows {
 			if p.TenantID == tenant {
 				out = append(out, p)
@@ -97,7 +97,7 @@ func (f *fakeStore) ListPatientsByPhysician(_ context.Context, tenant store.Tena
 		return out, nil
 	}
 	// Simple fallback: filter panelPatients by tenant.
-	var out []store.Patient
+	var out []store.PanelPatient
 	for _, p := range f.panelPatients {
 		if p.TenantID == tenant {
 			out = append(out, p)
@@ -217,7 +217,7 @@ func (a *storeAdapter) GetPhysicianByEmail(ctx context.Context, t store.TenantID
 	return a.f.GetPhysicianByEmail(ctx, t, e)
 }
 
-func (a *storeAdapter) ListPatientsByPhysician(ctx context.Context, t store.TenantID, physicianID uuid.UUID) ([]store.Patient, error) {
+func (a *storeAdapter) ListPatientsByPhysician(ctx context.Context, t store.TenantID, physicianID uuid.UUID) ([]store.PanelPatient, error) {
 	return a.f.ListPatientsByPhysician(ctx, t, physicianID)
 }
 
@@ -617,13 +617,13 @@ func TestPanel_NonPhysician(t *testing.T) {
 // renders only the care-relationship patients for the session physician, and
 // does NOT render patients belonging to a second physician in another tenant.
 func TestPanel_ShowsOnlySessionPhysicianPatients(t *testing.T) {
-	phys1Patient := store.Patient{
+	phys1Patient := store.PanelPatient{
 		ID:       testPatientID,
 		TenantID: testTenantID,
 		FullName: "Alice Smith",
 		State:    "CA",
 	}
-	phys2Patient := store.Patient{
+	phys2Patient := store.PanelPatient{
 		ID:       testPatientID2,
 		TenantID: testTenantID2,
 		FullName: "Bob Jones",
@@ -632,7 +632,7 @@ func TestPanel_ShowsOnlySessionPhysicianPatients(t *testing.T) {
 
 	fs := &fakeStore{
 		physicians: map[string]store.Physician{},
-		panelByPhys: map[string][]store.Patient{
+		panelByPhys: map[string][]store.PanelPatient{
 			testPhysID.String():  {phys1Patient},
 			testPhysID2.String(): {phys2Patient},
 		},

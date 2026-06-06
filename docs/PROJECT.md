@@ -162,6 +162,16 @@ AI evaluates patient
 chat with their AI agent, the agent drafts a recommendation, a physician reviews
 it, and the approved result reaches the patient. Everything else is deferred.
 
+**Engineering MVP landed (2026-06-03):** The `add-cloud-platform-mvp` OpenSpec
+change delivered a local-development proof of the core loop. The backend
+(`backend/`), physician web app (`internal/web`), and iOS cloud sync
+(`SyncClient`, `CloudSyncCoordinator`, `RecommendationCard`) are built and
+e2e-tested against Ollama + medgemma:4b. The boxes below track what remains
+for _production_ Phase 1 (AWS infrastructure, real patients, HIPAA gates). See
+[`backend/README.md`](../backend/README.md) for how to run the MVP locally and
+[`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) for the design. Spec:
+[`openspec/changes/add-cloud-platform-mvp/`](../openspec/changes/add-cloud-platform-mvp/).
+
 **In scope:**
 - [ ] HIPAA-compliant AWS infrastructure (RDS, S3, API Gateway, self-hosted Zitadel — per ARCHITECTURE.md §8)
 - [ ] Core API service: patients, conversations, messages, recommendations, protocols
@@ -254,4 +264,4 @@ it, and the approved result reaches the patient. Everything else is deferred.
 
 ---
 
-*Last updated: 2026-05-14*
+*Last updated: 2026-06-03*

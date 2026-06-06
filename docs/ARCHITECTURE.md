@@ -5,11 +5,15 @@
 > web app, cloud backend, and AI agent fit together, how PHI flows between them,
 > and what has to be true before Phase 1 code can start.
 
-**Status:** Draft for review. Nothing here is built yet — the current codebase is
-a single-device iOS app (encrypted Core Data, on-device only). This document
-describes the target state and the migration path to it.
+**Status:** The Cloud Platform MVP described here is built and on `main` as of
+2026-06-03 (`add-cloud-platform-mvp` Phases 1–7). The Go Core API, AI agent
+runtime, physician web app (`internal/web`), iOS cloud sync, Docker Compose
+stack, and a live e2e (Ollama + medgemma:4b) are all shipped. Sections still
+describing future AWS deployment (§8) and production compliance gates (§9,
+§12) remain as-spec — they apply to the production environment, not the local
+MVP.
 
-*Last updated: 2026-05-14*
+*Last updated: 2026-06-03*
 
 ---
 
@@ -39,7 +43,7 @@ These shape every decision below:
 ```
 ┌─────────────────┐         ┌─────────────────┐
 │  Patient iOS    │         │ Physician Web   │
-│  App (SwiftUI)  │         │ App (TBD stack) │
+│  App (SwiftUI)  │         │ App (Go/HTML)   │
 └────────┬────────┘         └────────┬────────┘
          │ HTTPS/TLS 1.2+            │ HTTPS/TLS 1.2+
          │ (REST + WebSocket)        │ (REST + WebSocket)
@@ -82,15 +86,15 @@ These shape every decision below:
 
 ### Components
 
-| Component | Responsibility | Phase 1 scope |
+| Component | Responsibility | MVP status |
 |---|---|---|
-| **Patient iOS app** | Patient-facing surface: chat, dashboard, HealthKit capture, notifications | Reuse existing auth + chat UI; add cloud sync |
-| **Physician web app** | Clinical oversight: patient panel, recommendation review queue, protocol view | New build — minimal queue + approve/reject/modify |
-| **API Gateway** | TLS termination, authN/Z, rate limiting, request routing | Managed (AWS API Gateway) |
-| **Core API Service** | CRUD for patients, conversations, messages, recommendations, protocols; enforces physician-in-loop state machine | New build |
-| **AI Agent Runtime** | Per-patient agent: reactive chat responses, recommendation generation, escalation triage | New build — reactive only in Phase 1 |
-| **Integration Workers** | Async jobs pulling/pushing external data (HealthKit deltas, lab results) | New build — HealthKit only in Phase 1 |
-| **Data Layer** | PostgreSQL system of record, S3 for media, append-only audit store | New build |
+| **Patient iOS app** | Patient-facing surface: chat, dashboard, HealthKit capture, notifications | Cloud sync added (`SyncClient`, `CloudSyncCoordinator`, `RecommendationCard` — `HouseCall/Core/Services/Sync/`) |
+| **Physician web app** | Clinical oversight: patient panel, recommendation review queue | Built — Go server-rendered HTML templates (`internal/web`); login, patient panel, recommendation queue (approve / reject / modify) |
+| **API Gateway** | TLS termination, authN/Z, rate limiting, request routing | MVP: Go `net/http` router in `internal/api`; production target is AWS API Gateway |
+| **Core API Service** | CRUD for patients, conversations, messages, recommendations, protocols; enforces physician-in-loop state machine | Built — `internal/api`, `internal/store`, `internal/domain`, `internal/review`; multi-tenant Postgres; physician state-licensing enforced on every approval |
+| **AI Agent Runtime** | Per-patient agent: reactive chat responses, recommendation generation | Built — `internal/agent`; OpenAI-compatible client pointed at `AGENT_MODEL_BASE_URL` (Ollama/medgemma:4b for local dev); reactive only (Phase 1) |
+| **Integration Workers** | Async jobs pulling/pushing external data (HealthKit deltas, lab results) | Deferred — not in MVP; HealthKit ingestion is Phase 1 production work |
+| **Data Layer** | PostgreSQL system of record, S3 for media, append-only audit store | Postgres built (`backend/migrations/`, Docker Compose); S3 and audit store are production targets |
 
 ### Backend stack
 
@@ -194,13 +198,21 @@ Only `APPROVED` and `MODIFIED` can transition to `DELIVERED`. The transition to
 is enforced in the Core API, covered by tests, and audited on every transition.
 
 ### iOS migration path
-1. Keep the existing local Core Data model.
-2. Add a sync layer: local rows get a `serverId` + `syncState`
-   (`pending` / `synced` / `conflict`).
-3. New data flows to the server first; the local store mirrors it.
-4. Offline: writes queue locally, replay on reconnect. Reads serve from cache.
-5. The existing encryption stays for local-at-rest; transport encryption is
-   additional, not a replacement.
+
+Steps 1–5 are implemented in the Cloud Platform MVP:
+
+1. The existing local Core Data model is unchanged.
+2. Sync layer added: `Conversation` and `Message` entities now carry
+   `serverId` (String, optional) and `syncState` (String: `pending` /
+   `synced` / `conflict`). See `HouseCall/HouseCall.xcdatamodeld`.
+3. `SyncClient.swift` (`HouseCall/Core/Services/Sync/`) handles REST calls
+   to the Core API; `CloudSyncCoordinator.swift` orchestrates sync lifecycle
+   and conflict resolution (server wins in Phase 1). New data flows to the
+   server first; the local store mirrors it.
+4. `RecommendationCard.swift` (`HouseCall/Features/Conversation/Views/`)
+   surfaces physician-approved recommendations in the patient UI.
+5. The existing AES-256-GCM local encryption is unchanged; transport
+   encryption (TLS) is additional.
 
 ---
 
@@ -299,10 +311,15 @@ See §11 Decision Log for the hosting alternatives considered.
 
 ## 7. Sync Protocol (iOS ↔ Cloud)
 
-- **Transport**: REST for CRUD, WebSocket for live updates (streaming AI
-  responses, recommendation-delivered push, escalation alerts).
-- **Write path**: client writes locally (queued) → POSTs to server → server
-  assigns `serverId` → client reconciles.
+This protocol is implemented in the Cloud Platform MVP (`SyncClient.swift`,
+`CloudSyncCoordinator.swift`).
+
+- **Transport**: REST for CRUD (`SyncClient` wraps the Core API endpoints);
+  WebSocket (`internal/api/ws.go`) for live updates (streaming AI responses,
+  recommendation delivery). Escalation push is deferred to production
+  (APNs via SNS — §8).
+- **Write path**: client writes locally (queued, `syncState = pending`) → POSTs
+  to server → server assigns `serverId` → client sets `syncState = synced`.
 - **Read path**: client pulls deltas since last sync cursor; server is
   authoritative on conflict.
 - **Conflict policy (Phase 1)**: server wins; conflicting local edits are

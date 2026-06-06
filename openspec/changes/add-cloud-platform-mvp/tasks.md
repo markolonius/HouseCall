@@ -188,7 +188,7 @@ full loop.
 ## Phase 8: Documentation
 
 ### Task 8.1: Backend README
-- [ ] Replace the `backend/README.md` placeholder with real run instructions
+- [x] Replace the `backend/README.md` placeholder with real run instructions
 
 ### Task 8.2: Cross-references
 - [ ] Note the MVP in `docs/PROJECT.md` (Phase 1 progress)

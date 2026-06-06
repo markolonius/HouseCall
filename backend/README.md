@@ -58,8 +58,9 @@ make compose-up
 This single target:
 1. Runs `docker compose up -d --build --wait` — builds the Go binary inside the
    container, starts Postgres 16 and the server, waits until both are healthy.
-2. Runs `make seed` — inserts one synthetic tenant, physician, patient, and care
-   relationship (idempotent, safe to re-run).
+2. Seeds the database (`go run ./cmd/seed`, the same code `make seed` runs) —
+   inserts one synthetic tenant, physician, patient, and care relationship
+   (idempotent, safe to re-run).
 
 Verify the server is healthy:
 

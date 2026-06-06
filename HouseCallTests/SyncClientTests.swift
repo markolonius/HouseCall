@@ -156,6 +156,7 @@ private func makeHTTPResponse(url: URL, status: Int) -> HTTPURLResponse {
 // MARK: - SyncClient Tests
 
 @Suite("SyncClient Tests")
+@MainActor
 struct SyncClientTests {
 
     // MARK: - Authorization header

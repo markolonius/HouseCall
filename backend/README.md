@@ -108,6 +108,8 @@ make migrate DATABASE_URL=postgres://user:pass@host:port/db?sslmode=disable
 make test    TEST_DATABASE_URL=postgres://user:pass@host:port/test_db?sslmode=disable
 ```
 
+> **Note:** `sslmode=disable` is for local development only and must never be used in staging or production environments.
+
 Tests that depend on PostgreSQL skip cleanly when `TEST_DATABASE_URL` is
 unset, so `go test ./...` always compiles and runs (pure-Go tests still
 execute; DB-bound tests skip).

@@ -208,9 +208,14 @@ web_post_form_with_cookies() {
         # the Set-Cookie header from wget and store the value in a shell var.
         # wget in Alpine writes headers to stderr with -S; we pipe stderr to
         # stdout and extract the Set-Cookie line.
+        # Pass form data and path via env vars so a crafted server response
+        # value cannot break out of the sh -c string and execute commands.
         local output
-        output="$(_docker_exec_raw sh -c \
-            "wget -qO- -S --post-data='${data}' 'http://localhost:8080${path}' 2>&1")" || true
+        output="$(docker exec \
+            -e _HC_POST_DATA="$data" \
+            -e _HC_PATH="$path" \
+            housecall-server \
+            sh -c 'wget -qO- -S --post-data="$_HC_POST_DATA" "http://localhost:8080$_HC_PATH" 2>&1')" || true
         local cookie_val
         cookie_val="$(printf '%s\n' "$output" | grep -i "Set-Cookie:" | grep "hc_session" \
             | sed 's/.*hc_session=\([^;]*\).*/\1/' | head -1)"
@@ -232,9 +237,13 @@ web_get_with_cookies() {
     if [[ "$EXEC_MODE" == "host" ]]; then
         curl -sf --cookie "$COOKIE_JAR" "${WEB_BASE}${path}"
     else
-        _docker_exec wget -qO- \
-            --header="Cookie: hc_session=${WEB_SESSION_COOKIE_VALUE:-}" \
-            "http://localhost:8080${path}"
+        # Pass cookie value via env var to prevent injection from a
+        # server-response-derived value breaking out of the header string.
+        docker exec \
+            -e _HC_SESSION="$WEB_SESSION_COOKIE_VALUE" \
+            -e _HC_PATH="$path" \
+            housecall-server \
+            sh -c 'wget -qO- --header="Cookie: hc_session=$_HC_SESSION" "http://localhost:8080$_HC_PATH"'
     fi
 }
 
@@ -252,12 +261,19 @@ web_post_form_approve() {
             -d "$data")"
         echo "$code"
     else
+        # Pass cookie value, form data, and path via env vars so a crafted
+        # server-response-derived value (cookie, recommendation id) cannot
+        # break out of the sh -c string and execute commands in the container.
         local output
-        output="$(_docker_exec_raw sh -c \
-            "wget -qO- -S \
-                --header='Cookie: hc_session=${WEB_SESSION_COOKIE_VALUE:-}' \
-                --post-data='${data}' \
-                'http://localhost:8080${path}' 2>&1")" || true
+        output="$(docker exec \
+            -e _HC_SESSION="$WEB_SESSION_COOKIE_VALUE" \
+            -e _HC_POST_DATA="$data" \
+            -e _HC_PATH="$path" \
+            housecall-server \
+            sh -c 'wget -qO- -S \
+                --header="Cookie: hc_session=$_HC_SESSION" \
+                --post-data="$_HC_POST_DATA" \
+                "http://localhost:8080$_HC_PATH" 2>&1')" || true
         local status
         status="$(printf '%s\n' "$output" | grep "HTTP/" | tail -1 \
             | awk '{print $2}' || true)"

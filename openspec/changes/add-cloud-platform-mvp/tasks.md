@@ -155,13 +155,13 @@ recommendations, and drive each of the three actions.
 - [x] WebSocket listener for `recommendation.delivered`
 
 ### Task 6.3: Wire into the chat flow
-- [ ] `AIConversationService` message send → `SyncClient` POST instead of a
+- [x] `AIConversationService` message send → `SyncClient` POST instead of a
       direct LLM provider call
-- [ ] Delivered recommendation arrives via WebSocket → rendered as a generic
+- [x] Delivered recommendation arrives via WebSocket → rendered as a generic
       `RecommendationCard` SwiftUI view in the conversation, keyed off
       `payload_type` so differentiated card types can be added later without
       reworking the chat
-- [ ] Offline: messages stay `pending`, replay on reconnect
+- [x] Offline: messages stay `pending`, replay on reconnect
 
 ### Task 6.4: Tests
 - [ ] `SyncClient` unit tests with a stubbed `URLProtocol`

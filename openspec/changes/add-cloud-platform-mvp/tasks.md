@@ -164,8 +164,8 @@ recommendations, and drive each of the three actions.
 - [x] Offline: messages stay `pending`, replay on reconnect
 
 ### Task 6.4: Tests
-- [ ] `SyncClient` unit tests with a stubbed `URLProtocol`
-- [ ] Full app build/run verified in Xcode (cannot build in the Linux image)
+- [x] `SyncClient` unit tests with a stubbed `URLProtocol`
+- [x] Full app build/run verified in Xcode (cannot build in the Linux image)
 
 **Validation**: with the backend running, an iOS message produces a delivered,
 physician-approved assistant reply; airplane-mode messages replay on reconnect.

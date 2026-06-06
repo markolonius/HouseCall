@@ -219,15 +219,70 @@ func (s *Store) CreateMessage(ctx context.Context, tenant TenantID, conversation
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO messages (tenant_id, conversation_id, role, content)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, tenant_id, conversation_id, role, content, created_at`,
+		 RETURNING id, tenant_id, conversation_id, role, content, idempotency_key, created_at`,
 		tenant.UUID(), conversationID, role, content,
-	).Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.CreatedAt)
+	).Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.IdempotencyKey, &m.CreatedAt)
 	return m, err
+}
+
+// CreateMessageIdempotent inserts a message with the given idempotency key.
+// If a message already exists for (tenant_id, conversation_id, idempotency_key),
+// the existing row is returned without inserting a duplicate and the second
+// return value is true (dedupe hit). This is safe under concurrent replay:
+// two goroutines racing on the same key converge on the same row.
+//
+// Callers MUST NOT write a message.created audit event when deduped == true;
+// the event was already written for the original insert.
+func (s *Store) CreateMessageIdempotent(
+	ctx context.Context,
+	tenant TenantID,
+	conversationID uuid.UUID,
+	role, content string,
+	idempotencyKey string,
+) (msg Message, deduped bool, err error) {
+	// INSERT ... ON CONFLICT DO NOTHING, then SELECT the existing row.
+	// This is a single-round-trip approach that is race-safe: the first
+	// caller inserts, subsequent callers get 0 rows from INSERT and then
+	// read the already-committed row.
+	const q = `
+		INSERT INTO messages (tenant_id, conversation_id, role, content, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (tenant_id, conversation_id, idempotency_key)
+		    WHERE idempotency_key IS NOT NULL
+		DO NOTHING
+		RETURNING id, tenant_id, conversation_id, role, content, idempotency_key, created_at`
+
+	row := s.pool.QueryRow(ctx, q, tenant.UUID(), conversationID, role, content, idempotencyKey)
+	scanErr := row.Scan(&msg.ID, &msg.TenantID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.IdempotencyKey, &msg.CreatedAt)
+
+	if scanErr == nil {
+		// Fresh insert — the RETURNING clause provided the new row.
+		return msg, false, nil
+	}
+	if !errors.Is(scanErr, pgx.ErrNoRows) {
+		// Unexpected error.
+		return Message{}, false, scanErr
+	}
+
+	// ErrNoRows means DO NOTHING fired — the row already exists.
+	// Fetch it so the caller gets the original server-assigned ID.
+	fetchErr := s.pool.QueryRow(ctx,
+		`SELECT id, tenant_id, conversation_id, role, content, idempotency_key, created_at
+		   FROM messages
+		  WHERE tenant_id = $1
+		    AND conversation_id = $2
+		    AND idempotency_key = $3`,
+		tenant.UUID(), conversationID, idempotencyKey,
+	).Scan(&msg.ID, &msg.TenantID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.IdempotencyKey, &msg.CreatedAt)
+	if errors.Is(fetchErr, pgx.ErrNoRows) {
+		return Message{}, false, ErrNotFound
+	}
+	return msg, true, fetchErr
 }
 
 func (s *Store) ListMessagesByConversation(ctx context.Context, tenant TenantID, conversationID uuid.UUID) ([]Message, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tenant_id, conversation_id, role, content, created_at
+		`SELECT id, tenant_id, conversation_id, role, content, idempotency_key, created_at
 		   FROM messages
 		  WHERE tenant_id = $1 AND conversation_id = $2
 		  ORDER BY created_at`,
@@ -240,7 +295,7 @@ func (s *Store) ListMessagesByConversation(ctx context.Context, tenant TenantID,
 	var out []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.IdempotencyKey, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

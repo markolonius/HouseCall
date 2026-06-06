@@ -276,8 +276,29 @@ final class SyncClient {
     /// Maps to `POST /api/conversations/{id}/messages`.
     /// Returns the `MessageDTO` with the server-assigned `ID` (used as
     /// `serverId` in the local Core Data row).
-    func sendMessage(conversationID: String, content: String) async throws -> MessageDTO {
-        let payload = try JSONEncoder().encode(["content": content])
+    ///
+    /// - Parameters:
+    ///   - conversationID: Server-assigned conversation UUID string.
+    ///   - content: Decrypted message text (never stored back to Core Data here).
+    ///   - idempotencyKey: The local Core Data message UUID string.  When
+    ///     provided, the server deduplicates: a second POST with the same key
+    ///     for the same tenant + conversation returns the existing message
+    ///     (HTTP 200) instead of inserting a duplicate (HTTP 201).  Both
+    ///     status codes are treated as success by `perform(_:)` and the
+    ///     returned `MessageDTO.ID` is used as `serverId` either way.  Pass
+    ///     `nil` only for legacy / non-replay paths where no local UUID exists.
+    func sendMessage(
+        conversationID: String,
+        content: String,
+        idempotencyKey: String? = nil
+    ) async throws -> MessageDTO {
+        // Build the JSON body.  idempotency_key is omitted when nil so legacy
+        // callers that do not pass a key send exactly {"content": "..."}.
+        var bodyDict: [String: String] = ["content": content]
+        if let key = idempotencyKey {
+            bodyDict["idempotency_key"] = key
+        }
+        let payload = try JSONEncoder().encode(bodyDict)
         let request = try authorisedRequest(
             method: "POST",
             path: "/api/conversations/\(conversationID)/messages",

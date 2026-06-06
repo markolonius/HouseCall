@@ -524,6 +524,286 @@ struct CloudSyncTests {
                 "No recommendation cards should be appended after the coordinator is stopped")
     }
 
+    // MARK: - Idempotency key plumbing
+
+    /// postMessage sends the local message UUID as `idempotency_key` in the
+    /// POST body.  Verified by inspecting the captured request body.
+    @Test("postMessage includes local message UUID as idempotency_key in POST body")
+    func testPostMessageIncludesIdempotencyKey() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convServerId = conversation.serverId!
+
+        let serverMsgId = "srv-idemp-\(UUID().uuidString)"
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(serverMsgId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convServerId)",
+              "Role": "user",
+              "Content": "ikey test",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        // Create a pending message so we have its local UUID.
+        let pendingMsg = try messageRepo.createMessage(
+            conversationId: conversation.id!,
+            role: .user,
+            content: "ikey test",
+            streamingComplete: true
+        )
+        pendingMsg.syncState = "pending"
+        try context.save()
+
+        let localMsgId = pendingMsg.id!
+
+        // Invoke postMessage — this is also the path used by replay.
+        try await coordinator.postMessage(
+            localMessageId: localMsgId,
+            conversationServerId: convServerId,
+            conversationLocalId: conversation.id!
+        )
+
+        // Inspect the captured POST request body for idempotency_key.
+        let requests = SyncMockURLProtocol.capturedRequests(sessionID: sid)
+        let postReq = requests.first(where: { $0.httpMethod == "POST" })
+        #expect(postReq != nil, "A POST request should have been captured")
+
+        var bodyData: Data? = nil
+        if let stream = postReq?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let bufSize = 1024
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buf, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(contentsOf: buf[0..<read])
+            }
+            bodyData = data.isEmpty ? nil : data
+        }
+
+        #expect(bodyData != nil, "POST body must be present")
+        if let bodyData {
+            let decoded = try JSONDecoder().decode([String: String].self, from: bodyData)
+            #expect(decoded["idempotency_key"] == localMsgId.uuidString,
+                    "postMessage must send local message UUID as idempotency_key")
+        }
+    }
+
+    /// Replay sends the SAME idempotency key as the original postMessage call
+    /// (same local UUID) — verified by checking two consecutive captured bodies.
+    @Test("replayPendingMessages sends the same idempotency_key as the original postMessage")
+    func testReplayUsesSameIdempotencyKey() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convServerId = conversation.serverId!
+
+        let serverMsgId = "srv-replay-\(UUID().uuidString)"
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(serverMsgId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convServerId)",
+              "Role": "user",
+              "Content": "replay key check",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+
+        let pendingMsg = try messageRepo.createMessage(
+            conversationId: conversation.id!,
+            role: .user,
+            content: "replay key check",
+            streamingComplete: true
+        )
+        pendingMsg.syncState = "pending"
+        try context.save()
+
+        let localMsgId = pendingMsg.id!
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        // Trigger replay — internally calls postMessage with the pending message.
+        await coordinator.replayPendingMessages()
+
+        // The captured request body must contain the local message UUID.
+        let requests = SyncMockURLProtocol.capturedRequests(sessionID: sid)
+        let postReq = requests.first(where: { $0.httpMethod == "POST" })
+        #expect(postReq != nil, "replayPendingMessages must issue a POST")
+
+        var bodyData: Data? = nil
+        if let stream = postReq?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let bufSize = 1024
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buf, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(contentsOf: buf[0..<read])
+            }
+            bodyData = data.isEmpty ? nil : data
+        }
+
+        #expect(bodyData != nil)
+        if let bodyData {
+            let decoded = try JSONDecoder().decode([String: String].self, from: bodyData)
+            #expect(decoded["idempotency_key"] == localMsgId.uuidString,
+                    "replay must send the same local UUID as idempotency_key as the original send")
+        }
+    }
+
+    /// A deduped response (stub returns HTTP 200 with the EXISTING server ID)
+    /// still transitions the local message to syncState=synced with that serverId.
+    @Test("postMessage deduped response (HTTP 200) still marks message synced with existing serverId")
+    func testPostMessageDedupeResponseMarksMessageSynced() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convServerId = conversation.serverId!
+
+        // Stub returns 200 (dedupe hit) with the EXISTING server ID.
+        let existingServerId = "existing-\(UUID().uuidString)"
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(existingServerId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convServerId)",
+              "Role": "user",
+              "Content": "dedupe check",
+              "CreatedAt": "2026-06-03T08:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        let pendingMsg = try messageRepo.createMessage(
+            conversationId: conversation.id!,
+            role: .user,
+            content: "dedupe check",
+            streamingComplete: true
+        )
+        pendingMsg.syncState = "pending"
+        try context.save()
+
+        let localMsgId = pendingMsg.id!
+
+        try await coordinator.postMessage(
+            localMessageId: localMsgId,
+            conversationServerId: convServerId,
+            conversationLocalId: conversation.id!
+        )
+
+        // The message should now be synced with the EXISTING server ID from the 200.
+        let fetched = try messageRepo.fetchMessage(id: localMsgId)
+        #expect(fetched?.syncState == "synced",
+                "Dedupe-hit (200) response must still mark message as synced")
+        #expect(fetched?.serverId == existingServerId,
+                "serverId must be adopted from the dedupe-hit response body, not left nil")
+    }
+
     // MARK: - RecommendationCardModel equality and payloadType dispatch
 
     @Test("RecommendationCardModel is Equatable by value")

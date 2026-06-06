@@ -146,9 +146,17 @@ final class CloudSyncCoordinator: ObservableObject {
         }
 
         do {
+            // Pass the local message UUID as the idempotency key.  The server
+            // uses (tenant_id, conversation_id, idempotency_key) to deduplicate:
+            // if the original POST reached the server but the 201 was lost in
+            // transit, replay carries the same key and receives the original
+            // server message ID (HTTP 200) instead of inserting a duplicate.
+            // The iOS client treats both 200 and 201 as success and adopts the
+            // returned serverId exactly as before.
             let dto = try await syncClient.sendMessage(
                 conversationID: conversationServerId,
-                content: content
+                content: content,
+                idempotencyKey: localMessageId.uuidString
             )
             // Promote pending → synced and record the server-assigned ID.
             updateSyncState(

@@ -600,4 +600,185 @@ struct SyncClientTests {
             keychainManager: makeKeychain()
         )
     }
+
+    // MARK: - Idempotency key in POST body
+
+    /// sendMessage with an idempotencyKey must include `idempotency_key` in the
+    /// JSON body equal to the supplied key string.
+    @Test("sendMessage includes idempotency_key in POST body when provided")
+    func testSendMessageIncludesIdempotencyKey() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let convID = "conv-ikey-check"
+        let localMsgUUID = UUID().uuidString
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convID)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "srv-ikey",
+              "TenantID": "t1",
+              "ConversationID": "\(convID)",
+              "Role": "user",
+              "Content": "text",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let client = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+
+        _ = try await client.sendMessage(
+            conversationID: convID,
+            content: "text",
+            idempotencyKey: localMsgUUID
+        )
+
+        // Drain the captured request body and verify idempotency_key is present.
+        let requests = SyncMockURLProtocol.capturedRequests(sessionID: sid)
+        let postReq = requests.first(where: { $0.httpMethod == "POST" })
+        #expect(postReq != nil, "POST request should have been captured")
+
+        var bodyData: Data? = nil
+        if let stream = postReq?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let bufSize = 1024
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buf, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(contentsOf: buf[0..<read])
+            }
+            bodyData = data.isEmpty ? nil : data
+        }
+
+        #expect(bodyData != nil, "POST body must be present")
+        if let bodyData {
+            let decoded = try JSONDecoder().decode([String: String].self, from: bodyData)
+            #expect(decoded["content"] == "text",
+                    "POST body must contain content field")
+            #expect(decoded["idempotency_key"] == localMsgUUID,
+                    "POST body must contain idempotency_key equal to the local message UUID")
+        }
+    }
+
+    /// sendMessage without an idempotencyKey must NOT include `idempotency_key`
+    /// in the JSON body (backward-compatible with servers that have not yet
+    /// applied migration 0002).
+    @Test("sendMessage omits idempotency_key from POST body when not provided")
+    func testSendMessageOmitsIdempotencyKeyWhenAbsent() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let convID = "conv-no-ikey"
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convID)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "srv-no-ikey",
+              "TenantID": "t1",
+              "ConversationID": "\(convID)",
+              "Role": "user",
+              "Content": "no key",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let client = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+
+        // Call without idempotencyKey (uses default nil).
+        _ = try await client.sendMessage(conversationID: convID, content: "no key")
+
+        let requests = SyncMockURLProtocol.capturedRequests(sessionID: sid)
+        let postReq = requests.first(where: { $0.httpMethod == "POST" })
+        #expect(postReq != nil)
+
+        var bodyData: Data? = nil
+        if let stream = postReq?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let bufSize = 1024
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buf, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(contentsOf: buf[0..<read])
+            }
+            bodyData = data.isEmpty ? nil : data
+        }
+
+        #expect(bodyData != nil)
+        if let bodyData {
+            let decoded = try JSONDecoder().decode([String: String].self, from: bodyData)
+            #expect(decoded["idempotency_key"] == nil,
+                    "idempotency_key must be absent from POST body when not provided")
+        }
+    }
+
+    /// A dedupe-hit response (HTTP 200 with existing message body) is treated as
+    /// success — `perform` returns the MessageDTO normally.
+    @Test("sendMessage treats HTTP 200 dedupe-hit response as success and returns MessageDTO")
+    func testSendMessageDedupeResponseTreatedAsSuccess() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let convID = "conv-dedupe-hit"
+        let existingServerID = "existing-srv-id-\(UUID().uuidString)"
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convID)/messages"
+        ) { req in
+            // Simulate a dedupe-hit: server returns 200 with the original message.
+            let json = """
+            {
+              "ID": "\(existingServerID)",
+              "TenantID": "t1",
+              "ConversationID": "\(convID)",
+              "Role": "user",
+              "Content": "original",
+              "CreatedAt": "2026-06-03T09:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let client = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+
+        let dto = try await client.sendMessage(
+            conversationID: convID,
+            content: "original",
+            idempotencyKey: UUID().uuidString
+        )
+
+        #expect(dto.ID == existingServerID,
+                "Dedupe-hit (200) response must return the existing server message ID")
+    }
 }

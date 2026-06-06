@@ -588,4 +588,166 @@ struct CloudSyncTests {
         let card = RecommendationCard(model: model)
         _ = card.body
     }
+
+    // MARK: - Cohesive offline → replay → recommendation.delivered loop
+
+    /// Validates the complete airplane-mode-replay-to-delivered-card loop in one
+    /// deterministic test (Phase 6.4 validation criterion):
+    ///
+    /// 1. Patient sends a message while offline  → message saved, syncState = pending.
+    /// 2. Network restored; coordinator.replayPendingMessages() re-POSTs       → synced.
+    /// 3. Physician approves; server pushes recommendation.delivered via WS     → card + encrypted assistant message.
+    ///
+    /// All network is stubbed; no live calls; no PHI in logs.
+    @Test("Offline message stays pending, replays to synced, then recommendation.delivered renders a guidance card")
+    func testOfflineToReplayToRecommendationDeliveredLoop() async throws {
+        // MARK: Setup — shared context and identifiers
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+        let convServerId = conversation.serverId!
+
+        let serverMsgId = "loop-msg-\(UUID().uuidString)"
+        let recId = "loop-rec-\(UUID().uuidString)"
+        let guidanceText = "Drink fluids and rest for 48 hours."
+
+        // MARK: Step 1 — Send message offline (message stays pending)
+        let offlineKc = makeKeychain()
+        let offlineSession = makeOfflineSession()
+        let offlineSyncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: offlineSession,
+            keychainManager: offlineKc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let offlineCoordinator = CloudSyncCoordinator(
+            syncClient: offlineSyncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            auditLogger: AuditLogger(context: context),
+            syncCoordinator: offlineCoordinator
+        )
+
+        try await service.loadConversation(convLocalId)
+        try await service.sendMessage(conversationId: convLocalId, content: "loop test")
+
+        let messagesAfterOffline = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let pendingMsg = messagesAfterOffline.first(where: { $0.role == "user" })
+        #expect(pendingMsg?.syncState == "pending", "Step 1: message must be pending while offline")
+
+        // MARK: Step 2 — Reconnect and replay (pending → synced)
+        let sid = UUID().uuidString
+        let onlineKc = makeKeychain()
+        let onlineSession = makeStubSession(sessionID: sid)
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(serverMsgId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convServerId)",
+              "Role": "user",
+              "Content": "loop test",
+              "CreatedAt": "2026-06-03T11:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+
+        // Also stub the GET recommendation used in step 3 while the session is live.
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/recommendations/\(recId)"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(recId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convLocalId.uuidString)",
+              "PatientID": "p1",
+              "State": "DELIVERED",
+              "PayloadType": "guidance",
+              "Payload": null,
+              "DraftContent": "draft",
+              "FinalContent": "\(guidanceText)",
+              "ReviewedBy": "dr-1",
+              "ReviewedAt": "2026-06-03T11:05:00Z",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let onlineSyncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: onlineSession,
+            keychainManager: onlineKc
+        )
+        let onlineCoordinator = CloudSyncCoordinator(
+            syncClient: onlineSyncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        onlineCoordinator.start()
+
+        // Replay replays the pending message using the new (online) coordinator.
+        await onlineCoordinator.replayPendingMessages()
+
+        let syncedMsg = try messageRepo.fetchMessage(id: pendingMsg!.id!)
+        #expect(syncedMsg?.syncState == "synced",  "Step 2: after replay message must be synced")
+        #expect(syncedMsg?.serverId == serverMsgId, "Step 2: serverId must be set from POST response")
+
+        // MARK: Step 3 — Physician approves; WS pushes recommendation.delivered → card
+        let wsEvent = WSEvent(
+            type: "recommendation.delivered",
+            data: WSEventData(
+                recommendation_id: recId,
+                conversation_id: convLocalId.uuidString
+            )
+        )
+        onlineSyncClient.eventPublisher.send(wsEvent)
+
+        // Allow the async WS handler to complete.
+        try await Task.sleep(nanoseconds: 300_000_000) // 300 ms
+
+        let cards = onlineCoordinator.deliveredCards
+        #expect(cards.count == 1, "Step 3: exactly one guidance card should be published")
+        #expect(cards.first?.payloadType == "guidance")
+        #expect(cards.first?.id == recId)
+
+        let allMessages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let assistantMsg = allMessages.first(where: { $0.role == "assistant" })
+        #expect(assistantMsg != nil, "Step 3: assistant message must be persisted")
+        #expect(assistantMsg?.syncState == "synced")
+        #expect(assistantMsg?.serverId == recId)
+
+        // Verify the content is encrypted at rest.
+        let rawContent = assistantMsg?.encryptedContent
+        let plainData = guidanceText.data(using: .utf8)!
+        #expect(rawContent != plainData, "Step 3: content must be AES-GCM encrypted, not plaintext")
+    }
 }

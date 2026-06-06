@@ -495,6 +495,75 @@ struct SyncClientTests {
         }
     }
 
+    // MARK: - POST body encoding
+
+    @Test("sendMessage encodes the content field as JSON in the request body")
+    func testSendMessageRequestBodyContainsContent() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let convID = "conv-body-check"
+        let messageText = "body check text"
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convID)/messages"
+        ) { req in
+            let json = """
+            {
+              "ID": "srv-body",
+              "TenantID": "t1",
+              "ConversationID": "\(convID)",
+              "Role": "user",
+              "Content": "\(messageText)",
+              "CreatedAt": "2026-06-03T10:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let client = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+
+        _ = try await client.sendMessage(conversationID: convID, content: messageText)
+
+        // Assert the request body was encoded as {"content": "<messageText>"}.
+        //
+        // URLSession converts httpBody → httpBodyStream before handing the
+        // request to the URLProtocol; reading httpBody directly always returns
+        // nil at this point, so we drain the stream.
+        let requests = SyncMockURLProtocol.capturedRequests(sessionID: sid)
+        let postReq = requests.first(where: { $0.httpMethod == "POST" })
+        #expect(postReq != nil, "A POST request should have been captured")
+
+        // Drain the httpBodyStream into Data.
+        var bodyData: Data? = nil
+        if let stream = postReq?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let bufSize = 1024
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buf, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(contentsOf: buf[0..<read])
+            }
+            bodyData = data.isEmpty ? nil : data
+        }
+
+        #expect(bodyData != nil, "POST request must have a body (read from httpBodyStream)")
+        if let bodyData {
+            let decoded = try JSONDecoder().decode([String: String].self, from: bodyData)
+            #expect(decoded["content"] == messageText,
+                    "POST body must contain {\"content\": \"<text>\"}")
+        }
+    }
+
     // MARK: - TLS enforcement in initialiser
 
     @Test("Non-localhost http:// base URL throws SyncError.insecureBaseURL")

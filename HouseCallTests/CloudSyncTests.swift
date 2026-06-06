@@ -452,6 +452,78 @@ struct CloudSyncTests {
         #expect(stored == nil, "clearCoreAPIJWT should remove the JWT from the keychain")
     }
 
+    // MARK: - Session timeout clears JWT and stops coordinator (HIPAA)
+
+    /// After `handleSessionTimeout()` fires the Core API JWT must be gone from
+    /// the Keychain and the coordinator's WebSocket subscription must be
+    /// cancelled so no further recommendation PHI can be delivered.
+    @Test("Session timeout clears Core API JWT and stops sync coordinator")
+    func testSessionTimeoutTearsDownCloudSession() async throws {
+        let kc = TestKeychain()
+        try kc.set(key: KeychainManager.Keys.coreAPIJWT, value: "live.jwt.token")
+
+        // Build a real (but offline) SyncClient and coordinator so we can
+        // verify that events sent after stop() do not reach deliveredCards.
+        let offlineSession = makeOfflineSession()
+        let context = makeInMemoryContext()
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: offlineSession,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        // Wire up the coordinator and JWT to the auth service.
+        let authService = AuthenticationService(keychainManager: kc)
+        authService.syncCoordinator = coordinator
+        coordinator.start()
+
+        // Pre-condition: JWT is present.
+        let jwtBefore = try kc.get(key: KeychainManager.Keys.coreAPIJWT)
+        #expect(jwtBefore == "live.jwt.token", "JWT must be present before timeout")
+
+        // Simulate the 5-minute inactivity timeout.
+        await authService._testSimulateSessionTimeout()
+
+        // 1. Core API JWT must be cleared.
+        let jwtAfter = try kc.get(key: KeychainManager.Keys.coreAPIJWT)
+        #expect(jwtAfter == nil, "Core API JWT must be removed from keychain on session timeout")
+
+        // 2. Auth service must have released the coordinator reference.
+        #expect(authService.syncCoordinator == nil,
+                "syncCoordinator must be nil after timeout so no new PHI can be delivered")
+
+        // 3. Events sent after stop() must not produce new delivered cards.
+        //    We hold our own reference to coordinator, so we can probe it.
+        let cardsBefore = coordinator.deliveredCards.count
+        syncClient.eventPublisher.send(WSEvent(
+            type: "recommendation.delivered",
+            data: WSEventData(recommendation_id: "post-timeout-rec", conversation_id: nil)
+        ))
+        // Give any async handler a moment to run (it should not, because stop()
+        // cancelled the wsSubscription).
+        try await Task.sleep(nanoseconds: 100_000_000) // 100 ms
+        let cardsAfter = coordinator.deliveredCards.count
+        #expect(cardsBefore == cardsAfter,
+                "No recommendation cards should be appended after the coordinator is stopped")
+    }
+
     // MARK: - RecommendationCardModel equality and payloadType dispatch
 
     @Test("RecommendationCardModel is Equatable by value")

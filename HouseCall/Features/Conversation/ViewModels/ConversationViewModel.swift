@@ -237,8 +237,12 @@ class ConversationViewModel: ObservableObject {
             errorMessage = "An unexpected error occurred. Please try again."
         }
 
-        // Log error without PHI
-        print("ConversationViewModel error: \(error.localizedDescription)")
+        // Log error without PHI — no error description or message content
+        try? AuditLogger.shared.log(
+            event: .aiInteractionFailed,
+            userId: nil,
+            details: AuditEventDetails(errorMessage: "conversation view error")
+        )
     }
 }
 

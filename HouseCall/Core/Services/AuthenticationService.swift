@@ -67,6 +67,12 @@ class AuthenticationService: ObservableObject {
     private let biometricAuthManager: BiometricAuthManager
     private let auditLogger: AuditLogger
 
+    /// Injected after login so timeout and logout both stop the WebSocket
+    /// subscription and prevent PHI from being delivered to an expired session.
+    /// Set this to the active `CloudSyncCoordinator` once the coordinator is
+    /// started; set it back to `nil` after `stop()` is called.
+    weak var syncCoordinator: CloudSyncCoordinator?
+
     private var sessionTimeoutTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
@@ -202,6 +208,11 @@ class AuthenticationService: ObservableObject {
         // Clear keychain — session token and Core API JWT
         try keychainManager.deleteSessionToken()
         clearCoreAPIJWT()
+
+        // Stop cloud sync so the WebSocket subscription is cancelled and no
+        // further PHI events can be delivered or persisted after logout.
+        syncCoordinator?.stop()
+        syncCoordinator = nil
 
         // Update state
         currentSession = nil
@@ -340,18 +351,32 @@ class AuthenticationService: ObservableObject {
     }
 
     /// Handles session timeout
+    ///
+    /// Mirrors the explicit `logout()` teardown path:
+    ///  - Invalidates the local session and deletes the session token.
+    ///  - Clears the Core API JWT so it cannot be used after expiry.
+    ///  - Stops the sync coordinator so the WebSocket subscription is cancelled
+    ///    and no further recommendation PHI can be delivered or persisted.
+    ///
+    /// The JWT clear and coordinator stop run unconditionally so that the
+    /// HIPAA teardown is always complete even if `currentSession` was already
+    /// cleared by a racing logout.
     @MainActor
     private func handleSessionTimeout() async {
-        guard let session = currentSession else {
-            return
+        // Log the timeout event while we still have the session reference.
+        if let session = currentSession {
+            try? auditLogger.logSessionTimeout(userId: session.userId)
         }
 
-        // Log timeout event
-        try? auditLogger.logSessionTimeout(userId: session.userId)
-
-        // Invalidate session
+        // Invalidate session and remove both keychain tokens.
         try? invalidateSession()
         try? keychainManager.deleteSessionToken()
+        clearCoreAPIJWT()
+
+        // Stop cloud sync — cancel the WebSocket subscription and prevent any
+        // in-flight recommendation.delivered events from persisting PHI.
+        syncCoordinator?.stop()
+        syncCoordinator = nil
     }
 
     /// Starts monitoring for app lifecycle events
@@ -413,5 +438,16 @@ class AuthenticationService: ObservableObject {
         }
 
         return try repository.getDecryptedFullName(for: user)
+    }
+
+    // MARK: - Testing Support
+
+    /// For unit-test use only.  Directly invokes the same timeout teardown
+    /// path that fires when the 5-minute inactivity timer expires, so tests
+    /// can assert that the Core API JWT is cleared and the sync coordinator
+    /// is stopped without waiting for a real timer.
+    @MainActor
+    func _testSimulateSessionTimeout() async {
+        await handleSessionTimeout()
     }
 }

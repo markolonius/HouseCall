@@ -266,13 +266,10 @@ final class CloudSyncCoordinator: ObservableObject {
                   !finalContent.isEmpty else { return }
 
             // Resolve the local conversation UUID.
-            let localConversationId: UUID?
-            if let cidString = conversationId ?? dto.ConversationID as String?,
-               let uuid = UUID(uuidString: cidString) {
-                localConversationId = uuid
-            } else {
-                localConversationId = nil
-            }
+            // conversationId (from the WS event) takes precedence; fall back
+            // to dto.ConversationID (non-optional String from the REST response).
+            let cidString = conversationId ?? dto.ConversationID
+            let localConversationId: UUID? = UUID(uuidString: cidString)
 
             guard let convLocalId = localConversationId else { return }
 

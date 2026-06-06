@@ -1,14 +1,24 @@
-# Local Postgres for HouseCall backend development.
+# Local dev stack for HouseCall backend.
 #
-# Only the database is containerized — Go and Xcode stay native on the host.
-# This pins Postgres to the same major version as production (RDS Postgres 16)
-# and removes the "brew upgraded my Postgres" footgun.
+# Services
+# --------
+# postgres  – Postgres 16 (matches RDS target); data lives in a named volume.
+# server    – Go binary: runs migrations then starts the HTTP server on :8080.
+#             Reaches the host's Ollama via host.docker.internal (works under
+#             both Docker Desktop and Colima; the extra_hosts entry ensures the
+#             hostname resolves under Linux/Colima where it isn't injected by
+#             the daemon automatically).
 #
-#   make db-up     # start Postgres, wait until healthy
-#   make db-down   # stop it (data persists in the named volume)
+# Quick start
+# -----------
+#   cp .env.example .env          # fill in JWT_SECRET if desired (dev default works)
+#   docker compose up -d --build  # build + start both services
+#   make seed                     # insert seed data against the running stack
 #
-# The `server` service and `make seed` data land in Phase 7 (Task 7.1); this
-# file intentionally ships the postgres service only for now.
+# Targets
+#   make compose-up   alias: bring up compose + run migrate + run seed
+#   make db-up        bring up Postgres only (legacy, still works)
+#   make db-down      stop all compose services
 
 services:
   postgres:
@@ -28,6 +38,39 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: housecall-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://housecall:housecall@postgres:5432/housecall?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-in-production}
+      AGENT_MODEL_BASE_URL: http://host.docker.internal:11434/v1
+      AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-medgemma:4b}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    # host.docker.internal resolves automatically on Docker Desktop (macOS/Windows).
+    # Under Colima (and plain Linux), the daemon does not inject this hostname;
+    # extra_hosts maps it to the host-gateway address so Ollama is reachable.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Run migrations then start the server in a single CMD override.
+    # The binary supports both subcommands; we chain them with sh -c.
+    command: >
+      sh -c "./housecall -cmd migrate && ./housecall -cmd serve"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
 volumes:
   housecall-pgdata:

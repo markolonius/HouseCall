@@ -11,6 +11,10 @@
 backend/server
 backend/**/*.test
 
+# Local dev env overrides — never commit real secrets.
+# backend/.env.example is committed; backend/.env is not.
+backend/.env
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

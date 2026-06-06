@@ -1,4 +1,4 @@
-.PHONY: build run test migrate seed db-up db-down tidy
+.PHONY: build run test migrate seed db-up db-down compose-up tidy
 
 DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall?sslmode=disable
 TEST_DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall_test?sslmode=disable
@@ -18,15 +18,21 @@ migrate:
 db-up:
 	docker compose up -d --wait postgres
 
-# Stop Postgres. Data persists in the named volume (housecall-pgdata).
+# Stop all compose services. Data persists in the named volume (housecall-pgdata).
 db-down:
 	docker compose down
 
-# Seeds one tenant + one physician + one patient + one active care
-# relationship. Implemented in Phase 7 (Task 7.1) — placeholder for now.
+# Seeds one tenant + one physician + one patient + one active care relationship.
+# Runs the seeder directly against DATABASE_URL (Postgres must already be up).
+# Idempotent — safe to re-run.
 seed:
-	@echo "seed: not yet implemented (Phase 7 Task 7.1)"
-	@exit 1
+	DATABASE_URL=$(DATABASE_URL) go run ./cmd/seed
+
+# Bring up the full compose stack (postgres + server), wait until the server
+# is healthy, then seed the database.  One-command local dev setup.
+compose-up:
+	docker compose up -d --build --wait
+	DATABASE_URL=$(DATABASE_URL) go run ./cmd/seed
 
 test:
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test ./...

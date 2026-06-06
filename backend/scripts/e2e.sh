@@ -70,7 +70,11 @@ RECOMMENDATION_ID=""
 
 # Temporary cookie jar used only in host curl mode.
 COOKIE_JAR="$(mktemp /tmp/hc_e2e_cookies.XXXXXX)"
-trap 'rm -f "$COOKIE_JAR"' EXIT
+# Temporary file used in exec mode to pass the captured hc_session cookie value
+# out of the subshell created by command substitution (variable assignments
+# inside $() do not propagate to the parent shell).
+EXEC_COOKIE_FILE="$(mktemp /tmp/hc_e2e_exec_cookie.XXXXXX)"
+trap 'rm -f "$COOKIE_JAR" "$EXEC_COOKIE_FILE"' EXIT
 
 # ---- helpers --------------------------------------------------------------
 log()  { echo "[e2e] $*"; }
@@ -190,44 +194,50 @@ api_post_json() {
 }
 
 # web_post_form_with_cookies <path> <form_data> — POST a URL-encoded form,
-# capturing the session cookie (login) and following the redirect.
-# Returns 0 on success (final HTTP status 200 or 302/303).
+# capturing the session cookie (login) WITHOUT following the redirect.
+# The server issues a 303 See Other on successful login; we capture the
+# Set-Cookie header from that response and return the status (200 or 303).
 web_post_form_with_cookies() {
     local path="$1"
     local data="$2"
     if [[ "$EXEC_MODE" == "host" ]]; then
-        local code
-        code="$(curl -sf --cookie-jar "$COOKIE_JAR" \
-            -o /dev/null -w "%{http_code}" \
-            -L \
+        # Do NOT use -L: we want the 303 + its Set-Cookie, not the followed page.
+        # Capture the full response headers + body so we can parse Set-Cookie.
+        local response code
+        response="$(curl -si --cookie-jar "$COOKIE_JAR" \
             -X POST "${WEB_BASE}${path}" \
-            -d "$data")"
-        echo "$code"
+            -d "$data")" || true
+        # Extract status from the first HTTP response status line only.
+        code="$(printf '%s\n' "$response" | grep -m1 '^HTTP/' | awk '{print $2}')"
+        echo "${code:-000}"
     else
-        # In exec mode we can't use the host cookie jar.  Instead, capture
-        # the Set-Cookie header from wget and store the value in a shell var.
-        # wget in Alpine writes headers to stderr with -S; we pipe stderr to
-        # stdout and extract the Set-Cookie line.
-        # Pass form data and path via env vars so a crafted server response
-        # value cannot break out of the sh -c string and execute commands.
-        local output
+        # In exec mode we can't use the host cookie jar.  Use curl (available in
+        # the runtime image) with -i (headers in output) and without -L so we
+        # capture the 303 Set-Cookie rather than following to a 200 that has no
+        # cookie.  Pass data and path via env vars to prevent injection.
+        #
+        # IMPORTANT: this function is called via login_status="$(web_post_form_with_cookies ...)",
+        # which runs it in a subshell.  Variable assignments inside a subshell do
+        # NOT propagate to the parent, so we write the cookie value to a temp file
+        # (EXEC_COOKIE_FILE) and the caller reads it from there.
+        local output code cookie_val
         output="$(docker exec \
             -e _HC_POST_DATA="$data" \
             -e _HC_PATH="$path" \
             housecall-server \
-            sh -c 'wget -qO- -S --post-data="$_HC_POST_DATA" "http://localhost:8080$_HC_PATH" 2>&1')" || true
-        local cookie_val
-        cookie_val="$(printf '%s\n' "$output" | grep -i "Set-Cookie:" | grep "hc_session" \
-            | sed 's/.*hc_session=\([^;]*\).*/\1/' | head -1)"
-        if [[ -n "$cookie_val" ]]; then
-            # Store for subsequent exec-mode cookie POSTs.
-            WEB_SESSION_COOKIE_VALUE="$cookie_val"
-        fi
-        # Report final HTTP status: 200 (after redirect) on success.
-        local status
-        status="$(printf '%s\n' "$output" | grep "HTTP/" | tail -1 \
-            | awk '{print $2}' || true)"
-        echo "${status:-000}"
+            sh -c 'curl -si -X POST -d "$_HC_POST_DATA" "http://localhost:8080$_HC_PATH"')" || true
+        # Extract status from the FIRST HTTP response status line only (curl -i
+        # format: "HTTP/1.1 303 See Other").  Using grep -m1 prevents any
+        # server-response body text from being mistaken for a status line.
+        code="$(printf '%s\n' "$output" | grep -m1 '^HTTP/' | awk '{print $2}')"
+        # Extract hc_session cookie value from Set-Cookie header.
+        # tr -d '\r' strips the CR from CRLF HTTP headers so the value is clean.
+        cookie_val="$(printf '%s\n' "$output" | grep -i '^Set-Cookie:' | grep 'hc_session' \
+            | sed 's/.*hc_session=\([^;]*\).*/\1/' | tr -d '\r' | head -1)"
+        # Write cookie to temp file so the parent shell can read it (subshell
+        # variable assignments do not propagate through command substitution).
+        printf '%s' "$cookie_val" > "$EXEC_COOKIE_FILE"
+        echo "${code:-000}"
     fi
 }
 
@@ -243,41 +253,40 @@ web_get_with_cookies() {
             -e _HC_SESSION="$WEB_SESSION_COOKIE_VALUE" \
             -e _HC_PATH="$path" \
             housecall-server \
-            sh -c 'wget -qO- --header="Cookie: hc_session=$_HC_SESSION" "http://localhost:8080$_HC_PATH"'
+            sh -c 'curl -sf -b "hc_session=$_HC_SESSION" "http://localhost:8080$_HC_PATH"'
     fi
 }
 
 # web_post_form_approve <path> <form_data> — POST the approve form, reusing
-# the captured session cookie.
+# the captured session cookie.  Accept 200 or 303 (redirect to queue page).
 web_post_form_approve() {
     local path="$1"
     local data="$2"
     if [[ "$EXEC_MODE" == "host" ]]; then
-        local code
-        code="$(curl -sf --cookie "$COOKIE_JAR" \
-            -o /dev/null -w "%{http_code}" \
-            -L \
+        # Do NOT use -L: accept the 303 redirect as success (consistent with
+        # web_post_form_with_cookies).
+        local response code
+        response="$(curl -si --cookie "$COOKIE_JAR" \
             -X POST "${WEB_BASE}${path}" \
-            -d "$data")"
-        echo "$code"
+            -d "$data")" || true
+        code="$(printf '%s\n' "$response" | grep -m1 '^HTTP/' | awk '{print $2}')"
+        echo "${code:-000}"
     else
         # Pass cookie value, form data, and path via env vars so a crafted
         # server-response-derived value (cookie, recommendation id) cannot
         # break out of the sh -c string and execute commands in the container.
-        local output
+        # curl -si: response headers in stdout, no redirect follow.
+        # Status extracted from the first HTTP/ line only (grep -m1) so that
+        # body text can never be mistaken for a status code.
+        local output code
         output="$(docker exec \
             -e _HC_SESSION="$WEB_SESSION_COOKIE_VALUE" \
             -e _HC_POST_DATA="$data" \
             -e _HC_PATH="$path" \
             housecall-server \
-            sh -c 'wget -qO- -S \
-                --header="Cookie: hc_session=$_HC_SESSION" \
-                --post-data="$_HC_POST_DATA" \
-                "http://localhost:8080$_HC_PATH" 2>&1')" || true
-        local status
-        status="$(printf '%s\n' "$output" | grep "HTTP/" | tail -1 \
-            | awk '{print $2}' || true)"
-        echo "${status:-000}"
+            sh -c 'curl -si -X POST -b "hc_session=$_HC_SESSION" -d "$_HC_POST_DATA" "http://localhost:8080$_HC_PATH"')" || true
+        code="$(printf '%s\n' "$output" | grep -m1 '^HTTP/' | awk '{print $2}')"
+        echo "${code:-000}"
     fi
 }
 
@@ -447,8 +456,15 @@ physician_web_approve() {
     login_status="$(web_post_form_with_cookies "/web/login" \
         "tenant_id=${TENANT_ID}&email=${PHYSICIAN_EMAIL}&password=${PHYSICIAN_PASSWORD}")"
 
-    # With -L (follow redirect) the final status should be 200 (queue page).
-    # In exec mode we may get the redirect status (303) if wget doesn't follow.
+    # In exec mode, read the cookie value from the temp file written by
+    # web_post_form_with_cookies.  Variable assignments inside command
+    # substitution subshells do not propagate, so the function writes to a
+    # file instead of a variable.
+    if [[ "$EXEC_MODE" != "host" ]]; then
+        WEB_SESSION_COOKIE_VALUE="$(cat "$EXEC_COOKIE_FILE")"
+    fi
+
+    # Status check: 303 is the normal redirect after successful login.
     case "$login_status" in
         200|303)
             : # OK

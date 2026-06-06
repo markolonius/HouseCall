@@ -24,7 +24,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /housecall .
 FROM alpine:3.21
 
 # ca-certificates lets the agent client make TLS calls (e.g. to hosted model APIs).
-RUN apk add --no-cache ca-certificates
+# curl is used by the e2e test driver (exec mode) to make HTTP calls from inside
+# the container; BusyBox wget cannot reliably capture Set-Cookie headers or
+# suppress redirect-following on a 303.
+RUN apk add --no-cache ca-certificates curl
 
 WORKDIR /app
 

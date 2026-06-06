@@ -71,15 +71,13 @@ class EncryptionManager {
     ///
     /// Behaviour:
     /// 1. Returns the in-memory cached key immediately (fastest path, also used
-    ///    when `_testInjectMasterKey` has been called).
+    ///    when `_testInjectMasterKey` has been called in DEBUG builds).
     /// 2. Retrieves an existing key from the Keychain.
-    /// 3. Generates a fresh 256-bit key and attempts to persist it in the
-    ///    Keychain.  If the Keychain write fails (e.g. in a bare simulator
-    ///    without keychain entitlements or in a parallel-runner subprocess) the
-    ///    new key is still cached in memory and returned so that all encryption
-    ///    operations within this process continue to work.  The key will not
-    ///    survive a process restart in that scenario, but test runs are
-    ///    short-lived single-process executions so this is acceptable.
+    /// 3. Generates a fresh 256-bit key and persists it in the Keychain.
+    ///    If the Keychain write fails the error is propagated — silently
+    ///    swallowing a write failure would leave the key in-memory only and
+    ///    permanently destroy all PHI encrypted under it after the next
+    ///    `clearCache()` call or cold launch.
     func getMasterKey() throws -> SymmetricKey {
         // Return cached key if available
         if let masterKey = masterKey {
@@ -93,11 +91,9 @@ class EncryptionManager {
             return key
         }
 
-        // Generate new master key
+        // Generate new master key and persist it — propagate any Keychain error.
         let newKey = SymmetricKey(size: .bits256)
-        // Persist to Keychain when available; gracefully degrade when the
-        // Keychain is inaccessible (e.g. in isolated test-runner processes).
-        try? keychainManager.saveMasterKey(newKey)
+        try keychainManager.saveMasterKey(newKey)
         masterKey = newKey
 
         return newKey

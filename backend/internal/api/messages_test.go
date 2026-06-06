@@ -359,3 +359,103 @@ func TestHandler_MessageIdempotency_TenantScoping(t *testing.T) {
 		t.Fatalf("tenant B dedupe: expected same ID %s, got %s", mB1.ID, mB2.ID)
 	}
 }
+
+// TestHandler_MessageIdempotency_ConversationScoping verifies that the same
+// idempotency_key string under the same tenant but in TWO DIFFERENT conversations
+// creates TWO distinct message rows. Dedupe is scoped by (tenant_id,
+// conversation_id, idempotency_key) — the key alone is not sufficient for a
+// collision.
+func TestHandler_MessageIdempotency_ConversationScoping(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	// One tenant, one patient, two conversations.
+	tenant, err := s.CreateTenant(ctx, "dtc", "idemp-convscope-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	tid := store.TenantID(tenant.ID)
+
+	patient, err := s.CreatePatient(ctx, tid, store.Patient{
+		Email:        "patient@convscope.test",
+		FullName:     "Pat",
+		State:        "CA",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("create patient: %v", err)
+	}
+
+	convA, err := s.CreateConversation(ctx, tid, patient.ID, "conv A")
+	if err != nil {
+		t.Fatalf("create conversation A: %v", err)
+	}
+	convB, err := s.CreateConversation(ctx, tid, patient.ID, "conv B")
+	if err != nil {
+		t.Fatalf("create conversation B: %v", err)
+	}
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	token := signedJWT(apiTestSecret, tid.String(), patient.ID.String(), "patient")
+	// Same idempotency key sent to both conversations.
+	sharedKey := uuid.NewString()
+
+	// POST to conversation A — should create a new row (201).
+	rwA := postMessage(t, r, token, convA.ID.String(), map[string]string{
+		"content":         "message in conv A",
+		"idempotency_key": sharedKey,
+	})
+	if rwA.Code != http.StatusCreated {
+		t.Fatalf("conv A POST: expected 201, got %d (body: %s)", rwA.Code, rwA.Body.String())
+	}
+	mA := decodeMessage(t, rwA)
+
+	// POST to conversation B with the SAME key — must NOT collide with A's row.
+	rwB := postMessage(t, r, token, convB.ID.String(), map[string]string{
+		"content":         "message in conv B",
+		"idempotency_key": sharedKey,
+	})
+	if rwB.Code != http.StatusCreated {
+		t.Fatalf("conv B POST (same key, different conversation): expected 201, got %d (body: %s)", rwB.Code, rwB.Body.String())
+	}
+	mB := decodeMessage(t, rwB)
+
+	// The two messages must have distinct server-assigned IDs.
+	if mA.ID == mB.ID {
+		t.Fatal("conversation scoping violated: same idempotency_key in different conversations returned same message ID")
+	}
+
+	// Each conversation must contain exactly one message row.
+	msgsA, err := s.ListMessagesByConversation(ctx, tid, convA.ID)
+	if err != nil {
+		t.Fatalf("list messages for conv A: %v", err)
+	}
+	if len(msgsA) != 1 {
+		t.Fatalf("conv A: expected exactly 1 message row, got %d", len(msgsA))
+	}
+
+	msgsB, err := s.ListMessagesByConversation(ctx, tid, convB.ID)
+	if err != nil {
+		t.Fatalf("list messages for conv B: %v", err)
+	}
+	if len(msgsB) != 1 {
+		t.Fatalf("conv B: expected exactly 1 message row, got %d", len(msgsB))
+	}
+
+	// Posting the same key again to conversation A must still dedupe (200).
+	rwA2 := postMessage(t, r, token, convA.ID.String(), map[string]string{
+		"content":         "message in conv A",
+		"idempotency_key": sharedKey,
+	})
+	if rwA2.Code != http.StatusOK {
+		t.Fatalf("conv A second POST (dedupe): expected 200, got %d", rwA2.Code)
+	}
+	mA2 := decodeMessage(t, rwA2)
+	if mA2.ID != mA.ID {
+		t.Fatalf("conv A dedupe: expected same ID %s, got %s", mA.ID, mA2.ID)
+	}
+}

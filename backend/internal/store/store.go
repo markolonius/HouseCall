@@ -274,6 +274,9 @@ func (s *Store) CreateMessageIdempotent(
 		    AND idempotency_key = $3`,
 		tenant.UUID(), conversationID, idempotencyKey,
 	).Scan(&msg.ID, &msg.TenantID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.IdempotencyKey, &msg.CreatedAt)
+	// Paranoia guard: under READ COMMITTED the conflicting row is always
+	// visible to this SELECT after ON CONFLICT DO NOTHING, so ErrNoRows
+	// here is effectively unreachable in normal operation.
 	if errors.Is(fetchErr, pgx.ErrNoRows) {
 		return Message{}, false, ErrNotFound
 	}

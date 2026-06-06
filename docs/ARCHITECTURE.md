@@ -391,8 +391,9 @@ say and do.
 The backend stack (§2 — Go), §5 (identity — AWS Cognito per ADR-004), and §6
 (model selection — MedGemma) decisions are now closed; Cognito is a
 HIPAA-eligible AWS service and MedGemma runs inside the AWS BAA boundary. Until
-item 1 is done, the iOS app cannot talk to a real backend
-and Phase 1 is blocked. Extending the iOS app in isolation (e.g., HealthKit
+item 1 is done, the iOS app cannot talk to a real **production** backend
+(the local-only MVP backend is built and runnable — see the status note at the
+top of this document) and production Phase 1 is blocked. Extending the iOS app in isolation (e.g., HealthKit
 capture into local Core Data) is possible in parallel but is throwaway-risk work
 until the sync layer exists.
 

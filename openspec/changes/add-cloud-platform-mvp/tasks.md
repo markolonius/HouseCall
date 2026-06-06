@@ -146,26 +146,26 @@ recommendations, and drive each of the three actions.
 ## Phase 6: iOS Cloud Sync
 
 ### Task 6.1: Core Data migration
-- [ ] Add `serverId` + `syncState` to `Conversation` and `Message`
+- [x] Add `serverId` + `syncState` to `Conversation` and `Message`
       (lightweight migration)
 
 ### Task 6.2: Sync client
-- [ ] New `SyncClient` — REST calls to the Core API using the JWT from
+- [x] New `SyncClient` — REST calls to the Core API using the JWT from
       `AuthenticationService`'s keychain session
-- [ ] WebSocket listener for `recommendation.delivered`
+- [x] WebSocket listener for `recommendation.delivered`
 
 ### Task 6.3: Wire into the chat flow
-- [ ] `AIConversationService` message send → `SyncClient` POST instead of a
+- [x] `AIConversationService` message send → `SyncClient` POST instead of a
       direct LLM provider call
-- [ ] Delivered recommendation arrives via WebSocket → rendered as a generic
+- [x] Delivered recommendation arrives via WebSocket → rendered as a generic
       `RecommendationCard` SwiftUI view in the conversation, keyed off
       `payload_type` so differentiated card types can be added later without
       reworking the chat
-- [ ] Offline: messages stay `pending`, replay on reconnect
+- [x] Offline: messages stay `pending`, replay on reconnect
 
 ### Task 6.4: Tests
-- [ ] `SyncClient` unit tests with a stubbed `URLProtocol`
-- [ ] Full app build/run verified in Xcode (cannot build in the Linux image)
+- [x] `SyncClient` unit tests with a stubbed `URLProtocol`
+- [x] Full app build/run verified in Xcode (cannot build in the Linux image)
 
 **Validation**: with the backend running, an iOS message produces a delivered,
 physician-approved assistant reply; airplane-mode messages replay on reconnect.

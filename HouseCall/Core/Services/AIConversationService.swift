@@ -3,11 +3,20 @@
 //  HouseCall
 //
 //  AI Conversation Service - Business Logic Layer
-//  Orchestrates LLM provider interactions with conversation persistence
+//  Orchestrates message persistence and cloud sync (Phase 6.3).
+//
+//  When a CloudSyncCoordinator is injected the send path becomes:
+//    1. Persist user message locally (syncState = "pending")
+//    2. POST to Core API via coordinator — on success: synced + serverId
+//    3. AI reply arrives async via WebSocket (recommendation.delivered)
+//
+//  When no coordinator is supplied the legacy LLM-provider streaming path
+//  is used (offline/dev mode).
 //
 
 import Foundation
 import Combine
+import CoreData
 
 /// Service for managing AI conversations with streaming support
 @MainActor
@@ -42,8 +51,12 @@ class AIConversationService: ObservableObject {
     /// Current user ID (authenticated user)
     private let userId: UUID
 
-    /// Active LLM provider for streaming requests
+    /// Active LLM provider for streaming requests (legacy / offline path only)
     private var currentProvider: LLMProvider?
+
+    /// Cloud sync coordinator injected when the Core API is available.
+    /// `nil` means fall back to the legacy LLM-provider streaming path.
+    let syncCoordinator: CloudSyncCoordinator?
 
     // MARK: - Initialization
 
@@ -52,13 +65,15 @@ class AIConversationService: ObservableObject {
         conversationRepository: ConversationRepositoryProtocol,
         messageRepository: MessageRepositoryProtocol,
         providerConfigManager: LLMProviderConfigManager = .shared,
-        auditLogger: AuditLogger = .shared
+        auditLogger: AuditLogger = .shared,
+        syncCoordinator: CloudSyncCoordinator? = nil
     ) {
         self.userId = userId
         self.conversationRepository = conversationRepository
         self.messageRepository = messageRepository
         self.providerConfigManager = providerConfigManager
         self.auditLogger = auditLogger
+        self.syncCoordinator = syncCoordinator
     }
 
     // MARK: - Conversation Management
@@ -189,7 +204,17 @@ class AIConversationService: ObservableObject {
 
     // MARK: - Message Handling
 
-    /// Sends a message and receives a streaming AI response
+    /// Sends a message and either POSTs to the Core API (cloud path) or falls
+    /// back to legacy LLM streaming (offline / dev mode).
+    ///
+    /// Cloud path (syncCoordinator != nil):
+    ///  1. Persist user message with syncState = "pending"
+    ///  2. POST via coordinator → on success: synced + serverId
+    ///  3. AI reply arrives async via WebSocket (recommendation.delivered)
+    ///
+    /// Legacy path (syncCoordinator == nil):
+    ///  - Streams a response inline from the configured LLM provider.
+    ///
     /// - Parameters:
     ///   - conversationId: UUID of the conversation
     ///   - content: User's message content
@@ -203,25 +228,25 @@ class AIConversationService: ObservableObject {
             throw MessageRepositoryError.invalidContent
         }
 
-        // Ensure conversation exists
+        // Ensure conversation exists and the user owns it
         guard let conversation = try conversationRepository.fetchConversation(id: conversationId) else {
             throw ConversationRepositoryError.conversationNotFound
         }
-
-        // Verify user owns this conversation
         guard conversation.userId == userId else {
             throw ConversationRepositoryError.conversationNotFound
         }
 
-        // Save user message
+        // Persist user message with syncState = "pending" so it survives offline.
         let userMessage = try messageRepository.createMessage(
             conversationId: conversationId,
             role: .user,
             content: content,
             streamingComplete: true
         )
+        // Set metadata on the saved message.
+        setSyncState(on: userMessage, state: "pending")
 
-        // Log message creation
+        // Log message creation (no content logged — HIPAA)
         try? auditLogger.log(
             event: .messageCreated,
             userId: userId,
@@ -233,7 +258,7 @@ class AIConversationService: ObservableObject {
             )
         )
 
-        // Update conversation title if this is the first message
+        // Update conversation title on first message
         if messages.isEmpty {
             let title = String(content.prefix(50))
             try conversationRepository.updateConversationTitle(id: conversationId, title: title)
@@ -242,16 +267,30 @@ class AIConversationService: ObservableObject {
         // Update conversation timestamp
         try conversationRepository.updateConversationTimestamp(id: conversationId, timestamp: Date())
 
-        // Add user message to UI
+        // Add user message to the UI
         messages.append(userMessage)
 
-        // Get or create provider instance
+        // --- Cloud sync path ---
+        if let coordinator = syncCoordinator {
+            // serverId for the conversation is required to POST; if absent the
+            // message stays pending and replay will retry when available.
+            let conversationServerId = conversation.serverId ?? ""
+            if !conversationServerId.isEmpty {
+                try await coordinator.postMessage(
+                    localMessageId: userMessage.id!,
+                    conversationServerId: conversationServerId,
+                    conversationLocalId: conversationId
+                )
+            }
+            // AI reply arrives asynchronously via WebSocket; no streaming UI here.
+            return
+        }
+
+        // --- Legacy LLM streaming path (no coordinator injected) ---
         let providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
         guard let provider = providerConfigManager.createProvider(type: providerType) else {
             throw LLMError.notConfigured
         }
-
-        // Verify provider is configured
         guard provider.isConfigured else {
             throw LLMError.notConfigured
         }
@@ -266,16 +305,13 @@ class AIConversationService: ObservableObject {
             streamingComplete: false
         )
 
-        // Add to UI
         messages.append(aiMessage)
         streamingMessageId = aiMessage.id
         streamingText = ""
         isStreaming = true
 
-        // Build conversation context
         let chatMessages = try buildChatContext(conversationId: conversationId)
 
-        // Log AI interaction start
         try? auditLogger.log(
             event: .aiStreamingStarted,
             userId: userId,
@@ -287,7 +323,6 @@ class AIConversationService: ObservableObject {
             )
         )
 
-        // Stream completion
         do {
             try await provider.streamCompletion(
                 messages: chatMessages,
@@ -308,11 +343,9 @@ class AIConversationService: ObservableObject {
                 }
             )
         } catch {
-            // Handle streaming errors
             isStreaming = false
             streamingMessageId = nil
 
-            // Log failure
             try? auditLogger.log(
                 event: .aiInteractionFailed,
                 userId: userId,
@@ -325,7 +358,6 @@ class AIConversationService: ObservableObject {
                 )
             )
 
-            // Remove incomplete message
             if let index = messages.firstIndex(where: { $0.id == aiMessage.id }) {
                 messages.remove(at: index)
             }
@@ -522,5 +554,15 @@ class AIConversationService: ObservableObject {
         isStreaming = false
         errorMessage = nil
         currentProvider = nil
+    }
+
+    // MARK: - Sync state helpers
+
+    /// Sets syncState on a Core Data Message object without touching PHI fields.
+    /// Best-effort; any error is silently discarded.
+    private func setSyncState(on message: Message, state: String) {
+        message.syncState = state
+        let context = message.managedObjectContext
+        try? context?.save()
     }
 }

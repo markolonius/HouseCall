@@ -49,6 +49,9 @@ class KeychainManager {
         static let sessionToken = "com.housecall.session-token"
         static let biometricEnrollment = "com.housecall.biometric-enrollment"
         static let authMethod = "com.housecall.auth-method"
+        /// Core API JWT (Phase 6 cloud sync).  Stored as a UTF-8 string.
+        /// Never logged or placed in UserDefaults.
+        static let coreAPIJWT = "com.housecall.core-api-jwt"
     }
 
     init() {}

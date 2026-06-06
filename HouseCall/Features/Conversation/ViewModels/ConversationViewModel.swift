@@ -46,6 +46,9 @@ class ConversationViewModel: ObservableObject {
     // Last sent message for retry functionality
     private var lastMessageContent: String?
 
+    /// Recommendation cards delivered via WebSocket for this conversation.
+    @Published private(set) var recommendationCards: [RecommendationCardModel] = []
+
     // MARK: - Initialization
 
     init(
@@ -201,6 +204,25 @@ class ConversationViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        // Observe delivered recommendation cards from the sync coordinator.
+        // Filter to cards belonging to this conversation only.
+        if let coordinator = aiService.syncCoordinator {
+            coordinator.$deliveredCards
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] allCards in
+                    guard let self else { return }
+                    self.recommendationCards = allCards.filter {
+                        $0.conversationLocalId == self.conversationId
+                    }
+                    // Reload messages so the newly-persisted assistant message
+                    // from the recommendation handler appears in the list.
+                    if !self.recommendationCards.isEmpty {
+                        self.loadMessages()
+                    }
+                }
+                .store(in: &cancellables)
+        }
     }
 
     private func handleError(_ error: Error) {
@@ -215,8 +237,12 @@ class ConversationViewModel: ObservableObject {
             errorMessage = "An unexpected error occurred. Please try again."
         }
 
-        // Log error without PHI
-        print("ConversationViewModel error: \(error.localizedDescription)")
+        // Log error without PHI — no error description or message content
+        try? AuditLogger.shared.log(
+            event: .aiInteractionFailed,
+            userId: nil,
+            details: AuditEventDetails(errorMessage: "conversation view error")
+        )
     }
 }
 

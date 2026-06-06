@@ -188,11 +188,11 @@ full loop.
 ## Phase 8: Documentation
 
 ### Task 8.1: Backend README
-- [ ] Replace the `backend/README.md` placeholder with real run instructions
+- [x] Replace the `backend/README.md` placeholder with real run instructions
 
 ### Task 8.2: Cross-references
-- [ ] Note the MVP in `docs/PROJECT.md` (Phase 1 progress)
-- [ ] Confirm `docs/ARCHITECTURE.md` §2/§4/§7 still match what was built;
+- [x] Note the MVP in `docs/PROJECT.md` (Phase 1 progress)
+- [x] Confirm `docs/ARCHITECTURE.md` §2/§4/§7 still match what was built;
       update if they drifted
 
 **Validation**: a new developer can go from clone to a working loop using only

@@ -173,14 +173,14 @@ physician-approved assistant reply; airplane-mode messages replay on reconnect.
 ## Phase 7: Local Dev Environment & End-to-End Test
 
 ### Task 7.1: Docker Compose
-- [ ] `backend/docker-compose.yml` — `postgres` + `server`
-- [ ] `make seed` — one tenant, one physician, one patient, one active care
+- [x] `backend/docker-compose.yml` — `postgres` + `server`
+- [x] `make seed` — one tenant, one physician, one patient, one active care
       relationship
 
 ### Task 7.2: End-to-end test
-- [ ] Scripted run against a real local model: seed → patient message via API →
+- [x] Scripted run against a real local model: seed → patient message via API →
       approve in the web app → assert delivery
-- [ ] Document the local model setup (Ollama/vLLM + MedGemma variant)
+- [x] Document the local model setup (Ollama/vLLM + MedGemma variant)
 
 **Validation**: `docker compose up` + local model + the e2e script proves the
 full loop.

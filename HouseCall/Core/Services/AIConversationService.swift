@@ -54,6 +54,14 @@ class AIConversationService: ObservableObject {
     /// Active LLM provider for streaming requests (legacy / offline path only)
     private var currentProvider: LLMProvider?
 
+    /// Optional provider override injected by tests.
+    ///
+    /// When non-nil this provider is used unconditionally for every `sendMessage`
+    /// call in the legacy streaming path, bypassing the config-manager lookup and
+    /// the `isProviderConfigured` gate.  Set this ONLY in test code; production
+    /// call sites always leave it nil.
+    var _testProviderOverride: LLMProvider?
+
     /// Cloud sync coordinator injected when the Core API is available.
     /// `nil` means fall back to the legacy LLM-provider streaming path.
     let syncCoordinator: CloudSyncCoordinator?
@@ -85,8 +93,10 @@ class AIConversationService: ObservableObject {
     func createConversation(provider: LLMProviderType? = nil) async throws -> Conversation {
         let selectedProvider = provider ?? providerConfigManager.getActiveProvider()
 
-        // Verify provider is configured
-        guard providerConfigManager.isProviderConfigured(selectedProvider) else {
+        // Verify provider is configured.
+        // When a test-provider override is present we skip this check so that
+        // tests can exercise conversation / message logic without live API keys.
+        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(selectedProvider) else {
             throw LLMError.notConfigured
         }
 
@@ -164,8 +174,9 @@ class AIConversationService: ObservableObject {
     ///   - newProvider: New provider type to use
     /// - Throws: ConversationRepositoryError, LLMError
     func switchProvider(conversationId: UUID, to newProvider: LLMProviderType) async throws {
-        // Verify provider is configured
-        guard providerConfigManager.isProviderConfigured(newProvider) else {
+        // Verify provider is configured.
+        // Skip the check when a test provider override is active.
+        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(newProvider) else {
             throw LLMError.notConfigured
         }
 
@@ -288,11 +299,18 @@ class AIConversationService: ObservableObject {
 
         // --- Legacy LLM streaming path (no coordinator injected) ---
         let providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
-        guard let provider = providerConfigManager.createProvider(type: providerType) else {
-            throw LLMError.notConfigured
-        }
-        guard provider.isConfigured else {
-            throw LLMError.notConfigured
+        // Use the test-injected provider if present; otherwise resolve via config manager.
+        let provider: LLMProvider
+        if let override = _testProviderOverride {
+            provider = override
+        } else {
+            guard let resolved = providerConfigManager.createProvider(type: providerType) else {
+                throw LLMError.notConfigured
+            }
+            guard resolved.isConfigured else {
+                throw LLMError.notConfigured
+            }
+            provider = resolved
         }
 
         self.currentProvider = provider

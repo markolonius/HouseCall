@@ -552,16 +552,21 @@ struct SecurityTests {
     @Test("App backgrounding triggers session validation")
     @MainActor
     func backgroundTriggersSessionValidation() async throws {
-        // This test verifies that session validation occurs on app lifecycle changes
-        // The actual implementation is in HouseCallApp and AuthenticationService
+        // Use a freshly constructed AuthenticationService with no active session.
+        // validateSession() must return nil when there is no current session.
+        let authService = AuthenticationService(
+            userRepository: CoreDataUserRepository(),
+            keychainManager: KeychainManager.shared,
+            biometricAuthManager: BiometricAuthManager.shared,
+            auditLogger: AuditLogger.shared
+        )
+        // Ensure there is no lingering session from a prior test run.
+        try? authService.invalidateSession()
 
-        let authService = AuthenticationService.shared
-
-        // Verify validateSession method exists and can be called
         let sessionUser = authService.validateSession()
 
-        // The result depends on whether there's an active session
-        // This test just verifies the mechanism exists
-        #expect(sessionUser != nil || sessionUser == nil)
+        // With no active session the result must be nil.
+        #expect(sessionUser == nil,
+                "validateSession() must return nil when no session is active")
     }
 }

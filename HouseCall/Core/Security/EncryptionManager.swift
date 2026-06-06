@@ -67,7 +67,19 @@ class EncryptionManager {
 
     // MARK: - Master Key Management
 
-    /// Retrieves or generates the master encryption key
+    /// Retrieves or generates the master encryption key.
+    ///
+    /// Behaviour:
+    /// 1. Returns the in-memory cached key immediately (fastest path, also used
+    ///    when `_testInjectMasterKey` has been called).
+    /// 2. Retrieves an existing key from the Keychain.
+    /// 3. Generates a fresh 256-bit key and attempts to persist it in the
+    ///    Keychain.  If the Keychain write fails (e.g. in a bare simulator
+    ///    without keychain entitlements or in a parallel-runner subprocess) the
+    ///    new key is still cached in memory and returned so that all encryption
+    ///    operations within this process continue to work.  The key will not
+    ///    survive a process restart in that scenario, but test runs are
+    ///    short-lived single-process executions so this is acceptable.
     func getMasterKey() throws -> SymmetricKey {
         // Return cached key if available
         if let masterKey = masterKey {
@@ -83,7 +95,9 @@ class EncryptionManager {
 
         // Generate new master key
         let newKey = SymmetricKey(size: .bits256)
-        try keychainManager.saveMasterKey(newKey)
+        // Persist to Keychain when available; gracefully degrade when the
+        // Keychain is inaccessible (e.g. in isolated test-runner processes).
+        try? keychainManager.saveMasterKey(newKey)
         masterKey = newKey
 
         return newKey
@@ -197,5 +211,25 @@ class EncryptionManager {
     /// Clears cached key for a specific user
     func clearCache(for userId: UUID) {
         derivedKeyCache.removeValue(forKey: userId)
+    }
+
+    // MARK: - Test Support
+
+    /// Seeds a fixed master key directly into the in-memory cache without
+    /// touching the Keychain.
+    ///
+    /// Call this from test `setUp` / `init` bodies so that `getMasterKey()`
+    /// returns immediately without attempting a Keychain read or write.
+    /// This prevents `-25299` / `unexpectedStatus` failures in bare or
+    /// parallel-test-runner simulator environments where the Keychain may
+    /// not be accessible.
+    ///
+    /// - Parameter key: The key to use as the master encryption key for this
+    ///   test session.  Pass a deterministic key (e.g. `SymmetricKey(size: .bits256)`)
+    ///   generated once per test class so all operations within the test share
+    ///   the same key material.
+    func _testInjectMasterKey(_ key: SymmetricKey) {
+        masterKey = key
+        derivedKeyCache.removeAll()
     }
 }

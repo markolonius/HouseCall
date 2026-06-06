@@ -527,6 +527,8 @@ struct AIChatIntegrationTests {
             messageRepository: messageRepo,
             auditLogger: auditLogger
         )
+        // Inject a stub provider so tests don't need API keys or live network.
+        aiService._testProviderOverride = AIChatStubProvider()
 
         return (context, conversationRepo, messageRepo, userRepo, aiService, user.id!)
     }
@@ -782,24 +784,27 @@ struct AIChatIntegrationTests {
             provider: .openai,
             title: "Delete Test"
         )
+        // Capture the ID before deletion — accessing the managed object after
+        // context.save() + delete may return nil as Core Data clears the fault.
+        let conversationId = conversation.id!
 
         for i in 0..<5 {
             _ = try messageRepo.createMessage(
-                conversationId: conversation.id!,
+                conversationId: conversationId,
                 role: .user,
                 content: "Message \(i)",
                 streamingComplete: true
             )
         }
 
-        let messagesBefore = try messageRepo.fetchAllMessages(conversationId: conversation.id!)
+        let messagesBefore = try messageRepo.fetchAllMessages(conversationId: conversationId)
         #expect(messagesBefore.count == 5)
 
-        // Delete conversation
-        try conversationRepo.deleteConversation(id: conversation.id!)
+        // Delete conversation (cascade rule in the model deletes related messages)
+        try conversationRepo.deleteConversation(id: conversationId)
 
         // Verify messages are also deleted
-        let messagesAfter = try messageRepo.fetchAllMessages(conversationId: conversation.id!)
+        let messagesAfter = try messageRepo.fetchAllMessages(conversationId: conversationId)
         #expect(messagesAfter.isEmpty)
     }
 
@@ -846,28 +851,30 @@ struct AIChatIntegrationTests {
         let components = createChatTestComponents()
         let aiService = components.aiService
 
-        // The service is not configured (no API key), so it will throw LLMError.notConfigured
-        // This tests that the service handles errors gracefully
-        let conversation = try await aiService.createConversation(
-            provider: .openai
+        // Replace the default stub with one that always fails via onComplete(.failure)
+        // so the service's error-handling path (errorMessage assignment) is exercised.
+        aiService._testProviderOverride = AIChatStubProvider(shouldFail: true)
+
+        let conversation = try await aiService.createConversation(provider: .openai)
+
+        // Sending a message should NOT throw — the failure is delivered via the
+        // onComplete(.failure) callback, which sets errorMessage asynchronously.
+        try await aiService.sendMessage(
+            conversationId: conversation.id!,
+            content: "This should trigger a provider failure"
         )
 
-        // Attempt to send message (should fail - no provider configured)
-        do {
-            try await aiService.sendMessage(
-                conversationId: conversation.id!,
-                content: "This should fail"
-            )
-        } catch {
-            // Error expected since no real LLM provider is configured in tests
-        }
+        // Give the async completion handler time to run.
+        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 s
 
-        // Verify service is still functional after error
+        // Real assertions: the service must have set errorMessage and stopped streaming.
         #expect(aiService.isStreaming == false)
+        #expect(aiService.errorMessage != nil,
+                "errorMessage must be set after a provider failure")
     }
 }
 
-// MARK: - Mock LLM Provider
+// MARK: - Mock LLM Provider (kept for reference)
 
 private class MockLLMProvider: LLMProvider {
     let providerType: LLMProviderType
@@ -903,6 +910,43 @@ private class MockLLMProvider: LLMProvider {
     func cancelStreaming() {
         // Mock cancellation
     }
+}
+
+// MARK: - Stub LLM provider for AIChatIntegrationTests
+
+/// Deterministic provider used as `_testProviderOverride` in `AIChatIntegrationTests`.
+///
+/// - `shouldFail = false` (default): simulates a successful one-chunk streaming
+///   response so tests can exercise the full create/send/receive path offline.
+/// - `shouldFail = true`: calls `onComplete(.failure(...))` to exercise the
+///   service's error-handling path (errorMessage set, isStreaming cleared).
+private class AIChatStubProvider: LLMProvider {
+    let providerType: LLMProviderType = .openai
+    let isConfigured: Bool = true
+    let shouldFail: Bool
+
+    init(shouldFail: Bool = false) {
+        self.shouldFail = shouldFail
+    }
+
+    func streamCompletion(
+        messages: [ChatMessage],
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping (Result<String, LLMError>) -> Void
+    ) async throws {
+        if shouldFail {
+            onComplete(.failure(.networkError(
+                NSError(domain: "AIChatStubProvider", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Stubbed streaming failure"])
+            )))
+            return
+        }
+        let response = "Stub AI response."
+        onChunk(response)
+        onComplete(.success(response))
+    }
+
+    func cancelStreaming() {}
 }
 
 // MARK: - XCTest Compatibility

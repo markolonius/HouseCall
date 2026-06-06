@@ -31,7 +31,10 @@ struct AIConversationServiceTests {
         return container.viewContext
     }
 
-    /// Creates a test service with real repositories
+    /// Creates a test service with real repositories.
+    ///
+    /// A `MockLLMProvider` (always-succeeds) is injected via
+    /// `_testProviderOverride` so tests never hit real API keys or the network.
     func createTestService(context: NSManagedObjectContext, userId: UUID) -> AIConversationService {
         let conversationRepo = CoreDataConversationRepository(
             context: context,
@@ -45,13 +48,39 @@ struct AIConversationServiceTests {
             auditLogger: AuditLogger(context: context)
         )
 
-        return AIConversationService(
+        let service = AIConversationService(
             userId: userId,
             conversationRepository: conversationRepo,
             messageRepository: messageRepo,
             providerConfigManager: LLMProviderConfigManager.shared,
             auditLogger: AuditLogger(context: context)
         )
+        // Bypass provider-config checks and live network in unit tests.
+        service._testProviderOverride = StubLLMProvider(shouldFail: false)
+        return service
+    }
+
+    /// Creates a test service whose provider always fails — used by error-path tests.
+    func createFailingTestService(context: NSManagedObjectContext, userId: UUID) -> AIConversationService {
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            providerConfigManager: LLMProviderConfigManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        service._testProviderOverride = StubLLMProvider(shouldFail: true)
+        return service
     }
 
     // MARK: - Conversation Creation Tests
@@ -221,11 +250,38 @@ struct AIConversationServiceTests {
     func testSwitchToUnconfiguredProvider() async throws {
         let context = createInMemoryContext()
         let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
 
-        let conversation = try await service.createConversation()
+        // Use a service WITHOUT a provider override so the config-manager check
+        // is in effect and switching to an unconfigured provider throws.
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        // Seed a fake OpenAI key so createConversation(.openai) passes, but
+        // leave custom unconfigured so switchProvider(.custom) throws.
+        let testKeychain = TestInMemoryKeychain()
+        try testKeychain.set(key: "openai_api_key", value: "sk-test-key")
+        let configManager = LLMProviderConfigManager(
+            keychainManager: testKeychain,
+            userDefaults: UserDefaults(suiteName: "test.switch.unconfigured.\(UUID().uuidString)")!
+        )
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            providerConfigManager: configManager,
+            auditLogger: AuditLogger(context: context)
+        )
 
-        // Assuming custom provider is not configured
+        let conversation = try await service.createConversation(provider: .openai)
+
+        // Custom provider is not configured in the test config manager.
         await #expect(throws: LLMError.self) {
             try await service.switchProvider(conversationId: conversation.id!, to: .custom)
         }
@@ -488,4 +544,60 @@ struct AIConversationServiceTests {
         #expect(service.currentConversation != nil)
         #expect(service.messages.count >= 1)
     }
+}
+
+// MARK: - Test In-Memory Keychain
+
+/// Keychain substitute that stores values in a plain dictionary.
+///
+/// Used when tests need a `KeychainManager` that never touches the real iOS
+/// Keychain, avoiding `-25299` / entitlement errors in bare simulators.
+private class TestInMemoryKeychain: KeychainManager {
+    private var storage: [String: String] = [:]
+
+    override func set(key: String, value: String) throws {
+        storage[key] = value
+    }
+
+    override func get(key: String) throws -> String? {
+        return storage[key]
+    }
+
+    override func delete(key: String) throws {
+        storage.removeValue(forKey: key)
+    }
+}
+
+// MARK: - Stub LLM Provider (test-only)
+
+/// Deterministic provider used by `AIConversationServiceTests`.
+///
+/// `shouldFail = false`: simulates a successful one-chunk streaming response.
+/// `shouldFail = true`:  calls `onComplete(.failure(...))` — exercises the
+///                       service's error-handling path without touching the network.
+private class StubLLMProvider: LLMProvider {
+    let providerType: LLMProviderType = .openai
+    let isConfigured: Bool = true
+    let shouldFail: Bool
+
+    init(shouldFail: Bool) {
+        self.shouldFail = shouldFail
+    }
+
+    func streamCompletion(
+        messages: [ChatMessage],
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping (Result<String, LLMError>) -> Void
+    ) async throws {
+        if shouldFail {
+            onComplete(.failure(.networkError(NSError(domain: "StubProvider", code: -1,
+                                                      userInfo: [NSLocalizedDescriptionKey: "Stubbed failure"]))))
+            return
+        }
+        let response = "Stub response from provider."
+        onChunk(response)
+        onComplete(.success(response))
+    }
+
+    func cancelStreaming() {}
 }

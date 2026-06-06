@@ -194,17 +194,29 @@ struct APIKeySecurityTests {
         // Verify config properties don't include API keys
         let openAIConfig = config.getProviderConfig(for: .openai)
         // Config should reference keychain, not store keys directly
+        if case .openai(let cfg) = openAIConfig {
+            // The config struct exists and must not contain an API key field
+            #expect(!cfg.model.isEmpty)
+        } else {
+            Issue.record("Expected .openai config")
+        }
 
         let claudeConfig = config.getProviderConfig(for: .claude)
         // Config should reference keychain, not store keys directly
+        if case .claude(let cfg) = claudeConfig {
+            #expect(!cfg.model.isEmpty)
+        } else {
+            Issue.record("Expected .claude config")
+        }
 
         let customConfig = config.getProviderConfig(for: .custom)
-        // Config should reference keychain, not store keys directly
-
-        // This test verifies the architecture - configs don't hold API keys
-        #expect(openAIConfig != nil)
-        #expect(claudeConfig != nil)
-        #expect(customConfig != nil)
+        // Custom config may be nil when no custom provider is saved — that is
+        // still a valid (and expected) value; the absence of config is fine.
+        if case .custom(_) = customConfig {
+            // Correct case — custom config (present or absent) is always wrapped
+        } else {
+            Issue.record("Expected .custom config wrapper")
+        }
     }
 
     @Test("Non-sensitive config can be in UserDefaults")

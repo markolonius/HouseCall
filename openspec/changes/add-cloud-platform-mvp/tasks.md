@@ -173,8 +173,8 @@ physician-approved assistant reply; airplane-mode messages replay on reconnect.
 ## Phase 7: Local Dev Environment & End-to-End Test
 
 ### Task 7.1: Docker Compose
-- [ ] `backend/docker-compose.yml` — `postgres` + `server`
-- [ ] `make seed` — one tenant, one physician, one patient, one active care
+- [x] `backend/docker-compose.yml` — `postgres` + `server`
+- [x] `make seed` — one tenant, one physician, one patient, one active care
       relationship
 
 ### Task 7.2: End-to-end test

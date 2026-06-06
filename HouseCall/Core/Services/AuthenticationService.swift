@@ -199,8 +199,9 @@ class AuthenticationService: ObservableObject {
         // Clear session
         try invalidateSession()
 
-        // Clear keychain
+        // Clear keychain — session token and Core API JWT
         try keychainManager.deleteSessionToken()
+        clearCoreAPIJWT()
 
         // Update state
         currentSession = nil
@@ -376,6 +377,25 @@ class AuthenticationService: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Core API JWT (Phase 6.3)
+
+    /// Stores the Core API JWT in the Keychain so SyncClient can authenticate.
+    ///
+    /// Call this after a successful `POST /auth/login` to the Core API returns
+    /// a JWT.  The token is stored under `KeychainManager.Keys.coreAPIJWT` and
+    /// is never logged.
+    ///
+    /// - Parameter jwt: The short-lived HMAC-signed JWT returned by the Core API.
+    /// - Throws: KeychainError if the Keychain write fails.
+    func storeCoreAPIJWT(_ jwt: String) throws {
+        try keychainManager.set(key: KeychainManager.Keys.coreAPIJWT, value: jwt)
+    }
+
+    /// Removes the Core API JWT from the Keychain.  Called on logout.
+    func clearCoreAPIJWT() {
+        try? keychainManager.delete(key: KeychainManager.Keys.coreAPIJWT)
     }
 
     // MARK: - User Information

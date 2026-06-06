@@ -40,6 +40,16 @@ struct ChatView: View {
                             streamingBubbleView
                                 .id("streaming")
                         }
+
+                        // Physician-approved recommendation cards delivered via
+                        // WebSocket.  Cards are keyed on the recommendation's
+                        // server ID so duplicate events are deduplicated by
+                        // ForEach identity.  Rendered after any inline messages
+                        // so they appear at the bottom of the thread.
+                        ForEach(viewModel.recommendationCards) { card in
+                            RecommendationCard(model: card)
+                                .id("rec-\(card.id)")
+                        }
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 16)
@@ -48,6 +58,9 @@ struct ChatView: View {
                     scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: viewModel.streamingText) { _ in
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: viewModel.recommendationCards.count) { _ in
                     scrollToBottom(proxy: proxy)
                 }
             }

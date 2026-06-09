@@ -100,7 +100,7 @@ struct MessageBubbleView: View {
         .onAppear {
             decryptMessage()
         }
-        .onChange(of: message.encryptedContent) { _ in
+        .onChange(of: message.encryptedContent) {
             // Update when streaming adds new content
             decryptMessage()
         }

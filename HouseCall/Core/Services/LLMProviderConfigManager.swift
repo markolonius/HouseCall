@@ -208,8 +208,15 @@ class LLMProviderConfigManager: ObservableObject {
             guard let customConfig = loadCustomProviderConfig() else {
                 return false
             }
-            // Custom provider needs a valid URL at minimum
-            guard URL(string: customConfig.baseURL) != nil else {
+            // Custom provider needs a syntactically valid URL with an http/https
+            // scheme and a non-empty host.  `URL(string:)` alone is too permissive
+            // — it percent-encodes strings like "not a valid url" and returns
+            // non-nil even though they are not usable endpoints.
+            guard let components = URLComponents(string: customConfig.baseURL),
+                  let scheme = components.scheme,
+                  (scheme == "http" || scheme == "https"),
+                  let host = components.host,
+                  !host.isEmpty else {
                 return false
             }
             // If auth is required, check for API key

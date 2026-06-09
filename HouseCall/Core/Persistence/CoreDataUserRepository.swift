@@ -176,13 +176,15 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                 throw UserRepositoryError.invalidCredentials
             }
 
+            // All wrong-credential outcomes (decryption failure or hash mismatch)
+            // are surfaced as invalidCredentials — opaque to the caller.
             do {
                 let hashedPassword = try encryptionManager.decrypt(
                     encryptedData: encryptedHash,
                     for: user.id!
                 )
 
-                if try !passwordHasher.verify(password: credential, hash: hashedPassword) {
+                guard try passwordHasher.verify(password: credential, hash: hashedPassword) else {
                     try? auditLogger.logLoginFailure(
                         email: email,
                         reason: "Invalid password",
@@ -190,8 +192,18 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                     )
                     throw UserRepositoryError.invalidCredentials
                 }
+            } catch let repoError as UserRepositoryError {
+                // Re-throw repository errors (e.g. invalidCredentials) as-is.
+                throw repoError
             } catch {
-                throw UserRepositoryError.decryptionFailed
+                // A genuine decryption/system failure is still an opaque
+                // invalidCredentials to the caller — no credential-stage info leaks.
+                try? auditLogger.logLoginFailure(
+                    email: email,
+                    reason: "Credential verification failed",
+                    authMethod: authMethod.rawValue
+                )
+                throw UserRepositoryError.invalidCredentials
             }
 
         case .passcode:
@@ -199,13 +211,14 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                 throw UserRepositoryError.invalidCredentials
             }
 
+            // Same opaque policy for passcode verification.
             do {
                 let hashedPasscode = try encryptionManager.decrypt(
                     encryptedData: encryptedHash,
                     for: user.id!
                 )
 
-                if try !passwordHasher.verify(password: credential, hash: hashedPasscode) {
+                guard try passwordHasher.verify(password: credential, hash: hashedPasscode) else {
                     try? auditLogger.logLoginFailure(
                         email: email,
                         reason: "Invalid passcode",
@@ -213,8 +226,15 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                     )
                     throw UserRepositoryError.invalidCredentials
                 }
+            } catch let repoError as UserRepositoryError {
+                throw repoError
             } catch {
-                throw UserRepositoryError.decryptionFailed
+                try? auditLogger.logLoginFailure(
+                    email: email,
+                    reason: "Credential verification failed",
+                    authMethod: authMethod.rawValue
+                )
+                throw UserRepositoryError.invalidCredentials
             }
 
         case .biometric:

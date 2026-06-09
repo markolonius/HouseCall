@@ -40,7 +40,7 @@ struct SignUpView: View {
                                 .textContentType(.name)
                                 .autocapitalization(.words)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .onChange(of: viewModel.fullName) { _ in
+                                .onChange(of: viewModel.fullName) {
                                     Task { @MainActor in
                                         viewModel.validateFullName()
                                     }
@@ -63,7 +63,7 @@ struct SignUpView: View {
                                 .autocapitalization(.none)
                                 .keyboardType(.emailAddress)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .onChange(of: viewModel.email) { _ in
+                                .onChange(of: viewModel.email) {
                                     Task { @MainActor in
                                         viewModel.validateEmail()
                                     }
@@ -84,7 +84,7 @@ struct SignUpView: View {
                             SecureField("Minimum 12 characters", text: $viewModel.password)
                                 .textContentType(.newPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .onChange(of: viewModel.password) { _ in
+                                .onChange(of: viewModel.password) {
                                     Task { @MainActor in
                                         viewModel.validatePassword()
                                     }
@@ -120,7 +120,7 @@ struct SignUpView: View {
                             SecureField("Re-enter password", text: $viewModel.confirmPassword)
                                 .textContentType(.newPassword)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .onChange(of: viewModel.confirmPassword) { _ in
+                                .onChange(of: viewModel.confirmPassword) {
                                     Task { @MainActor in
                                         viewModel.validateConfirmPassword()
                                     }

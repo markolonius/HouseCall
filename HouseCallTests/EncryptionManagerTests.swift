@@ -250,4 +250,47 @@ struct EncryptionManagerTests {
         // Should complete in less than 50ms
         #expect(elapsed < 0.05)
     }
+
+    // MARK: - Keychain Read-Error Safety Tests (qax)
+
+    @Test("Keychain read error does not cause master key regeneration")
+    @MainActor
+    func testKeychainReadErrorDoesNotRegenerateKey() throws {
+        // A transient keychain read error must propagate — not silently trigger
+        // key regeneration — which would make all previously-encrypted PHI
+        // permanently unreadable (silent data loss).
+        let errorKeychain = ThrowingOnReadKeychainManager()
+        let manager = EncryptionManager._testMakeInstance(keychainManager: errorKeychain)
+
+        // getMasterKey() must throw rather than silently generate a new key.
+        #expect(throws: (any Error).self) {
+            try manager.getMasterKey()
+        }
+
+        // Confirm no write was attempted (key regeneration would call saveMasterKey).
+        #expect(errorKeychain.saveCallCount == 0,
+                "Key must not be regenerated after a read error")
+    }
+}
+
+// MARK: - Test Helper: KeychainManager that throws on retrieve
+
+/// A `KeychainManager` subclass used exclusively in tests to simulate a
+/// transient keychain read failure.  `retrieveMasterKey()` throws
+/// `KeychainError.unexpectedStatus(-1)` (simulating a real non-not-found
+/// OSStatus) and a counter tracks whether `saveMasterKey` was ever called.
+@MainActor
+final class ThrowingOnReadKeychainManager: KeychainManager {
+    private(set) var saveCallCount: Int = 0
+
+    override func retrieveMasterKey() throws -> Data? {
+        // Simulate a non-not-found keychain error (e.g. data protection class
+        // mismatch or background access restriction).
+        throw KeychainError.unexpectedStatus(-1)
+    }
+
+    override func saveMasterKey(_ key: SymmetricKey) throws {
+        saveCallCount += 1
+        // Do not actually write to the keychain during tests.
+    }
 }

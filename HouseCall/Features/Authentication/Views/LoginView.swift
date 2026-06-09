@@ -139,7 +139,7 @@ struct LoginView: View {
         .sheet(isPresented: $showingSignUp) {
             SignUpView()
         }
-        .onChange(of: authService.isAuthenticated) { isAuth in
+        .onChange(of: authService.isAuthenticated) { _, isAuth in
             if isAuth {
                 print("🟢 LoginView detected authentication, closing sheet")
                 showingSignUp = false

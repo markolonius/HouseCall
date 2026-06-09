@@ -84,8 +84,13 @@ class EncryptionManager {
             return masterKey
         }
 
-        // Try to retrieve existing key from keychain
-        if let keyData = try? keychainManager.retrieveMasterKey() {
+        // Try to retrieve existing key from keychain.
+        // `retrieveMasterKey()` returns nil ONLY for errSecItemNotFound (genuine
+        // first-run) and throws for any other OSStatus.  Using `try` (not `try?`)
+        // ensures a transient keychain read error propagates to the caller instead
+        // of being silently swallowed — which would cause key regeneration and
+        // permanent loss of all previously-encrypted PHI.
+        if let keyData = try keychainManager.retrieveMasterKey() {
             let key = SymmetricKey(data: keyData)
             masterKey = key
             return key
@@ -227,5 +232,12 @@ class EncryptionManager {
     func _testInjectMasterKey(_ key: SymmetricKey) {
         masterKey = key
         derivedKeyCache.removeAll()
+    }
+
+    /// Creates a fresh `EncryptionManager` backed by the supplied
+    /// `KeychainManager`.  Intended exclusively for unit tests that need to
+    /// inject a mock or stub keychain; **do not call in production code**.
+    static func _testMakeInstance(keychainManager: KeychainManager) -> EncryptionManager {
+        EncryptionManager(keychainManager: keychainManager)
     }
 }

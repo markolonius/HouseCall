@@ -54,13 +54,13 @@ struct ChatView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 16)
                 }
-                .onChange(of: viewModel.messages.count) { _ in
+                .onChange(of: viewModel.messages.count) {
                     scrollToBottom(proxy: proxy)
                 }
-                .onChange(of: viewModel.streamingText) { _ in
+                .onChange(of: viewModel.streamingText) {
                     scrollToBottom(proxy: proxy)
                 }
-                .onChange(of: viewModel.recommendationCards.count) { _ in
+                .onChange(of: viewModel.recommendationCards.count) {
                     scrollToBottom(proxy: proxy)
                 }
             }

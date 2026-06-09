@@ -283,17 +283,22 @@ struct AuditLoggerTests {
         )
 
         let userId = UUID()
-        let now = Date()
-        let twoDaysAgo = Calendar.current.date(byAdding: .day, value: -2, to: now)!
+        let twoDaysAgo = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
 
         try logger.log(event: .loginSuccess, userId: userId, message: "Login today")
+
+        // Capture upper bound AFTER logging so the event's timestamp (which is
+        // also set inside log()) is guaranteed to be <= endDate.  If we captured
+        // `now` before the call the event's timestamp would be strictly > now
+        // and the predicate `timestamp <= endDate` would return 0 rows.
+        let endDate = Date()
 
         // Fetch events from last 7 days
         let recentEvents = try logger.fetchRecentEvents(days: 7)
         #expect(recentEvents.count == 1)
 
         // Fetch events with specific date range
-        let rangeEvents = try logger.fetchEvents(dateRange: twoDaysAgo...now)
+        let rangeEvents = try logger.fetchEvents(dateRange: twoDaysAgo...endDate)
         #expect(rangeEvents.count == 1)
     }
 

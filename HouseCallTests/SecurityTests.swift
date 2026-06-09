@@ -535,17 +535,63 @@ struct SecurityTests {
     // MARK: - Task 7.4: Session Timeout Enforcement
 
     /// Test: Session timeout invalidates session
+    ///
+    /// Exercises the production timeout teardown path via
+    /// `_testSimulateSessionTimeout()` without waiting 5 minutes for a real timer.
     @Test("Session timeout invalidates authentication")
     @MainActor
     func sessionTimeoutInvalidates() async throws {
-        // This test verifies session timeout behavior
-        // Note: Full integration test would require waiting 5 minutes
-        // For unit test, we verify the timeout mechanism exists
+        // Build an isolated AuthenticationService with its own in-memory
+        // Core Data stack so we do not pollute shared/production state.
+        let container = NSPersistentContainer(name: "HouseCall")
+        let storeDesc = NSPersistentStoreDescription()
+        storeDesc.type = NSInMemoryStoreType
+        container.persistentStoreDescriptions = [storeDesc]
+        container.loadPersistentStores { _, error in
+            if let error { fatalError("In-memory store failed: \(error)") }
+        }
+        let context = container.viewContext
+        let auditLogger = AuditLogger(context: context)
+        let userRepo = CoreDataUserRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            passwordHasher: PasswordHasher.shared,
+            auditLogger: auditLogger
+        )
+        let authService = AuthenticationService(
+            userRepository: userRepo,
+            keychainManager: KeychainManager.shared,
+            biometricAuthManager: BiometricAuthManager.shared,
+            auditLogger: auditLogger
+        )
 
-        let authService = AuthenticationService.shared
+        // Register a user and establish a session.
+        _ = try await authService.register(
+            email: "timeout-test@example.com",
+            password: "TimeoutPass123!",
+            passcode: nil,
+            fullName: "Timeout User",
+            authMethod: .password
+        )
 
-        // Verify session timeout constant is set to 5 minutes (300 seconds)
-        // Note: This is a compile-time check, actual timeout is in AuthenticationService
+        // Let the deferred Task { @MainActor } assignment run so isAuthenticated
+        // reflects the newly created session before we invoke the timeout path.
+        await Task.yield()
+
+        #expect(authService.isAuthenticated == true,
+                "Session must be active before simulating timeout")
+
+        // Drive the same teardown path that fires when the 5-min inactivity
+        // timer expires, without waiting for a real timer.
+        await authService._testSimulateSessionTimeout()
+
+        // After timeout teardown: session must be nil and auth flag must be false.
+        #expect(authService.isAuthenticated == false,
+                "isAuthenticated must be false after session timeout")
+        #expect(authService.currentSession == nil,
+                "currentSession must be nil after session timeout")
+        #expect(authService.validateSession() == nil,
+                "validateSession() must return nil after timeout")
     }
 
     /// Test: Background transition triggers session check

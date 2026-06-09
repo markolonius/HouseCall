@@ -59,11 +59,10 @@ struct SSEParserTests {
         let parser = SSEParser()
         var receivedEvents: [SSEEvent] = []
 
-        let sseData = """
-        event: message
-        data: Hello
-
-        """.data(using: .utf8)!
+        // Use explicit escape sequences to avoid any indentation-stripping
+        // ambiguity that multi-line string literals can introduce on some
+        // Swift/Xcode toolchain versions.
+        let sseData = "event: message\ndata: Hello\n\n".data(using: .utf8)!
 
         parser.parse(data: sseData) { event in
             receivedEvents.append(event)
@@ -79,11 +78,7 @@ struct SSEParserTests {
         let parser = SSEParser()
         var receivedEvents: [SSEEvent] = []
 
-        let sseData = """
-        id: 123
-        data: Test message
-
-        """.data(using: .utf8)!
+        let sseData = "id: 123\ndata: Test message\n\n".data(using: .utf8)!
 
         parser.parse(data: sseData) { event in
             receivedEvents.append(event)
@@ -139,12 +134,7 @@ struct SSEParserTests {
         let parser = SSEParser()
         var receivedEvents: [SSEEvent] = []
 
-        let sseData = """
-        : This is a comment
-
-        data: Valid message
-
-        """.data(using: .utf8)!
+        let sseData = ": This is a comment\n\ndata: Valid message\n\n".data(using: .utf8)!
 
         parser.parse(data: sseData) { event in
             receivedEvents.append(event)
@@ -232,12 +222,7 @@ struct SSEParserTests {
         let parser = SSEParser()
         var receivedEvents: [SSEEvent] = []
 
-        let sseData = """
-        data: Line 1
-        data: Line 2
-        data: Line 3
-
-        """.data(using: .utf8)!
+        let sseData = "data: Line 1\ndata: Line 2\ndata: Line 3\n\n".data(using: .utf8)!
 
         parser.parse(data: sseData) { event in
             receivedEvents.append(event)

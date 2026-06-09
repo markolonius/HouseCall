@@ -69,6 +69,9 @@ struct IntegrationTests {
             fullName: "New User",
             authMethod: .password
         )
+        // createSession() defers its @Published assignment via Task { @MainActor }.
+        // Yield once so that task runs before we read isAuthenticated.
+        await Task.yield()
 
         // Verify user created
         #expect(user.email == "newuser@example.com")
@@ -109,6 +112,7 @@ struct IntegrationTests {
             fullName: "Passcode User",
             authMethod: .passcode
         )
+        await Task.yield()
 
         #expect(user.authMethod == "passcode")
         #expect(user.encryptedPasscodeHash != nil)
@@ -145,6 +149,7 @@ struct IntegrationTests {
             authMethod: .password,
             useBiometric: false
         )
+        await Task.yield()
 
         #expect(user.email == email)
         #expect(authService.isAuthenticated == true)
@@ -179,6 +184,7 @@ struct IntegrationTests {
             authMethod: .passcode,
             useBiometric: false
         )
+        await Task.yield()
 
         #expect(user.email == email)
         #expect(authService.isAuthenticated == true)
@@ -212,6 +218,7 @@ struct IntegrationTests {
             credential: password,
             authMethod: .password
         )
+        await Task.yield()
 
         let sessionToken = authService.currentSession?.sessionToken
 
@@ -250,6 +257,7 @@ struct IntegrationTests {
             credential: password,
             authMethod: .password
         )
+        await Task.yield()
 
         #expect(authService.isAuthenticated == true)
 
@@ -363,6 +371,7 @@ struct IntegrationTests {
             fullName: "Journey User",
             authMethod: .password
         )
+        await Task.yield()
 
         #expect(authService.isAuthenticated == true)
 
@@ -376,6 +385,7 @@ struct IntegrationTests {
             credential: password,
             authMethod: .password
         )
+        await Task.yield()
 
         #expect(loggedInUser.id == registeredUser.id)
         #expect(authService.isAuthenticated == true)
@@ -438,6 +448,7 @@ struct IntegrationTests {
             fullName: "Audit Complete",
             authMethod: .password
         )
+        await Task.yield()
 
         try await authService.logout()
 
@@ -446,6 +457,7 @@ struct IntegrationTests {
             credential: "AuditPassword123!",
             authMethod: .password
         )
+        await Task.yield()
 
         try await authService.logout()
 

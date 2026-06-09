@@ -150,15 +150,25 @@ class LLMProviderConfigManager: ObservableObject {
 
     // MARK: - Provider Configuration Access
 
-    /// Get the configuration for a provider as an Any (for testability)
-    func getProviderConfig(for provider: LLMProviderType) -> Any? {
+    /// Typed union of every concrete provider configuration.
+    enum ProviderConfigValue {
+        case openai(OpenAIConfig)
+        case claude(ClaudeConfig)
+        case custom(CustomProviderConfig?)
+    }
+
+    /// Returns the stored configuration for the given provider in a type-safe wrapper.
+    ///
+    /// Replaces the former `-> Any?` overload so call sites can switch on the
+    /// concrete case without casting through `Any`.
+    func getProviderConfig(for provider: LLMProviderType) -> ProviderConfigValue {
         switch provider {
         case .openai:
-            return loadOpenAIConfig()
+            return .openai(loadOpenAIConfig())
         case .claude:
-            return loadClaudeConfig()
+            return .claude(loadClaudeConfig())
         case .custom:
-            return loadCustomProviderConfig()
+            return .custom(loadCustomProviderConfig())
         }
     }
 

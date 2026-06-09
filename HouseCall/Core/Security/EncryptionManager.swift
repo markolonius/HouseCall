@@ -67,7 +67,17 @@ class EncryptionManager {
 
     // MARK: - Master Key Management
 
-    /// Retrieves or generates the master encryption key
+    /// Retrieves or generates the master encryption key.
+    ///
+    /// Behaviour:
+    /// 1. Returns the in-memory cached key immediately (fastest path, also used
+    ///    when `_testInjectMasterKey` has been called in DEBUG builds).
+    /// 2. Retrieves an existing key from the Keychain.
+    /// 3. Generates a fresh 256-bit key and persists it in the Keychain.
+    ///    If the Keychain write fails the error is propagated — silently
+    ///    swallowing a write failure would leave the key in-memory only and
+    ///    permanently destroy all PHI encrypted under it after the next
+    ///    `clearCache()` call or cold launch.
     func getMasterKey() throws -> SymmetricKey {
         // Return cached key if available
         if let masterKey = masterKey {
@@ -81,7 +91,7 @@ class EncryptionManager {
             return key
         }
 
-        // Generate new master key
+        // Generate new master key and persist it — propagate any Keychain error.
         let newKey = SymmetricKey(size: .bits256)
         try keychainManager.saveMasterKey(newKey)
         masterKey = newKey
@@ -197,5 +207,25 @@ class EncryptionManager {
     /// Clears cached key for a specific user
     func clearCache(for userId: UUID) {
         derivedKeyCache.removeValue(forKey: userId)
+    }
+
+    // MARK: - Test Support
+
+    /// Seeds a fixed master key directly into the in-memory cache without
+    /// touching the Keychain.
+    ///
+    /// Call this from test `setUp` / `init` bodies so that `getMasterKey()`
+    /// returns immediately without attempting a Keychain read or write.
+    /// This prevents `-25299` / `unexpectedStatus` failures in bare or
+    /// parallel-test-runner simulator environments where the Keychain may
+    /// not be accessible.
+    ///
+    /// - Parameter key: The key to use as the master encryption key for this
+    ///   test session.  Pass a deterministic key (e.g. `SymmetricKey(size: .bits256)`)
+    ///   generated once per test class so all operations within the test share
+    ///   the same key material.
+    func _testInjectMasterKey(_ key: SymmetricKey) {
+        masterKey = key
+        derivedKeyCache.removeAll()
     }
 }

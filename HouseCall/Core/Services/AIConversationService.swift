@@ -54,6 +54,16 @@ class AIConversationService: ObservableObject {
     /// Active LLM provider for streaming requests (legacy / offline path only)
     private var currentProvider: LLMProvider?
 
+    #if DEBUG
+    /// Optional provider override injected by tests.
+    ///
+    /// When non-nil this provider is used unconditionally for every `sendMessage`
+    /// call in the legacy streaming path, bypassing the config-manager lookup and
+    /// the `isProviderConfigured` gate.  Set this ONLY in test code; production
+    /// call sites always leave it nil.  Compiled out of Release builds.
+    var _testProviderOverride: LLMProvider?
+    #endif
+
     /// Cloud sync coordinator injected when the Core API is available.
     /// `nil` means fall back to the legacy LLM-provider streaming path.
     let syncCoordinator: CloudSyncCoordinator?
@@ -85,10 +95,18 @@ class AIConversationService: ObservableObject {
     func createConversation(provider: LLMProviderType? = nil) async throws -> Conversation {
         let selectedProvider = provider ?? providerConfigManager.getActiveProvider()
 
-        // Verify provider is configured
+        // Verify provider is configured.
+        // In DEBUG builds a test-provider override bypasses this check so that
+        // tests can exercise conversation / message logic without live API keys.
+        #if DEBUG
+        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(selectedProvider) else {
+            throw LLMError.notConfigured
+        }
+        #else
         guard providerConfigManager.isProviderConfigured(selectedProvider) else {
             throw LLMError.notConfigured
         }
+        #endif
 
         // Create conversation in repository
         let conversation = try conversationRepository.createConversation(
@@ -164,10 +182,17 @@ class AIConversationService: ObservableObject {
     ///   - newProvider: New provider type to use
     /// - Throws: ConversationRepositoryError, LLMError
     func switchProvider(conversationId: UUID, to newProvider: LLMProviderType) async throws {
-        // Verify provider is configured
+        // Verify provider is configured.
+        // In DEBUG builds a test-provider override bypasses this check.
+        #if DEBUG
+        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(newProvider) else {
+            throw LLMError.notConfigured
+        }
+        #else
         guard providerConfigManager.isProviderConfigured(newProvider) else {
             throw LLMError.notConfigured
         }
+        #endif
 
         // Update conversation provider
         try conversationRepository.updateConversationProvider(id: conversationId, provider: newProvider)
@@ -288,12 +313,30 @@ class AIConversationService: ObservableObject {
 
         // --- Legacy LLM streaming path (no coordinator injected) ---
         let providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
-        guard let provider = providerConfigManager.createProvider(type: providerType) else {
+        // In DEBUG builds use the test-injected provider when present;
+        // otherwise (and always in Release) resolve via the config manager.
+        let provider: LLMProvider
+        #if DEBUG
+        if let override = _testProviderOverride {
+            provider = override
+        } else {
+            guard let resolved = providerConfigManager.createProvider(type: providerType) else {
+                throw LLMError.notConfigured
+            }
+            guard resolved.isConfigured else {
+                throw LLMError.notConfigured
+            }
+            provider = resolved
+        }
+        #else
+        guard let resolved = providerConfigManager.createProvider(type: providerType) else {
             throw LLMError.notConfigured
         }
-        guard provider.isConfigured else {
+        guard resolved.isConfigured else {
             throw LLMError.notConfigured
         }
+        provider = resolved
+        #endif
 
         self.currentProvider = provider
 

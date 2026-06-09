@@ -68,12 +68,13 @@ type Conversation struct {
 }
 
 type Message struct {
-	ID             uuid.UUID
-	TenantID       TenantID
-	ConversationID uuid.UUID
-	Role           string
-	Content        string
-	CreatedAt      time.Time
+	ID              uuid.UUID
+	TenantID        TenantID
+	ConversationID  uuid.UUID
+	Role            string
+	Content         string
+	IdempotencyKey  *string
+	CreatedAt       time.Time
 }
 
 type Recommendation struct {

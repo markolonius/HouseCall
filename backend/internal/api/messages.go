@@ -11,7 +11,14 @@ import (
 )
 
 type createMessageRequest struct {
-	Content string `json:"content"`
+	Content        string `json:"content"`
+	// IdempotencyKey is the local message UUID sent by the iOS client on
+	// both the initial POST and every replay.  When present, the handler
+	// deduplicates: a second POST carrying the same key for the same
+	// tenant + conversation returns the original server message (same ID)
+	// with HTTP 200 instead of 201.  Absent means always insert (legacy /
+	// server-generated messages).
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 func (rt *Router) handleListMessages(w http.ResponseWriter, r *http.Request) {
@@ -73,16 +80,43 @@ func (rt *Router) handleCreateMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
 	}
-	msg, err := rt.store.CreateMessage(r.Context(), claims.TenantID, convID, "user", req.Content)
-	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
+
+	var msg store.Message
+	var deduped bool
+
+	if req.IdempotencyKey != "" {
+		// Idempotent path: use the provided key to deduplicate replays.
+		// Two concurrent POSTs with the same (tenant, conv, key) converge
+		// on a single row; no duplicate is ever written.
+		var idempErr error
+		msg, deduped, idempErr = rt.store.CreateMessageIdempotent(
+			r.Context(), claims.TenantID, convID, "user", req.Content, req.IdempotencyKey,
+		)
+		if idempErr != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// No key supplied — always insert (legacy / non-replay path).
+		var plainErr error
+		msg, plainErr = rt.store.CreateMessage(r.Context(), claims.TenantID, convID, "user", req.Content)
+		if plainErr != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
 	}
-	rt.audit.Write(r.Context(), claims.TenantID, claims.ActorType, &claims.ActorID,
-		"message.created", map[string]any{
-			"conversation_id": convID.String(),
-			"message_id":      msg.ID.String(),
-		})
+
+	// Write the audit event only for genuine inserts, never for dedupe hits.
+	// A deduped response means the event was already written for the original
+	// insert, so writing again would create a spurious second audit row for
+	// the same logical message.
+	if !deduped {
+		rt.audit.Write(r.Context(), claims.TenantID, claims.ActorType, &claims.ActorID,
+			"message.created", map[string]any{
+				"conversation_id": convID.String(),
+				"message_id":      msg.ID.String(),
+			})
+	}
 
 	// Task 4.2: trigger reactive drafting asynchronously after the message is
 	// persisted. DraftAsync spawns a goroutine — the patient's response is
@@ -90,7 +124,9 @@ func (rt *Router) handleCreateMessage(w http.ResponseWriter, r *http.Request) {
 	// patient here (tenant-scoped) so the drafter has the patient.State needed
 	// for the domain.Transition call without a second DB round-trip inside the
 	// goroutine startup path.
-	if rt.drafter != nil {
+	// For dedupe hits we skip drafting — the original message already triggered
+	// a draft (or the conversation has progressed past that point).
+	if rt.drafter != nil && !deduped {
 		patient, err := rt.store.GetPatient(r.Context(), claims.TenantID, claims.ActorID)
 		if err == nil {
 			rt.drafter.DraftAsync(claims.TenantID, conv, patient)
@@ -99,5 +135,12 @@ func (rt *Router) handleCreateMessage(w http.ResponseWriter, r *http.Request) {
 		// nothing that includes PHI — the message is already persisted.
 	}
 
-	writeJSON(w, http.StatusCreated, msg)
+	// HTTP 200 for a dedupe hit (same message returned), 201 for a fresh
+	// insert. Both carry the same Message DTO shape; the iOS client treats
+	// both as success and adopts the returned server ID.
+	status := http.StatusCreated
+	if deduped {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, msg)
 }

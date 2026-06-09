@@ -281,7 +281,12 @@ struct EncryptionManagerTests {
 /// OSStatus) and a counter tracks whether `saveMasterKey` was ever called.
 @MainActor
 final class ThrowingOnReadKeychainManager: KeychainManager {
-    private(set) var saveCallCount: Int = 0
+    // `saveMasterKey` overrides a nonisolated parent method, so it can't touch
+    // a @MainActor-isolated stored property. The counter is mutated only from
+    // that override and read only from the @MainActor test — single-threaded —
+    // so nonisolated(unsafe) is safe here and satisfies strict concurrency
+    // (Swift 6 / Xcode 16.x), which the local toolchain did not enforce.
+    nonisolated(unsafe) private(set) var saveCallCount: Int = 0
 
     override func retrieveMasterKey() throws -> Data? {
         // Simulate a non-not-found keychain error (e.g. data protection class

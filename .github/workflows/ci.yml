@@ -1,0 +1,92 @@
+name: CI
+
+# Build + test gate. Runs on every PR into main and on pushes to main.
+# Backend: build, vet, and the Go test suite against a real Postgres.
+# iOS: compile the app AND both test targets (build-for-testing) — the check
+# that would have caught the duplicate-enum breakage fixed in PR #58. The iOS
+# unit-test *run* is intentionally not gated yet: the suite has known
+# pre-existing failures tracked in beads (#65–#69). Add it once #66 (parallel
+# runner / isolation) and #65 land.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Go build + vet + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: housecall
+          POSTGRES_PASSWORD: housecall
+          POSTGRES_DB: housecall
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U housecall"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://housecall:housecall@localhost:5432/housecall?sslmode=disable
+      TEST_DATABASE_URL: postgres://housecall:housecall@localhost:5432/housecall_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Create test database
+        run: PGPASSWORD=housecall psql -h localhost -U housecall -d housecall -c 'CREATE DATABASE housecall_test;'
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Migrate test database
+        run: DATABASE_URL="$TEST_DATABASE_URL" go run ./cmd/server -cmd migrate
+
+      - name: Test
+        run: make test
+
+  ios:
+    name: iOS (build app + test targets)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses the runner's preinstalled Xcode. If the project later requires a
+      # specific Xcode the runner doesn't default to, pin it here with
+      # `sudo xcode-select -s /Applications/Xcode_<ver>.app` (check the
+      # available versions on the GitHub macOS runner image).
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      # build-for-testing compiles the app target AND HouseCallTests +
+      # HouseCallUITests — the check that catches a non-compiling app/tests.
+      # A generic simulator destination needs no specific device installed,
+      # and CODE_SIGNING_ALLOWED=NO skips device code signing.
+      - name: Build app + test targets
+        run: |
+          xcodebuild build-for-testing \
+            -scheme HouseCall \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO

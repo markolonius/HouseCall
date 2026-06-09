@@ -34,14 +34,28 @@ type PhysicianNotifier interface {
 // request is NOT propagated — drafting must complete even if the patient
 // disconnects. The goroutine uses a background context derived from the store.
 type Drafter struct {
-	client   ModelClient
-	store    *store.Store
-	notifier PhysicianNotifier
+	client     ModelClient
+	store      *store.Store
+	notifier   PhysicianNotifier
+	onComplete func() // optional; called (via defer) when the goroutine exits — tests use this for synchronisation
 }
 
 // NewDrafter constructs a Drafter. All three arguments are required.
 func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier) *Drafter {
 	return &Drafter{client: client, store: s, notifier: notifier}
+}
+
+// WithOnComplete returns a shallow copy of d with the onComplete hook set.
+// The hook is called (via defer) when the goroutine spawned by DraftAsync
+// exits — regardless of whether it succeeded, failed, or panicked. Its
+// primary use is test synchronisation: tests inject a sync.WaitGroup.Done so
+// they can block until the goroutine has fully exited before making assertions
+// or returning (preventing races with shared-DB cleanup between tests).
+// Production callers use NewDrafter, which leaves the hook nil (no-op).
+func (d *Drafter) WithOnComplete(fn func()) *Drafter {
+	cp := *d
+	cp.onComplete = fn
+	return &cp
 }
 
 // DraftAsync spawns a goroutine that assembles the conversation context,
@@ -52,6 +66,13 @@ func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier) 
 // HTTP handler returns.
 func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, patient store.Patient) {
 	go func() {
+		// Signal completion to any test-injected hook. The defer is
+		// registered first so it fires last — after the recover() defer
+		// has had a chance to handle any panic.
+		if d.onComplete != nil {
+			defer d.onComplete()
+		}
+
 		// Recover from any panic inside draft() (nil-deref, driver bug, etc.)
 		// so a single drafting failure cannot crash the server process.
 		// middleware.Recoverer only protects HTTP handler goroutines; fire-and-

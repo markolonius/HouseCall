@@ -34,8 +34,12 @@ compose-up:
 	docker compose up -d --build --wait
 	DATABASE_URL=$(DATABASE_URL) go run ./cmd/seed
 
+# -p 1 serializes package test binaries. The DB-backed packages (store, api,
+# agent, review) share one TEST_DATABASE_URL, and some reset state with
+# TRUNCATE; running their binaries concurrently lets one package wipe another's
+# in-flight fixtures (FK violations). -p 1 keeps them from racing the shared DB.
 test:
-	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test ./...
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test -p 1 ./...
 
 tidy:
 	go mod tidy

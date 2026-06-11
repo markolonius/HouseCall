@@ -407,9 +407,15 @@ struct IntegrationTests {
         let components = createTestComponents()
         let repository = components.repository
 
+        // Each task hops to the main actor before touching the repository: the
+        // repository's `viewContext` is bound to the main queue and Core Data
+        // contexts are not thread-safe, so concurrent tasks sharing one context
+        // must serialise their access on that context's actor. (Hammering the
+        // single context off-actor corrupts in-flight objects — it only passed
+        // by timing luck on newer OS versions.)
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<5 {
-                group.addTask {
+                group.addTask { @MainActor in
                     do {
                         _ = try repository.createUser(
                             email: "concurrent\(i)@example.com",

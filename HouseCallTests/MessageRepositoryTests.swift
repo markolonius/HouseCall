@@ -9,7 +9,14 @@ import Testing
 import CoreData
 @testable import HouseCall
 
+// `@MainActor`: these tests drive Core Data through `viewContext`, which is
+// bound to the main queue.  Isolating the suite to the main actor runs its
+// tests on a single executor — serialised with every other `@MainActor`
+// Core-Data suite — which is both correct for `viewContext` and avoids the
+// cross-suite races that otherwise corrupt relationship faults under Swift
+// Testing's default in-process parallelism.
 @Suite("MessageRepository Tests")
+@MainActor
 struct MessageRepositoryTests {
 
     // MARK: - Test Infrastructure
@@ -344,13 +351,17 @@ struct MessageRepositoryTests {
             content: "Test",
             streamingComplete: true
         )
+        // Capture the id up front: `message` is a managed object, and once it is
+        // deleted and the context saved (below) Core Data nils out its
+        // attributes, so reading `message.id` afterwards would force-unwrap nil.
+        let messageId = message.id!
 
-        var fetched = try messageRepo.fetchMessage(id: message.id!)
+        var fetched = try messageRepo.fetchMessage(id: messageId)
         #expect(fetched != nil)
 
-        try messageRepo.deleteMessage(id: message.id!)
+        try messageRepo.deleteMessage(id: messageId)
 
-        fetched = try messageRepo.fetchMessage(id: message.id!)
+        fetched = try messageRepo.fetchMessage(id: messageId)
         #expect(fetched == nil)
     }
 

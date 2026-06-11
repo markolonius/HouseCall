@@ -12,6 +12,7 @@ import CoreData
 @testable import HouseCall
 
 @Suite("API Key Security Tests")
+@MainActor
 struct APIKeySecurityTests {
 
     // MARK: - Keychain Storage Tests

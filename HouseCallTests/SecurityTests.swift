@@ -14,6 +14,7 @@ import CoreData
 /// Security tests for HIPAA compliance verification
 /// Tests encryption, data protection, and audit logging
 @Suite("Security & HIPAA Compliance Tests")
+@MainActor
 struct SecurityTests {
 
     // MARK: - Test Setup

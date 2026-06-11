@@ -31,6 +31,35 @@ import Testing
 /// across multiple tests that encrypt/decrypt with the same user ID.
 let testMasterKey: SymmetricKey = SymmetricKey(size: .bits256)
 
+/// A fully in-memory `KeychainManager` for tests.
+///
+/// The iOS Simulator keychain is unavailable to an unsigned test host
+/// (`CODE_SIGNING_ALLOWED=NO`, as CI builds it): every `SecItemAdd` /
+/// `SecItemCopyMatching` returns `errSecMissingEntitlement` (-34018).  This
+/// double overrides the three primitive keychain operations with a lock-guarded
+/// dictionary, so keychain-exercising tests run deterministically without any
+/// entitlement and in full isolation from each other and from the production
+/// `KeychainManager.shared` namespace.
+final class InMemoryKeychainManager: KeychainManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var store: [String: Data] = [:]
+
+    override func save(data: Data, for key: String, accessibility: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly) throws {
+        lock.lock(); defer { lock.unlock() }
+        store[key] = data
+    }
+
+    override func retrieve(for key: String) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return store[key]
+    }
+
+    override func delete(for key: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        store.removeValue(forKey: key)
+    }
+}
+
 /// Runs before any test in the suite and seeds the shared EncryptionManager.
 @Suite("Encryption Bootstrap")
 struct EncryptionBootstrap {

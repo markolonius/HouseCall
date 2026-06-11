@@ -105,11 +105,21 @@ struct PersistenceController {
 
         self.loadError = loadErrorOccurred
 
-        // Enable automatic merging of changes from parent context
-        container.viewContext.automaticallyMergesChangesFromParent = true
+        // Configure the view context on its own queue. `viewContext` is bound to
+        // the main queue; touching it from whatever thread first initializes the
+        // `shared` singleton (e.g. an off-main test-runner spawn under parallel
+        // `xcodebuild test`) is a Core Data concurrency violation and can SEGV
+        // before any test runs. `performAndWait` always runs the block on the
+        // context's queue and is reentrant, so it is a no-op hop when already on
+        // main and a safe hop to main otherwise — without changing app behavior.
+        let viewContext = container.viewContext
+        viewContext.performAndWait {
+            // Enable automatic merging of changes from parent context
+            viewContext.automaticallyMergesChangesFromParent = true
 
-        // Configure merge policy for conflict resolution
-        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+            // Configure merge policy for conflict resolution
+            viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        }
     }
 
     /// Saves the view context with proper error handling

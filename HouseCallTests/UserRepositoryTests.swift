@@ -10,6 +10,7 @@ import CoreData
 @testable import HouseCall
 
 @Suite("UserRepository Tests")
+@MainActor
 struct UserRepositoryTests {
 
     // MARK: - Test Infrastructure

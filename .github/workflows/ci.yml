@@ -3,10 +3,9 @@ name: CI
 # Build + test gate. Runs on every PR into main and on pushes to main.
 # Backend: build, vet, and the Go test suite against a real Postgres.
 # iOS: compile the app AND both test targets (build-for-testing) — the check
-# that would have caught the duplicate-enum breakage fixed in PR #58. The iOS
-# unit-test *run* is intentionally not gated yet: the suite has known
-# pre-existing failures tracked in beads (#65–#69). Add it once #66 (parallel
-# runner / isolation) and #65 land.
+# that would have caught the duplicate-enum breakage fixed in PR #58 — and then
+# run the HouseCallTests unit suite (serially; see the job for why). UI tests
+# are compiled but not run.
 
 on:
   pull_request:
@@ -67,7 +66,7 @@ jobs:
         run: make test
 
   ios:
-    name: iOS (build app + test targets)
+    name: iOS (build app + run unit tests)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -89,4 +88,26 @@ jobs:
             -scheme HouseCall \
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Run the HouseCallTests unit suite on a concrete simulator.
+      #
+      # `-parallel-testing-enabled NO` is required: Swift Testing runs `@Test`
+      # functions concurrently in-process by default, and a few suites
+      # (WebSocket handler registries, timing-sensitive hashing checks) are not
+      # yet safe under that in-process parallelism. The Core-Data-backed suites
+      # are `@MainActor` so they serialise correctly; full in-process parallel
+      # enablement is tracked separately. The unsigned test host has no Keychain
+      # entitlement — KeychainManager transparently uses an in-process store
+      # under the test host, so no signing is needed here either.
+      #
+      # UI tests (HouseCallUITests) are compiled above but not run in CI.
+      - name: Run unit tests
+        run: |
+          xcodebuild test-without-building \
+            -scheme HouseCall \
+            -configuration Debug \
+            -only-testing:HouseCallTests \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO

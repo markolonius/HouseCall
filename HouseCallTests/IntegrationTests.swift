@@ -11,6 +11,7 @@ import Combine
 @testable import HouseCall
 
 @Suite("Integration Tests")
+@MainActor
 struct IntegrationTests {
 
     // MARK: - Test Infrastructure
@@ -477,6 +478,7 @@ struct IntegrationTests {
 // MARK: - AI Chat Integration Tests
 
 @Suite("AI Chat Integration Tests")
+@MainActor
 struct AIChatIntegrationTests {
 
     // MARK: - Test Infrastructure

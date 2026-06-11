@@ -13,11 +13,21 @@ import CryptoKit
 @Suite("EncryptionManager Tests")
 struct EncryptionManagerTests {
 
+    /// Builds an `EncryptionManager` backed by a keychain partition unique to
+    /// this test.  Tests in this suite mutate master-key/cache state
+    /// (`clearCache`, key generation) and previously ran against the shared
+    /// singleton, clobbering the master key that other suites — running
+    /// concurrently under Swift Testing's in-process parallelism — depend on.
+    /// An isolated instance keeps those mutations contained.
+    private func makeIsolatedManager() -> EncryptionManager {
+        EncryptionManager._testMakeInstance(keychainManager: InMemoryKeychainManager())
+    }
+
     // MARK: - Encryption/Decryption Tests
 
     @Test("Encrypt and decrypt data successfully")
     func testEncryptDecryptRoundTrip() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let originalData = Data("Sensitive health information".utf8)
 
@@ -30,7 +40,7 @@ struct EncryptionManagerTests {
 
     @Test("Encrypt and decrypt string successfully")
     func testEncryptDecryptString() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let originalString = "Patient Name: John Doe"
 
@@ -42,7 +52,7 @@ struct EncryptionManagerTests {
 
     @Test("Encrypted data is different each time (unique nonce)")
     func testUniqueNoncePerEncryption() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let data = Data("Test data".utf8)
 
@@ -60,7 +70,7 @@ struct EncryptionManagerTests {
 
     @Test("Decryption with wrong user ID fails")
     func testDecryptWithWrongUserId() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let user1 = UUID()
         let user2 = UUID()
         let data = Data("Secret data".utf8)
@@ -75,7 +85,7 @@ struct EncryptionManagerTests {
 
     @Test("Tampering detection (authentication tag)")
     func testTamperingDetection() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let data = Data("Important data".utf8)
 
@@ -92,7 +102,7 @@ struct EncryptionManagerTests {
 
     @Test("Decryption with invalid data fails")
     func testDecryptInvalidData() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let invalidData = Data([0x00, 0x01, 0x02]) // Too short for AES-GCM
 
@@ -105,7 +115,7 @@ struct EncryptionManagerTests {
 
     @Test("Derived keys are consistent for same user")
     func testDerivedKeyConsistency() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
 
         let key1 = try manager.getDerivedKey(for: userId)
@@ -117,7 +127,7 @@ struct EncryptionManagerTests {
 
     @Test("Different users get different derived keys")
     func testDifferentUsersGetDifferentKeys() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let user1 = UUID()
         let user2 = UUID()
 
@@ -130,7 +140,7 @@ struct EncryptionManagerTests {
 
     @Test("Derived key uses HKDF with user ID as salt")
     func testDerivedKeyUsesHKDF() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
 
         // Get derived key (should use HKDF internally)
@@ -144,7 +154,7 @@ struct EncryptionManagerTests {
 
     @Test("Cache clearing removes derived keys")
     func testCacheClearingWorks() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let data = Data("Test".utf8)
 
@@ -161,7 +171,7 @@ struct EncryptionManagerTests {
 
     @Test("Clear cache for specific user")
     func testClearCacheForSpecificUser() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let user1 = UUID()
         let user2 = UUID()
 
@@ -185,7 +195,7 @@ struct EncryptionManagerTests {
     @Test("Master key persists across instances")
     func testMasterKeyPersistence() throws {
         // First instance creates master key
-        let manager1 = EncryptionManager.shared
+        let manager1 = makeIsolatedManager()
         let userId = UUID()
         let data = Data("Test data".utf8)
         let encrypted = try manager1.encrypt(data: data, for: userId)
@@ -200,7 +210,7 @@ struct EncryptionManagerTests {
 
     @Test("Encrypt empty data succeeds")
     func testEncryptEmptyData() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let emptyData = Data()
 
@@ -212,7 +222,7 @@ struct EncryptionManagerTests {
 
     @Test("Encrypt large data succeeds")
     func testEncryptLargeData() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let largeData = Data(repeating: 0x42, count: 1024 * 1024) // 1 MB
 
@@ -224,7 +234,7 @@ struct EncryptionManagerTests {
 
     @Test("Decrypt string with invalid UTF-8 fails")
     func testDecryptInvalidUTF8String() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let invalidUTF8 = Data([0xFF, 0xFE, 0xFD]) // Invalid UTF-8 sequence
 
@@ -239,7 +249,7 @@ struct EncryptionManagerTests {
 
     @Test("Encryption performance is acceptable")
     func testEncryptionPerformance() throws {
-        let manager = EncryptionManager.shared
+        let manager = makeIsolatedManager()
         let userId = UUID()
         let data = Data("Patient health record with sensitive information".utf8)
 

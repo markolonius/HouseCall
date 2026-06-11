@@ -10,6 +10,7 @@ import CoreData
 @testable import HouseCall
 
 @Suite("HIPAA Compliance Tests")
+@MainActor
 struct HIPAAComplianceTests {
 
     // MARK: - Encryption at Rest (§164.312(a)(2)(iv))

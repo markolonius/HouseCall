@@ -38,9 +38,14 @@ class CoreDataUserRepository: UserRepositoryProtocol {
         fullName: String,
         authMethod: AuthMethod
     ) throws -> User {
-        // Create user entity
+        // Create user entity. Use a local `userId` for the derivation/encryption
+        // calls below rather than reading `user.id` back: a force-unwrap of the
+        // managed object's attribute crashes the process if the object's state
+        // is ever disturbed (e.g. a caller misusing the context from another
+        // thread), whereas the local value is always valid.
+        let userId = UUID()
         let user = User(context: context)
-        user.id = UUID()
+        user.id = userId
         user.email = email.lowercased()
         user.createdAt = Date()
         user.authMethod = authMethod.rawValue
@@ -55,7 +60,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             let hashedPassword = try passwordHasher.hash(password: password)
             user.encryptedPasswordHash = try encryptionManager.encrypt(
                 data: hashedPassword,
-                for: user.id!
+                for: userId
             )
             user.encryptedPasscodeHash = nil
 
@@ -66,7 +71,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             let hashedPasscode = try passwordHasher.hash(password: passcode)
             user.encryptedPasscodeHash = try encryptionManager.encrypt(
                 data: hashedPasscode,
-                for: user.id!
+                for: userId
             )
             user.encryptedPasswordHash = nil
 
@@ -82,7 +87,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
         }
         user.encryptedFullName = try encryptionManager.encrypt(
             data: nameData,
-            for: user.id!
+            for: userId
         )
 
         // Save to Core Data
@@ -94,7 +99,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
         }
 
         // Log audit event
-        try? auditLogger.logAccountCreated(userId: user.id!, authMethod: authMethod.rawValue)
+        try? auditLogger.logAccountCreated(userId: userId, authMethod: authMethod.rawValue)
 
         return user
     }
@@ -169,6 +174,10 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             throw UserRepositoryError.invalidAuthMethod
         }
 
+        guard let userId = user.id else {
+            throw UserRepositoryError.invalidCredentials
+        }
+
         // Verify credentials based on auth method
         switch authMethod {
         case .password:
@@ -181,7 +190,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             do {
                 let hashedPassword = try encryptionManager.decrypt(
                     encryptedData: encryptedHash,
-                    for: user.id!
+                    for: userId
                 )
 
                 guard try passwordHasher.verify(password: credential, hash: hashedPassword) else {
@@ -215,7 +224,7 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             do {
                 let hashedPasscode = try encryptionManager.decrypt(
                     encryptedData: encryptedHash,
-                    for: user.id!
+                    for: userId
                 )
 
                 guard try passwordHasher.verify(password: credential, hash: hashedPasscode) else {

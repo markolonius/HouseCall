@@ -23,7 +23,7 @@ struct MessageRepositoryTests {
 
     /// Creates an in-memory Core Data stack for testing
     func createInMemoryContext() -> NSManagedObjectContext {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]

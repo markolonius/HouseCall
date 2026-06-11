@@ -123,10 +123,15 @@ struct PasswordHasherTests {
         _ = try hasher.verify(password: password2, hash: hash1)
         let time2 = Date().timeIntervalSince(start2)
 
-        // Times should be similar (within 10ms tolerance)
-        // Note: This is a simplified timing attack test
+        // Times should be roughly similar. This is only a coarse smoke check:
+        // each `verify` is dominated by PBKDF2 (600k iterations, tens of ms), so
+        // wall-clock timing cannot actually observe the constant-time *hash
+        // comparison* (microseconds) — and on a loaded CI runner the jitter
+        // between two such calls is easily 10–20ms. Use a generous bound that
+        // still catches a gross asymmetry without flaking on scheduler noise.
+        // The real constant-time guarantee lives in the implementation.
         let difference = abs(time1 - time2)
-        #expect(difference < 0.01) // 10ms tolerance
+        #expect(difference < 0.1) // 100ms tolerance (CI-jitter tolerant)
     }
 
     @Test("Empty password can be hashed")

@@ -23,7 +23,7 @@ struct IntegrationTests {
         authService: AuthenticationService,
         auditLogger: AuditLogger
     ) {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]
@@ -492,7 +492,7 @@ struct AIChatIntegrationTests {
         aiService: AIConversationService,
         userId: UUID
     ) {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]

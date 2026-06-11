@@ -38,7 +38,7 @@ private final class TestKeychain: KeychainManager {
 // MARK: - Helpers
 
 private func makeInMemoryContext() -> NSManagedObjectContext {
-    let container = NSPersistentContainer(name: "HouseCall")
+    let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
     let description = NSPersistentStoreDescription()
     description.type = NSInMemoryStoreType
     container.persistentStoreDescriptions = [description]

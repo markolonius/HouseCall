@@ -38,8 +38,31 @@ struct PersistenceController {
     let container: NSPersistentContainer
     private(set) var loadError: Error?
 
+    /// The compiled Core Data model, loaded exactly once and shared by every
+    /// `PersistenceController` instance.
+    ///
+    /// `NSPersistentContainer(name:)` loads a *fresh* `NSManagedObjectModel`
+    /// each time it is called, so `shared`, `preview`, and the in-memory stacks
+    /// that tests build would otherwise each hold a different model instance.
+    /// When several model instances claim the same `NSManagedObject` subclass
+    /// (`User`, `Conversation`, `Message`, `AuditLogEntry`), `+[Entity entity]`
+    /// can no longer disambiguate — a harmless warning on iOS 26 but a *fatal*
+    /// "failed to find a unique match for an NSEntityDescription" on iOS 18.
+    /// Sharing one model instance avoids that entirely.
+    ///
+    /// `NSManagedObjectModel` is immutable once loaded and only ever read, so
+    /// sharing the single instance across threads is safe.
+    nonisolated(unsafe) private static let managedObjectModel: NSManagedObjectModel = {
+        guard let url = Bundle.main.url(forResource: "HouseCall", withExtension: "momd"),
+              let model = NSManagedObjectModel(contentsOf: url) else {
+            // Fall back to the by-name load rather than crashing the app.
+            return NSPersistentContainer(name: "HouseCall").managedObjectModel
+        }
+        return model
+    }()
+
     init(inMemory: Bool = false) {
-        container = NSPersistentContainer(name: "HouseCall")
+        container = NSPersistentContainer(name: "HouseCall", managedObjectModel: Self.managedObjectModel)
 
         if inMemory {
             // In-memory store for testing/previews

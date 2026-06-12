@@ -38,8 +38,31 @@ struct PersistenceController {
     let container: NSPersistentContainer
     private(set) var loadError: Error?
 
+    /// The compiled Core Data model, loaded exactly once and shared by every
+    /// `PersistenceController` instance.
+    ///
+    /// `NSPersistentContainer(name:)` loads a *fresh* `NSManagedObjectModel`
+    /// each time it is called, so `shared`, `preview`, and the in-memory stacks
+    /// that tests build would otherwise each hold a different model instance.
+    /// When several model instances claim the same `NSManagedObject` subclass
+    /// (`User`, `Conversation`, `Message`, `AuditLogEntry`), `+[Entity entity]`
+    /// can no longer disambiguate — a harmless warning on iOS 26 but a *fatal*
+    /// "failed to find a unique match for an NSEntityDescription" on iOS 18.
+    /// Sharing one model instance avoids that entirely.
+    ///
+    /// `NSManagedObjectModel` is immutable once loaded and only ever read, so
+    /// sharing the single instance across threads is safe.
+    nonisolated(unsafe) private static let managedObjectModel: NSManagedObjectModel = {
+        guard let url = Bundle.main.url(forResource: "HouseCall", withExtension: "momd"),
+              let model = NSManagedObjectModel(contentsOf: url) else {
+            // Fall back to the by-name load rather than crashing the app.
+            return NSPersistentContainer(name: "HouseCall").managedObjectModel
+        }
+        return model
+    }()
+
     init(inMemory: Bool = false) {
-        container = NSPersistentContainer(name: "HouseCall")
+        container = NSPersistentContainer(name: "HouseCall", managedObjectModel: Self.managedObjectModel)
 
         if inMemory {
             // In-memory store for testing/previews
@@ -105,11 +128,21 @@ struct PersistenceController {
 
         self.loadError = loadErrorOccurred
 
-        // Enable automatic merging of changes from parent context
-        container.viewContext.automaticallyMergesChangesFromParent = true
+        // Configure the view context on its own queue. `viewContext` is bound to
+        // the main queue; touching it from whatever thread first initializes the
+        // `shared` singleton (e.g. an off-main test-runner spawn under parallel
+        // `xcodebuild test`) is a Core Data concurrency violation and can SEGV
+        // before any test runs. `performAndWait` always runs the block on the
+        // context's queue and is reentrant, so it is a no-op hop when already on
+        // main and a safe hop to main otherwise — without changing app behavior.
+        let viewContext = container.viewContext
+        viewContext.performAndWait {
+            // Enable automatic merging of changes from parent context
+            viewContext.automaticallyMergesChangesFromParent = true
 
-        // Configure merge policy for conflict resolution
-        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+            // Configure merge policy for conflict resolution
+            viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        }
     }
 
     /// Saves the view context with proper error handling

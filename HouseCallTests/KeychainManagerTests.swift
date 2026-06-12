@@ -16,11 +16,19 @@ struct KeychainManagerTests {
     // Use unique service name for testing to avoid conflicts
     let testKey = "test.keychain.item.\(UUID().uuidString)"
 
+    /// A `KeychainManager` with a service name unique to this test instance
+    /// (Swift Testing builds a fresh suite value per test).  These tests mutate
+    /// fixed accounts (`masterEncryptionKey`, `authMethod`, run `clearAll`) that
+    /// the shared singleton — and a dozen concurrently-running suites — rely on,
+    /// so they must not run against `KeychainManager.shared`.  The in-process
+    /// test store is keyed by service name, giving each test full isolation.
+    let manager = KeychainManager(serviceName: "test.keychain.suite.\(UUID().uuidString)")
+
     // MARK: - Basic Operations
 
     @Test("Save and retrieve data from keychain")
     func testSaveAndRetrieve() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let testData = Data("Test data".utf8)
 
         try manager.save(data: testData, for: testKey)
@@ -34,7 +42,7 @@ struct KeychainManagerTests {
 
     @Test("Retrieve non-existent item returns nil")
     func testRetrieveNonExistent() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let nonExistentKey = "non.existent.key.\(UUID().uuidString)"
 
         let retrieved = try manager.retrieve(for: nonExistentKey)
@@ -43,7 +51,7 @@ struct KeychainManagerTests {
 
     @Test("Delete item from keychain")
     func testDelete() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let testData = Data("Test data".utf8)
 
         try manager.save(data: testData, for: testKey)
@@ -55,7 +63,7 @@ struct KeychainManagerTests {
 
     @Test("Duplicate save overwrites existing item")
     func testDuplicateSaveOverwrites() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let data1 = Data("First data".utf8)
         let data2 = Data("Second data".utf8)
 
@@ -71,7 +79,7 @@ struct KeychainManagerTests {
 
     @Test("Delete non-existent item succeeds")
     func testDeleteNonExistent() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let nonExistentKey = "non.existent.key.\(UUID().uuidString)"
 
         // Should not throw
@@ -82,7 +90,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve master encryption key")
     func testMasterKey() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let masterKey = SymmetricKey(size: .bits256)
 
         try manager.saveMasterKey(masterKey)
@@ -99,7 +107,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve session token")
     func testSessionToken() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let sessionToken = UUID()
 
         try manager.saveSessionToken(sessionToken)
@@ -113,7 +121,7 @@ struct KeychainManagerTests {
 
     @Test("Delete session token")
     func testDeleteSessionToken() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let sessionToken = UUID()
 
         try manager.saveSessionToken(sessionToken)
@@ -127,7 +135,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve boolean true")
     func testSaveBoolTrue() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         try manager.saveBool(true, for: testKey)
         let retrieved = try manager.retrieveBool(for: testKey)
@@ -140,7 +148,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve boolean false")
     func testSaveBoolFalse() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         try manager.saveBool(false, for: testKey)
         let retrieved = try manager.retrieveBool(for: testKey)
@@ -153,7 +161,7 @@ struct KeychainManagerTests {
 
     @Test("Retrieve non-existent boolean returns nil")
     func testRetrieveBoolNonExistent() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let nonExistentKey = "non.existent.bool.\(UUID().uuidString)"
 
         let retrieved = try manager.retrieveBool(for: nonExistentKey)
@@ -164,7 +172,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve biometric enrollment status")
     func testBiometricEnrollment() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         try manager.saveBiometricEnrollment(true)
         let retrieved = try manager.retrieveBiometricEnrollment()
@@ -174,7 +182,7 @@ struct KeychainManagerTests {
 
     @Test("Retrieve biometric enrollment when not set returns false")
     func testBiometricEnrollmentDefault() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         // Delete if exists
         try? manager.delete(for: KeychainManager.Keys.biometricEnrollment)
@@ -187,7 +195,7 @@ struct KeychainManagerTests {
 
     @Test("Save and retrieve auth method")
     func testAuthMethod() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let authMethod = "password"
 
         try manager.saveAuthMethod(authMethod)
@@ -198,7 +206,7 @@ struct KeychainManagerTests {
 
     @Test("Retrieve non-existent auth method returns nil")
     func testAuthMethodNonExistent() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         // Delete if exists
         try? manager.delete(for: KeychainManager.Keys.authMethod)
@@ -211,7 +219,7 @@ struct KeychainManagerTests {
 
     @Test("Clear all removes keychain items")
     func testClearAll() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
 
         // Set up some data
         try manager.saveSessionToken(UUID())
@@ -235,7 +243,7 @@ struct KeychainManagerTests {
 
     @Test("Save empty data")
     func testSaveEmptyData() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let emptyData = Data()
 
         try manager.save(data: emptyData, for: testKey)
@@ -249,7 +257,7 @@ struct KeychainManagerTests {
 
     @Test("Save large data")
     func testSaveLargeData() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let largeData = Data(repeating: 0x42, count: 10_000) // 10 KB
 
         try manager.save(data: largeData, for: testKey)
@@ -265,7 +273,7 @@ struct KeychainManagerTests {
 
     @Test("Keychain items use correct accessibility")
     func testKeychainAccessibility() throws {
-        let manager = KeychainManager.shared
+        let manager = self.manager
         let testData = Data("Secure data".utf8)
 
         // Default accessibility should be kSecAttrAccessibleWhenUnlockedThisDeviceOnly
@@ -284,7 +292,7 @@ struct KeychainManagerTests {
 
     @Test("Concurrent saves don't corrupt data")
     func testConcurrentSaves() async throws {
-        let manager = await KeychainManager.shared
+        let manager = self.manager
         let iterations = 10
 
         await withTaskGroup(of: Void.self) { group in

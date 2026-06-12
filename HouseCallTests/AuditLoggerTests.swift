@@ -9,14 +9,21 @@ import Testing
 import CoreData
 @testable import HouseCall
 
+// `@MainActor`: these tests drive Core Data through `viewContext` (main-queue
+// bound) and assert on the shared `AuditLogDeviceId` (UserDefaults).  Isolating
+// the suite to the main actor serialises it with the other `@MainActor`
+// Core-Data suites, avoiding the cross-suite races that otherwise corrupt
+// relationship faults / the device-id read-back under Swift Testing's default
+// in-process parallelism.
 @Suite("AuditLogger Tests")
+@MainActor
 struct AuditLoggerTests {
 
     // MARK: - Test Infrastructure
 
     /// Creates an in-memory Core Data stack for testing
     func createInMemoryContext() -> NSManagedObjectContext {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]

@@ -22,14 +22,69 @@
 
 import Foundation
 import CryptoKit
+import CoreData
 import Testing
 @testable import HouseCall
+
+/// The single, process-wide `NSManagedObjectModel` shared by every in-memory
+/// test stack.
+///
+/// Building a stack with `NSPersistentContainer(name: "HouseCall")` auto-loads a
+/// *fresh* copy of the compiled model each time. With many tests, several
+/// `NSEntityDescription`s end up claiming the same `NSManagedObject` subclass
+/// (`Conversation`, `Message`, `AuditLogEntry`, `User`). On iOS 18 that is fatal
+/// — `+[Conversation entity]` fails with "Failed to find a unique match for an
+/// NSEntityDescription to a managed object subclass", entity creation/saves
+/// fail, and dependent force-unwraps crash. (On iOS 26 it is only a warning,
+/// which is why this was invisible locally.)
+///
+/// Reusing the model the host app already loaded into `PersistenceController`
+/// (the unit tests run inside the app as their test host) means exactly one
+/// model instance claims the subclasses, and it is the *same* model the app's
+/// own contexts use — so there is no model/store incompatibility (134020)
+/// between test and app contexts. Concurrent coordinator attachment to a shared
+/// model is unsafe, so the Core-Data-backed suites that use it are `@MainActor`.
+enum TestCoreDataModel {
+    // `NSManagedObjectModel` is not `Sendable`, but it is immutable once loaded
+    // and only ever read, so sharing one instance across threads is safe.
+    nonisolated(unsafe) static let shared: NSManagedObjectModel =
+        PersistenceController.shared.container.managedObjectModel
+}
 
 /// Module-level master key used by all tests in this process.
 ///
 /// Generating it once (rather than per-test) keeps derived-key caches valid
 /// across multiple tests that encrypt/decrypt with the same user ID.
 let testMasterKey: SymmetricKey = SymmetricKey(size: .bits256)
+
+/// A fully in-memory `KeychainManager` for tests.
+///
+/// The iOS Simulator keychain is unavailable to an unsigned test host
+/// (`CODE_SIGNING_ALLOWED=NO`, as CI builds it): every `SecItemAdd` /
+/// `SecItemCopyMatching` returns `errSecMissingEntitlement` (-34018).  This
+/// double overrides the three primitive keychain operations with a lock-guarded
+/// dictionary, so keychain-exercising tests run deterministically without any
+/// entitlement and in full isolation from each other and from the production
+/// `KeychainManager.shared` namespace.
+final class InMemoryKeychainManager: KeychainManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var store: [String: Data] = [:]
+
+    override func save(data: Data, for key: String, accessibility: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly) throws {
+        lock.lock(); defer { lock.unlock() }
+        store[key] = data
+    }
+
+    override func retrieve(for key: String) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return store[key]
+    }
+
+    override func delete(for key: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        store.removeValue(forKey: key)
+    }
+}
 
 /// Runs before any test in the suite and seeds the shared EncryptionManager.
 @Suite("Encryption Bootstrap")

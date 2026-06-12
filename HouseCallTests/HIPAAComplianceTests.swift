@@ -10,6 +10,7 @@ import CoreData
 @testable import HouseCall
 
 @Suite("HIPAA Compliance Tests")
+@MainActor
 struct HIPAAComplianceTests {
 
     // MARK: - Encryption at Rest (§164.312(a)(2)(iv))
@@ -86,7 +87,7 @@ struct HIPAAComplianceTests {
 
     @Test("Audit log entries include required fields")
     func testAuditLogEntryFields() throws {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]
@@ -118,7 +119,7 @@ struct HIPAAComplianceTests {
 
     @Test("Audit log events are encrypted")
     func testAuditLogEncryption() throws {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]
@@ -171,7 +172,7 @@ struct HIPAAComplianceTests {
 
     @Test("Passwords never stored in plaintext")
     func testPasswordsNotPlaintext() throws {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]

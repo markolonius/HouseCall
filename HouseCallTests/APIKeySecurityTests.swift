@@ -12,6 +12,7 @@ import CoreData
 @testable import HouseCall
 
 @Suite("API Key Security Tests")
+@MainActor
 struct APIKeySecurityTests {
 
     // MARK: - Keychain Storage Tests
@@ -271,7 +272,7 @@ struct APIKeySecurityTests {
 
     @Test("API keys not in audit logs")
     func apiKeysNotInAuditLogs() throws {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]
@@ -399,7 +400,7 @@ struct APIKeySecurityTests {
 
     @Test("No API keys in Core Data")
     func noAPIKeysInCoreData() {
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]

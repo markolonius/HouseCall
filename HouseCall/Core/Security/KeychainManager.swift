@@ -41,7 +41,12 @@ enum KeychainError: LocalizedError {
 class KeychainManager {
     static let shared = KeychainManager()
 
-    private let serviceName = "com.housecall.keychain"
+    /// Keychain `kSecAttrService` namespace.  Defaults to the production value;
+    /// tests inject a unique service name so that destructive operations
+    /// (`deleteMasterKey`, `clearAll`) run against an isolated keychain
+    /// partition and never clobber the master key that other, concurrently
+    /// executing test suites depend on.  Production code keeps the default.
+    private let serviceName: String
 
     // Keychain item identifiers
     struct Keys {
@@ -54,7 +59,33 @@ class KeychainManager {
         static let coreAPIJWT = "com.housecall.core-api-jwt"
     }
 
-    init() {}
+    init(serviceName: String = "com.housecall.keychain") {
+        self.serviceName = serviceName
+    }
+
+    // MARK: - Test-host in-memory backing
+
+    /// True only when the process is hosted by an XCTest / Swift Testing runner.
+    /// `XCTestConfigurationFilePath` is injected into the environment by the test
+    /// host and is never present in the shipping app, so production code always
+    /// takes the real-Keychain path below.
+    ///
+    /// Why this exists: an unsigned test host (the configuration CI builds with
+    /// `CODE_SIGNING_ALLOWED=NO`) has no Keychain entitlement, so every
+    /// `SecItem*` call returns `errSecMissingEntitlement` (-34018).  That would
+    /// make every security-dependent test fail for an environmental reason
+    /// unrelated to the code under test.  Under the test host only, the three
+    /// primitive operations below are backed by an in-process store instead.
+    /// The store is keyed by `serviceName`, so instances created with a distinct
+    /// service name (as the tests do) remain isolated from one another.
+    private static let isTestHost =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+
+    private static let memLock = NSLock()
+    private static var memStore: [String: Data] = [:]
+
+    private func memKey(_ key: String) -> String { "\(serviceName)\u{0}\(key)" }
 
     // MARK: - Generic Keychain Operations
 
@@ -64,6 +95,12 @@ class KeychainManager {
     ///   - key: Unique identifier for the item
     ///   - accessibility: Keychain accessibility level
     func save(data: Data, for key: String, accessibility: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly) throws {
+        if Self.isTestHost {
+            Self.memLock.lock(); defer { Self.memLock.unlock() }
+            Self.memStore[memKey(key)] = data
+            return
+        }
+
         // Delete existing item if present
         try? delete(for: key)
 
@@ -87,6 +124,11 @@ class KeychainManager {
     /// - Parameter key: Unique identifier for the item
     /// - Returns: Stored data, or nil if not found
     func retrieve(for key: String) throws -> Data? {
+        if Self.isTestHost {
+            Self.memLock.lock(); defer { Self.memLock.unlock() }
+            return Self.memStore[memKey(key)]
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -112,6 +154,12 @@ class KeychainManager {
     /// Deletes an item from keychain
     /// - Parameter key: Unique identifier for the item
     func delete(for key: String) throws {
+        if Self.isTestHost {
+            Self.memLock.lock(); defer { Self.memLock.unlock() }
+            Self.memStore.removeValue(forKey: memKey(key))
+            return
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,

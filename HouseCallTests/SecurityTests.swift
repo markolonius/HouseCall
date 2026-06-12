@@ -14,6 +14,7 @@ import CoreData
 /// Security tests for HIPAA compliance verification
 /// Tests encryption, data protection, and audit logging
 @Suite("Security & HIPAA Compliance Tests")
+@MainActor
 struct SecurityTests {
 
     // MARK: - Test Setup
@@ -26,7 +27,7 @@ struct SecurityTests {
 
     init() {
         // Create in-memory Core Data stack for testing
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
         description.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [description]
@@ -543,7 +544,7 @@ struct SecurityTests {
     func sessionTimeoutInvalidates() async throws {
         // Build an isolated AuthenticationService with its own in-memory
         // Core Data stack so we do not pollute shared/production state.
-        let container = NSPersistentContainer(name: "HouseCall")
+        let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let storeDesc = NSPersistentStoreDescription()
         storeDesc.type = NSInMemoryStoreType
         container.persistentStoreDescriptions = [storeDesc]

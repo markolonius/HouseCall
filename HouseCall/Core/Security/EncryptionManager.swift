@@ -58,6 +58,17 @@ class EncryptionManager {
     static let shared = EncryptionManager()
 
     private let keychainManager: KeychainManager
+
+    /// Serialises access to the in-memory key caches below.  `EncryptionManager`
+    /// is a process-wide singleton that the app drives from concurrent contexts
+    /// (streaming AI responses, background cloud sync) and that the test suite
+    /// drives from many tests running in parallel.  `masterKey` and
+    /// `derivedKeyCache` were previously mutated without synchronisation, which
+    /// is a data race: concurrent `Dictionary` mutation can corrupt the heap and
+    /// crash the process.  All reads/writes of the two caches go through this
+    /// lock.  The lock is never held across Keychain I/O or HKDF derivation, so
+    /// it cannot deadlock with itself.
+    private let cacheLock = NSLock()
     private var masterKey: SymmetricKey?
     private var derivedKeyCache: [UUID: SymmetricKey] = [:]
 
@@ -80,8 +91,11 @@ class EncryptionManager {
     ///    `clearCache()` call or cold launch.
     func getMasterKey() throws -> SymmetricKey {
         // Return cached key if available
-        if let masterKey = masterKey {
-            return masterKey
+        cacheLock.lock()
+        let cached = masterKey
+        cacheLock.unlock()
+        if let cached {
+            return cached
         }
 
         // Try to retrieve existing key from keychain.
@@ -92,14 +106,18 @@ class EncryptionManager {
         // permanent loss of all previously-encrypted PHI.
         if let keyData = try keychainManager.retrieveMasterKey() {
             let key = SymmetricKey(data: keyData)
+            cacheLock.lock()
             masterKey = key
+            cacheLock.unlock()
             return key
         }
 
         // Generate new master key and persist it — propagate any Keychain error.
         let newKey = SymmetricKey(size: .bits256)
         try keychainManager.saveMasterKey(newKey)
+        cacheLock.lock()
         masterKey = newKey
+        cacheLock.unlock()
 
         return newKey
     }
@@ -111,10 +129,18 @@ class EncryptionManager {
     /// - Returns: User-specific symmetric key
     func getDerivedKey(for userId: UUID) throws -> SymmetricKey {
         // Return cached key if available
-        if let cachedKey = derivedKeyCache[userId] {
-            return cachedKey
+        cacheLock.lock()
+        let cached = derivedKeyCache[userId]
+        cacheLock.unlock()
+        if let cached {
+            return cached
         }
 
+        // Derive outside the lock — `getMasterKey()` takes the lock itself, so
+        // holding it here would deadlock, and HKDF derivation is pure work that
+        // needs no synchronisation.  A concurrent caller racing on the same
+        // userId derives the identical key (same master + salt), so the only
+        // cost of the race is a redundant derivation, never a wrong result.
         let masterKey = try getMasterKey()
 
         // Use user ID as salt for HKDF
@@ -126,10 +152,12 @@ class EncryptionManager {
             salt: salt,
             info: Data("HouseCall User Key".utf8),
             outputByteCount: 32
-        ) 
+        )
 
         // Cache the derived key
+        cacheLock.lock()
         derivedKeyCache[userId] = derivedKey
+        cacheLock.unlock()
 
         return derivedKey
     }
@@ -205,13 +233,17 @@ class EncryptionManager {
 
     /// Clears all cached derived keys (call on logout)
     func clearCache() {
+        cacheLock.lock()
         derivedKeyCache.removeAll()
         masterKey = nil
+        cacheLock.unlock()
     }
 
     /// Clears cached key for a specific user
     func clearCache(for userId: UUID) {
+        cacheLock.lock()
         derivedKeyCache.removeValue(forKey: userId)
+        cacheLock.unlock()
     }
 
     // MARK: - Test Support
@@ -230,8 +262,10 @@ class EncryptionManager {
     ///   generated once per test class so all operations within the test share
     ///   the same key material.
     func _testInjectMasterKey(_ key: SymmetricKey) {
+        cacheLock.lock()
         masterKey = key
         derivedKeyCache.removeAll()
+        cacheLock.unlock()
     }
 
     /// Creates a fresh `EncryptionManager` backed by the supplied

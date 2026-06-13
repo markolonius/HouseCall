@@ -198,6 +198,19 @@ class CustomProvider: LLMProvider {
                 }
             }
 
+            // Parse the (OpenAI-compatible) SSE body. The completion-handler
+            // dataTask delivers the whole response at once, so we feed it through
+            // the SSE parser here and accumulate the assistant content. Without
+            // this the reply was silently dropped and the bubble rendered empty.
+            if let data = data {
+                self.sseParser.parse(data: data) { event in
+                    if let content = SSEParser.extractOpenAIContent(from: event) {
+                        fullResponse += content
+                        onChunk(content)
+                    }
+                }
+            }
+
             onComplete(.success(fullResponse))
         }
 

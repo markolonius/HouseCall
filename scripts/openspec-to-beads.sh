@@ -33,9 +33,12 @@ command -v jq >/dev/null 2>&1 || { echo "jq not found; run scripts/dev-bootstrap
 marker() { printf '[%s#%s]' "$CHANGE_ID" "$1"; }   # marker "2.1" -> [change#2.1]
 
 # Return the bead id whose title starts with the given marker, or empty.
+# Use --all so CLOSED beads are matched too; otherwise re-seeding a change
+# whose earlier-phase tasks are already done would recreate them as new
+# duplicates and tangle the dependency chain.
 bead_id_for() {
   local m="$1"
-  bd list --json 2>/dev/null \
+  bd list --all --json 2>/dev/null \
     | jq -r --arg m "$m" '.[] | select(.title | startswith($m)) | .id' \
     | head -n1
 }

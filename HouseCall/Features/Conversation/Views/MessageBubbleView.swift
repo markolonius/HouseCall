@@ -14,9 +14,22 @@ struct MessageBubbleView: View {
     let message: Message
     let messageRepository: MessageRepositoryProtocol
     let isStreaming: Bool
+    /// Live text passed in from the ViewModel while this message is being streamed.
+    /// When non-nil and non-empty this is shown instead of the (not-yet-persisted)
+    /// decrypted encrypted content, so tokens appear in real time.
+    var streamingText: String? = nil
 
     @State private var decryptedContent: String = ""
     @State private var showTimestamp: Bool = false
+
+    /// Returns the text to display: live streamingText during streaming, otherwise
+    /// the persisted-and-decrypted content.
+    private var displayContent: String {
+        if let live = streamingText, !live.isEmpty {
+            return live
+        }
+        return decryptedContent
+    }
 
     var body: some View {
         // System messages are displayed differently (centered)
@@ -32,7 +45,7 @@ struct MessageBubbleView: View {
     private var systemMessageView: some View {
         HStack {
             Spacer()
-            Text(decryptedContent)
+            Text(displayContent)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 12)
@@ -56,7 +69,7 @@ struct MessageBubbleView: View {
 
             VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 4) {
                 // Message bubble
-                Text(decryptedContent)
+                Text(displayContent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(bubbleColor)

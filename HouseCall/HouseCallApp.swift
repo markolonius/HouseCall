@@ -97,7 +97,7 @@ struct MainAppView: View {
     private var conversationsTab: some View {
         Group {
             if let user = authService.getCurrentUser(), let userId = user.id {
-                ConversationListView(
+                AutoLaunchChatView(
                     userId: userId,
                     conversationRepository: CoreDataConversationRepository(context: viewContext),
                     messageRepository: CoreDataMessageRepository(context: viewContext)
@@ -180,6 +180,113 @@ struct MainAppView: View {
                 }
             }
             .navigationTitle("Profile")
+        }
+    }
+}
+
+// MARK: - Auto-Launch Chat View
+
+/// Resolves the patient's most-recent conversation (or creates one if none
+/// exists) and presents `ChatView` directly — no list, no "New Chat" step.
+private struct AutoLaunchChatView: View {
+
+    let userId: UUID
+    let conversationRepository: ConversationRepositoryProtocol
+    let messageRepository: MessageRepositoryProtocol
+
+    private enum LaunchState {
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    @State private var launchState: LaunchState = .loading
+    /// Incremented on each retry to re-trigger the `.task(id:)` modifier.
+    @State private var loadAttempt: Int = 0
+    /// Retained across re-renders once resolved.
+    @State private var chatViewModel: ConversationViewModel?
+
+    var body: some View {
+        NavigationStack {
+            contentView
+        }
+        .task(id: loadAttempt) {
+            await resolveConversation()
+        }
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        switch launchState {
+        case .loading:
+            ProgressView("Opening conversation…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .ready:
+            if let vm = chatViewModel {
+                ChatView(viewModel: vm)
+            }
+
+        case .failed(let message):
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+
+                Text(message)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 32)
+
+                Button("Try Again") {
+                    launchState = .loading
+                    loadAttempt += 1
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Conversation Resolution
+
+    /// Fetches the most-recently-updated conversation for this user, or creates
+    /// a new one with the default provider if none exist.
+    /// No PHI is written to logs — only identifiers and event names.
+    private func resolveConversation() async {
+        do {
+            // fetchConversations returns results sorted by updatedAt descending,
+            // so .first is the most-recently-updated conversation.
+            let conversations = try conversationRepository.fetchConversations(userId: userId)
+            let conversation: Conversation
+            if let existing = conversations.first {
+                conversation = existing
+            } else {
+                conversation = try conversationRepository.createConversation(
+                    userId: userId,
+                    provider: .openai,
+                    title: nil
+                )
+            }
+            guard let conversationId = conversation.id else {
+                launchState = .failed("Unable to open your conversation. Please try again.")
+                return
+            }
+            chatViewModel = ConversationViewModel(
+                userId: userId,
+                conversationId: conversationId,
+                conversationRepository: conversationRepository,
+                messageRepository: messageRepository
+            )
+            launchState = .ready
+        } catch {
+            // Log the event without PHI.
+            try? AuditLogger.shared.log(
+                event: .aiInteractionFailed,
+                userId: userId,
+                details: AuditEventDetails(errorMessage: "auto-launch conversation resolve failed")
+            )
+            launchState = .failed("Unable to open your conversation. Please try again.")
         }
     }
 }

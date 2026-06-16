@@ -87,27 +87,17 @@ struct MainAppView: View {
     @Environment(\.managedObjectContext) private var viewContext
 
     var body: some View {
-        TabView {
-            // Conversations Tab
-            conversationsTab
-                .tabItem {
-                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                }
-
-            // Profile Tab
-            profileTab
-                .tabItem {
-                    Label("Profile", systemImage: "person.circle")
-                }
-        }
+        // Tab bar removed; chat is the single root authenticated view.
+        // Profile is accessible via the toolbar button in ChatView (ProfileView sheet).
+        chatRootView
     }
 
-    // MARK: - Tabs
+    // MARK: - Chat Root
 
-    private var conversationsTab: some View {
+    private var chatRootView: some View {
         Group {
             if let user = authService.getCurrentUser(), let userId = user.id {
-                ConversationListView(
+                AutoLaunchChatView(
                     userId: userId,
                     conversationRepository: CoreDataConversationRepository(context: viewContext),
                     messageRepository: CoreDataMessageRepository(context: viewContext)
@@ -119,77 +109,111 @@ struct MainAppView: View {
         }
     }
 
-    private var profileTab: some View {
+}
+
+// MARK: - Auto-Launch Chat View
+
+/// Resolves the patient's most-recent conversation (or creates one if none
+/// exists) and presents `ChatView` directly — no list, no "New Chat" step.
+private struct AutoLaunchChatView: View {
+
+    let userId: UUID
+    let conversationRepository: ConversationRepositoryProtocol
+    let messageRepository: MessageRepositoryProtocol
+
+    private enum LaunchState {
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    @State private var launchState: LaunchState = .loading
+    /// Incremented on each retry to re-trigger the `.task(id:)` modifier.
+    @State private var loadAttempt: Int = 0
+    /// Retained across re-renders once resolved.
+    @State private var chatViewModel: ConversationViewModel?
+
+    var body: some View {
         NavigationStack {
-            List {
-                // User Info Section
-                Section {
-                    if let user = authService.getCurrentUser() {
-                        HStack(spacing: 16) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.system(size: 60))
-                                .foregroundColor(.blue)
+            contentView
+        }
+        .task(id: loadAttempt) {
+            await resolveConversation()
+        }
+    }
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                if let fullName = try? authService.getCurrentUserFullName() {
-                                    Text(fullName)
-                                        .font(.title3)
-                                        .fontWeight(.semibold)
-                                }
+    @ViewBuilder
+    private var contentView: some View {
+        switch launchState {
+        case .loading:
+            ProgressView("Opening conversation…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                                Text(user.email ?? "")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-
-                // Settings Section
-                Section(header: Text("Settings")) {
-                    NavigationLink(destination: LLMProviderSettingsView()) {
-                        Label("AI Provider Settings", systemImage: "cpu")
-                    }
-                }
-
-                // App Info Section
-                Section(header: Text("About")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("🏥 HouseCall")
-                            .font(.headline)
-                            .fontWeight(.bold)
-
-                        Text("AI Healthcare Assistant")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
-                        Text("HIPAA-Compliant • Encrypted • Secure")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                            .padding(.top, 4)
-                    }
-                    .padding(.vertical, 8)
-                }
-
-                // Logout Section
-                Section {
-                    Button(action: {
-                        Task {
-                            try? await authService.logout()
-                        }
-                    }) {
-                        HStack {
-                            Spacer()
-                            Text("Logout")
-                                .fontWeight(.semibold)
-                                .foregroundColor(.red)
-                            Spacer()
-                        }
-                    }
-                }
+        case .ready:
+            if let vm = chatViewModel {
+                ChatView(viewModel: vm)
             }
-            .navigationTitle("Profile")
+
+        case .failed(let message):
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+
+                Text(message)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 32)
+
+                Button("Try Again") {
+                    launchState = .loading
+                    loadAttempt += 1
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Conversation Resolution
+
+    /// Fetches the most-recently-updated conversation for this user, or creates
+    /// a new one with the default provider if none exist.
+    /// No PHI is written to logs — only identifiers and event names.
+    private func resolveConversation() async {
+        do {
+            // fetchConversations returns results sorted by updatedAt descending,
+            // so .first is the most-recently-updated conversation.
+            let conversations = try conversationRepository.fetchConversations(userId: userId)
+            let conversation: Conversation
+            if let existing = conversations.first {
+                conversation = existing
+            } else {
+                conversation = try conversationRepository.createConversation(
+                    userId: userId,
+                    provider: .openai,
+                    title: nil
+                )
+            }
+            guard let conversationId = conversation.id else {
+                launchState = .failed("Unable to open your conversation. Please try again.")
+                return
+            }
+            chatViewModel = ConversationViewModel(
+                userId: userId,
+                conversationId: conversationId,
+                conversationRepository: conversationRepository,
+                messageRepository: messageRepository
+            )
+            launchState = .ready
+        } catch {
+            // Log the event without PHI.
+            try? AuditLogger.shared.log(
+                event: .aiInteractionFailed,
+                userId: userId,
+                details: AuditEventDetails(errorMessage: "auto-launch conversation resolve failed")
+            )
+            launchState = .failed("Unable to open your conversation. Please try again.")
         }
     }
 }

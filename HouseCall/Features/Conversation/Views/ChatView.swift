@@ -17,6 +17,7 @@ struct ChatView: View {
     @State private var showError: Bool = false
     @State private var showProviderMenu: Bool = false
     @State private var showSettings: Bool = false
+    @State private var showProfile: Bool = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -108,9 +109,21 @@ struct ChatView: View {
                     providerBadge
                 }
             }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    showProfile = true
+                }) {
+                    Image(systemName: "person.circle")
+                        .accessibilityLabel("Profile")
+                }
+            }
         }
         .sheet(isPresented: $showSettings) {
             LLMProviderSettingsView()
+        }
+        .sheet(isPresented: $showProfile) {
+            ProfileView()
         }
         .onAppear {
             viewModel.loadMessages()

@@ -206,6 +206,14 @@ struct MarkdownText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // VoiceOver fix: without this, each block (heading, paragraph, list
+        // item, code block) is a separate accessibility element and VoiceOver
+        // reads them one by one, breaking the flow of the message.
+        // .ignore suppresses child elements; the single label below provides
+        // a clean plain-text reading of the full assistant message with all
+        // Markdown markers stripped (no "pound pound", "star star", backticks).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.plainText(from: blocks))
     }
 
     // MARK: Block Rendering
@@ -286,6 +294,65 @@ struct MarkdownText: View {
         case 3:  return .headline
         default: return .subheadline
         }
+    }
+
+    // MARK: - Accessibility
+
+    /// Converts already-parsed Markdown blocks into a single plain-text
+    /// string for VoiceOver. All block-level markers (#, -, *, 1., fences)
+    /// and inline markers (**bold**, *italic*, `code`, [link](url)) are
+    /// stripped so the screen reader speaks clean prose — not markup symbols.
+    ///
+    /// PHI note: the returned string contains message content. That is
+    /// correct — VoiceOver is on-device display, equivalent to reading the
+    /// visible text. Nothing here is logged, printed, or sent to any service.
+    private static func plainText(from blocks: [MarkdownBlock]) -> String {
+        blocks
+            .compactMap { block -> String? in
+                switch block {
+                case .heading(_, let text):
+                    return stripInlineMarkdown(text)
+                case .paragraph(let text):
+                    return stripInlineMarkdown(text)
+                case .unorderedItem(_, let text):
+                    return stripInlineMarkdown(text)
+                case .orderedItem(_, _, let text):
+                    return stripInlineMarkdown(text)
+                case .codeBlock(_, let lines):
+                    // Code content is already literal text — no inline markers.
+                    let joined = lines.joined(separator: " ")
+                        .trimmingCharacters(in: .whitespaces)
+                    return joined.isEmpty ? nil : joined
+                }
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: ". ")
+    }
+
+    /// Strips common inline Markdown markers from `text`.
+    /// Order matters: remove `**`/`__` (bold) before `*`/`_` (italic) so that
+    /// bold markers do not leave stray single-character residue.
+    ///   **bold**    → bold
+    ///   *italic*    → italic
+    ///   `code`      → code
+    ///   [text](url) → text
+    private static func stripInlineMarkdown(_ text: String) -> String {
+        var s = text
+        // Bold markers first (two-char sequences).
+        s = s.replacingOccurrences(of: "**", with: "")
+        s = s.replacingOccurrences(of: "__", with: "")
+        // Italic markers (remaining single * / _ after bold pass).
+        s = s.replacingOccurrences(of: "*", with: "")
+        s = s.replacingOccurrences(of: "_", with: "")
+        // Inline code backticks.
+        s = s.replacingOccurrences(of: "`", with: "")
+        // Links: [link text](https://example.com) → link text.
+        if let regex = try? NSRegularExpression(pattern: #"\[([^\]]*)\]\([^)]*\)"#) {
+            let range = NSRange(s.startIndex..., in: s)
+            s = regex.stringByReplacingMatches(in: s, range: range,
+                                               withTemplate: "$1")
+        }
+        return s.trimmingCharacters(in: .whitespaces)
     }
 }
 

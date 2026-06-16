@@ -14,7 +14,7 @@
 
 ## 3. Fix streaming
 
-- [ ] 3.1 Trace the SSE → `streamingText`/`streamingMessageId` publish path in `AIConversationService` and confirm chunks are published on the main actor as they arrive.
+- [x] 3.1 Trace the SSE → `streamingText`/`streamingMessageId` publish path in `AIConversationService` and confirm chunks are published on the main actor as they arrive.
 - [ ] 3.2 Ensure `ChatView` updates the bubble incrementally (streaming bubble or in-place message update) so tokens appear in real time.
 - [ ] 3.3 Verify auto-scroll keeps the latest streamed text visible and the input stays disabled until the stream completes.
 

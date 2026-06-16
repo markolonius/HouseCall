@@ -21,6 +21,8 @@ struct MessageBubbleView: View {
 
     @State private var decryptedContent: String = ""
     @State private var showTimestamp: Bool = false
+    /// Drives the repeating opacity animation for the 3-dot typing indicator.
+    @State private var showDots: Bool = false
 
     /// Returns the text to display: live streamingText during streaming, otherwise
     /// the persisted-and-decrypted content.
@@ -68,14 +70,22 @@ struct MessageBubbleView: View {
             }
 
             VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 4) {
-                // Message bubble
-                Text(displayContent)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(bubbleColor)
-                    .foregroundColor(textColor)
-                    .cornerRadius(20)
-                    .textSelection(.enabled)
+                // Message bubble — when the assistant bubble is streaming but no
+                // token has arrived yet, show the typing indicator inside the
+                // bubble so there is never an empty/zero-height gray box.
+                Group {
+                    if isStreaming && !isUserMessage && displayContent.isEmpty {
+                        inlineDotIndicator
+                    } else {
+                        Text(displayContent)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(bubbleColor)
+                .foregroundColor(textColor)
+                .cornerRadius(20)
 
                 // Timestamp (shown on tap or long press)
                 if showTimestamp {
@@ -85,14 +95,21 @@ struct MessageBubbleView: View {
                         .padding(.horizontal, 8)
                 }
 
-                // Streaming indicator
-                if isStreaming && !isUserMessage {
+                // Below-bubble streaming dots — shown once tokens are arriving
+                // so the user knows the response is still in progress.
+                if isStreaming && !isUserMessage && !displayContent.isEmpty {
                     HStack(spacing: 4) {
                         ForEach(0..<3) { index in
                             Circle()
                                 .fill(Color.gray)
                                 .frame(width: 6, height: 6)
-                                .opacity(typingAnimation(index: index))
+                                .opacity(showDots ? 1.0 : 0.3)
+                                .animation(
+                                    .easeInOut(duration: 0.6)
+                                        .repeatForever(autoreverses: true)
+                                        .delay(Double(index) * 0.2),
+                                    value: showDots
+                                )
                         }
                     }
                     .padding(.horizontal, 8)
@@ -112,11 +129,41 @@ struct MessageBubbleView: View {
         .padding(.vertical, 4)
         .onAppear {
             decryptMessage()
+            // Start dot animation if this bubble is already streaming on appear.
+            if isStreaming && !isUserMessage {
+                showDots = true
+            }
         }
         .onChange(of: message.encryptedContent) {
             // Update when streaming adds new content
             decryptMessage()
         }
+        .onChange(of: isStreaming) {
+            // Start animation when the bubble transitions into streaming state.
+            if isStreaming && !isUserMessage {
+                showDots = true
+            }
+        }
+    }
+
+    /// Three animated dots rendered inside the assistant bubble before the
+    /// first SSE token arrives.
+    private var inlineDotIndicator: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3) { index in
+                Circle()
+                    .fill(Color.gray.opacity(0.7))
+                    .frame(width: 8, height: 8)
+                    .opacity(showDots ? 1.0 : 0.3)
+                    .animation(
+                        .easeInOut(duration: 0.6)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.2),
+                        value: showDots
+                    )
+            }
+        }
+        .onAppear { showDots = true }
     }
 
     // MARK: - Computed Properties
@@ -152,17 +199,6 @@ struct MessageBubbleView: View {
             decryptedContent = try messageRepository.decryptMessageContent(message)
         } catch {
             decryptedContent = "[Unable to decrypt message]"
-        }
-    }
-
-    private func typingAnimation(index: Int) -> Double {
-        let animation = Animation
-            .easeInOut(duration: 0.6)
-            .repeatForever(autoreverses: true)
-            .delay(Double(index) * 0.2)
-
-        return withAnimation(animation) {
-            0.3
         }
     }
 }

@@ -3,7 +3,7 @@
 - [x] 1.1 Remove the `TabView` from `MainAppView` (`HouseCallApp.swift`); show a single chat as the root authenticated view.
 - [x] 1.2 Add an auto-launch path: on login, open the patient's most-recent conversation, or create one if none exists, and present `ChatView` directly (no list, no "New Chat").
 - [x] 1.3 Add a Profile button to the top-right of the chat toolbar that presents the profile (about + logout); remove the standalone Profile tab.
-- [ ] 1.4 Stop routing to `ConversationListView` from the authenticated entry point.
+- [x] 1.4 Stop routing to `ConversationListView` from the authenticated entry point.
 
 ## 2. Remove provider configuration from the patient UI
 

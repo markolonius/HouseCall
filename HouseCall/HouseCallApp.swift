@@ -88,7 +88,7 @@ struct MainAppView: View {
 
     var body: some View {
         // Tab bar removed; chat is the single root authenticated view.
-        // Profile content (profileTab) is retained below for task 1.3 (toolbar button).
+        // Profile is accessible via the toolbar button in ChatView (ProfileView sheet).
         conversationsTab
     }
 
@@ -109,79 +109,6 @@ struct MainAppView: View {
         }
     }
 
-    private var profileTab: some View {
-        NavigationStack {
-            List {
-                // User Info Section
-                Section {
-                    if let user = authService.getCurrentUser() {
-                        HStack(spacing: 16) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.system(size: 60))
-                                .foregroundColor(.blue)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                if let fullName = try? authService.getCurrentUserFullName() {
-                                    Text(fullName)
-                                        .font(.title3)
-                                        .fontWeight(.semibold)
-                                }
-
-                                Text(user.email ?? "")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-
-                // Settings Section
-                Section(header: Text("Settings")) {
-                    NavigationLink(destination: LLMProviderSettingsView()) {
-                        Label("AI Provider Settings", systemImage: "cpu")
-                    }
-                }
-
-                // App Info Section
-                Section(header: Text("About")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("🏥 HouseCall")
-                            .font(.headline)
-                            .fontWeight(.bold)
-
-                        Text("AI Healthcare Assistant")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
-                        Text("HIPAA-Compliant • Encrypted • Secure")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                            .padding(.top, 4)
-                    }
-                    .padding(.vertical, 8)
-                }
-
-                // Logout Section
-                Section {
-                    Button(action: {
-                        Task {
-                            try? await authService.logout()
-                        }
-                    }) {
-                        HStack {
-                            Spacer()
-                            Text("Logout")
-                                .fontWeight(.semibold)
-                                .foregroundColor(.red)
-                            Spacer()
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Profile")
-        }
-    }
 }
 
 // MARK: - Auto-Launch Chat View

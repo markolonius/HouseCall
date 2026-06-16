@@ -87,19 +87,9 @@ struct MainAppView: View {
     @Environment(\.managedObjectContext) private var viewContext
 
     var body: some View {
-        TabView {
-            // Conversations Tab
-            conversationsTab
-                .tabItem {
-                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                }
-
-            // Profile Tab
-            profileTab
-                .tabItem {
-                    Label("Profile", systemImage: "person.circle")
-                }
-        }
+        // Tab bar removed; chat is the single root authenticated view.
+        // Profile content (profileTab) is retained below for task 1.3 (toolbar button).
+        conversationsTab
     }
 
     // MARK: - Tabs

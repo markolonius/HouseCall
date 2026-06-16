@@ -76,8 +76,15 @@ struct MessageBubbleView: View {
                 Group {
                     if isStreaming && !isUserMessage && displayContent.isEmpty {
                         inlineDotIndicator
-                    } else {
+                    } else if isUserMessage {
+                        // User messages render as plain text — never interpret
+                        // patient input as markup.
                         Text(displayContent)
+                            .textSelection(.enabled)
+                    } else {
+                        // Assistant messages render as Markdown (headings, lists,
+                        // code blocks, bold/italic/links via AttributedString).
+                        MarkdownText(content: displayContent)
                             .textSelection(.enabled)
                     }
                 }

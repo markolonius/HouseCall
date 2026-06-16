@@ -140,18 +140,6 @@ class ConversationViewModel: ObservableObject {
         errorMessage = nil
     }
 
-    /// Switch to a different LLM provider
-    /// - Parameter provider: The new provider to use
-    func switchProvider(to provider: LLMProviderType) async {
-        do {
-            try await aiService.switchProvider(conversationId: conversationId, to: provider)
-            // Reload messages to show the provider switch system message
-            loadMessages()
-        } catch {
-            handleError(error)
-        }
-    }
-
     // MARK: - Private Methods
 
     private func setupServiceObservers() {

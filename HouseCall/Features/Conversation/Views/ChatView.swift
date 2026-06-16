@@ -15,8 +15,6 @@ struct ChatView: View {
 
     @State private var messageText: String = ""
     @State private var showError: Bool = false
-    @State private var showProviderMenu: Bool = false
-    @State private var showSettings: Bool = false
     @State private var showProfile: Bool = false
     @FocusState private var isInputFocused: Bool
 
@@ -80,37 +78,6 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    // Provider selection
-                    ForEach(LLMProviderType.allCases, id: \.self) { provider in
-                        Button(action: {
-                            Task {
-                                await viewModel.switchProvider(to: provider)
-                            }
-                        }) {
-                            HStack {
-                                Text(provider.displayName)
-                                if currentProviderType == provider {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    // Settings button
-                    Button(action: {
-                        showSettings = true
-                    }) {
-                        Label("Settings", systemImage: "gear")
-                    }
-                } label: {
-                    providerBadge
-                }
-            }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
                     showProfile = true
                 }) {
@@ -118,9 +85,6 @@ struct ChatView: View {
                         .accessibilityLabel("Profile")
                 }
             }
-        }
-        .sheet(isPresented: $showSettings) {
-            LLMProviderSettingsView()
         }
         .sheet(isPresented: $showProfile) {
             ProfileView()
@@ -246,19 +210,6 @@ struct ChatView: View {
         .padding(.vertical, 8)
     }
 
-    private var providerBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: providerIcon)
-                .font(.caption)
-            Text(providerName)
-                .font(.caption)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.blue.opacity(0.1))
-        .cornerRadius(12)
-    }
-
     // MARK: - Computed Properties
 
     private var conversationTitle: String {
@@ -271,35 +222,6 @@ struct ChatView: View {
             return title.isEmpty ? "Chat" : String(title.prefix(30))
         } catch {
             return "Chat"
-        }
-    }
-
-    private var currentProviderType: LLMProviderType {
-        guard let conversation = viewModel.currentConversation,
-              let providerString = conversation.llmProvider,
-              let providerType = LLMProviderType(rawValue: providerString) else {
-            return .openai
-        }
-        return providerType
-    }
-
-    private var providerName: String {
-        guard let conversation = viewModel.currentConversation else {
-            return "OpenAI"
-        }
-        return conversation.llmProvider?.capitalized ?? "OpenAI"
-    }
-
-    private var providerIcon: String {
-        switch providerName.lowercased() {
-        case "openai":
-            return "brain.head.profile"
-        case "claude":
-            return "sparkles"
-        case "custom":
-            return "server.rack"
-        default:
-            return "cpu"
         }
     }
 

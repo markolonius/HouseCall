@@ -1,0 +1,23 @@
+// Base.xcconfig
+//
+// Committed base configuration for the HouseCall app target.
+// Provides fallback default values for every build (including CI / fresh clones).
+//
+// To supply a real API key:
+//   1. Copy HouseCall/Config/Secrets.example.xcconfig  →  HouseCall/Config/Secrets.xcconfig
+//   2. Fill in LLM_DEFAULT_API_KEY in Secrets.xcconfig
+//   3. Do NOT commit Secrets.xcconfig — it is listed in .gitignore
+//
+// The '?' in #include? makes the include optional: the build succeeds even when
+// Secrets.xcconfig is absent (fresh clone, CI environment without the file).
+
+// Default LLM provider used for every patient conversation.
+LLM_DEFAULT_PROVIDER = openai
+
+// API key for the default provider.
+// Keep this EMPTY here. Set the real value in the gitignored Secrets.xcconfig.
+LLM_DEFAULT_API_KEY =
+
+// Optional include of the gitignored secrets file.
+// Values in Secrets.xcconfig override the defaults above.
+#include? "Secrets.xcconfig"

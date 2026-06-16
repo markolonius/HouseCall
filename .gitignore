@@ -15,6 +15,10 @@ backend/**/*.test
 # backend/.env.example is committed; backend/.env is not.
 backend/.env
 
+# LLM provider secrets — template (Secrets.example.xcconfig) is committed;
+# the real file with API keys must never be committed.
+HouseCall/Config/Secrets.xcconfig
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

@@ -27,6 +27,8 @@
 		AD45C9572ECB48A300A6D601 /* HouseCall.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HouseCall.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD45C9692ECB48A600A6D601 /* HouseCallTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HouseCallTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD45C9732ECB48A600A6D601 /* HouseCallUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HouseCallUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD45CA102ECC4BF000A6D601 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Base.xcconfig; path = HouseCall/Config/Base.xcconfig; sourceTree = SOURCE_ROOT; };
+		AD45CA112ECC4BF000A6D601 /* Secrets.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.example.xcconfig; path = HouseCall/Config/Secrets.example.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -88,11 +90,21 @@
 		AD45C94E2ECB48A300A6D601 = {
 			isa = PBXGroup;
 			children = (
+				AD45CA122ECC4BF000A6D601 /* Config */,
 				AD45C9592ECB48A300A6D601 /* HouseCall */,
 				AD45C96C2ECB48A600A6D601 /* HouseCallTests */,
 				AD45C9762ECB48A600A6D601 /* HouseCallUITests */,
 				AD45C9582ECB48A300A6D601 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		AD45CA122ECC4BF000A6D601 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				AD45CA102ECC4BF000A6D601 /* Base.xcconfig */,
+				AD45CA112ECC4BF000A6D601 /* Secrets.example.xcconfig */,
+			);
+			name = Config;
 			sourceTree = "<group>";
 		};
 		AD45C9582ECB48A300A6D601 /* Products */ = {
@@ -403,6 +415,7 @@
 		};
 		AD45C97E2ECB48A600A6D601 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AD45CA102ECC4BF000A6D601 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -438,6 +451,7 @@
 		};
 		AD45C97F2ECB48A600A6D601 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AD45CA102ECC4BF000A6D601 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

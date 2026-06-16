@@ -27,8 +27,12 @@ struct LLMProviderConfigManagerTests {
         #expect(manager.getActiveProvider() == .openai)
     }
 
-    @Test("Set and get active provider")
+    @Test("Build-config default provider overrides setActiveProvider")
     func testSetActiveProvider() throws {
+        // The provider is now build-config-driven (LLM_DEFAULT_PROVIDER in Info.plist).
+        // setActiveProvider() is preserved for backward compatibility but the
+        // build-config value always wins when present, so getActiveProvider()
+        // must return the build-config default regardless of what was set.
         let userDefaults = UserDefaults(suiteName: "test.llm.config.setprovider")!
         userDefaults.removePersistentDomain(forName: "test.llm.config.setprovider")
 
@@ -40,31 +44,35 @@ struct LLMProviderConfigManagerTests {
 
         manager.setActiveProvider(.claude)
 
-        #expect(manager.getActiveProvider() == .claude)
+        // Build-config default (.openai) takes precedence; .claude is ignored.
+        #expect(manager.getActiveProvider() == .openai)
     }
 
-    @Test("Active provider persists across instances")
+    @Test("Build-config default provider overrides persisted provider")
     func testProviderPersistence() throws {
+        // The provider is now build-config-driven (LLM_DEFAULT_PROVIDER in Info.plist).
+        // Even if a different provider was persisted to UserDefaults, getActiveProvider()
+        // returns the build-config default for every instance.
         let suiteName = "test.llm.config.persistence"
         let userDefaults = UserDefaults(suiteName: suiteName)!
         userDefaults.removePersistentDomain(forName: suiteName)
 
         let keychainManager = KeychainManager()
 
-        // First instance sets provider
+        // First instance attempts to set provider
         let manager1 = LLMProviderConfigManager(
             keychainManager: keychainManager,
             userDefaults: userDefaults
         )
         manager1.setActiveProvider(.custom)
 
-        // Second instance should load the same provider
+        // Second instance: build-config default still wins over the persisted value.
         let manager2 = LLMProviderConfigManager(
             keychainManager: keychainManager,
             userDefaults: userDefaults
         )
 
-        #expect(manager2.getActiveProvider() == .custom)
+        #expect(manager2.getActiveProvider() == .openai)
     }
 
     // MARK: - API Key Management Tests

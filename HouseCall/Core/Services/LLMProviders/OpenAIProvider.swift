@@ -18,6 +18,9 @@ class OpenAIProvider: LLMProvider {
     private let auditLogger: AuditLogger
 
     private var currentTask: URLSessionDataTask?
+    /// Dedicated session created per streaming request (URLSession.shared does not
+    /// support per-request delegates).  Stored so `cancelStreaming()` can invalidate it.
+    private var streamingSession: URLSession?
     private let sseParser = SSEParser()
 
     /// Configuration for OpenAI requests
@@ -75,6 +78,8 @@ class OpenAIProvider: LLMProvider {
     func cancelStreaming() {
         currentTask?.cancel()
         currentTask = nil
+        streamingSession?.invalidateAndCancel()
+        streamingSession = nil
         sseParser.reset()
     }
 
@@ -140,56 +145,23 @@ class OpenAIProvider: LLMProvider {
         let requestBody = buildRequestBody(messages: messages)
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        // Reset SSE parser
-        sseParser.reset()
+        // Create a fresh SSEParser per request so that cancelStreaming's sseParser.reset()
+        // cannot race with background delegate callbacks on the URLSession queue.
+        let requestParser = SSEParser()
 
-        // Track accumulated response
-        var fullResponse = ""
-
-        // Create URL session with streaming delegate
-        let session = URLSession.shared
-        let task = session.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-
-            // Handle completion
-            if let error = error {
-                let nsError = error as NSError
-                if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
-                    onComplete(.failure(.cancelled))
-                } else if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
-                    onComplete(.failure(.timeout))
-                } else {
-                    onComplete(.failure(.networkError(error)))
-                }
-                return
-            }
-
-            // Check HTTP response
-            if let httpResponse = response as? HTTPURLResponse {
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    let error = self.parseHTTPError(
-                        statusCode: httpResponse.statusCode,
-                        data: data
-                    )
-                    onComplete(.failure(error))
-                    return
-                }
-            }
-
-            // This completion handler is called once at the end
-            // For streaming, we need to use URLSessionDataDelegate
-            onComplete(.success(fullResponse))
-        }
-
-        // Store task for cancellation
+        let streamingDelegate = StreamingURLSessionDelegate(
+            sseParser: requestParser,
+            onChunk: onChunk,
+            onComplete: onComplete
+        )
+        // URLSession.shared does not support per-request delegates; a dedicated session
+        // is required so urlSession(_:dataTask:didReceive:) fires incrementally for
+        // each SSE chunk instead of once at the end of the response.
+        let session = URLSession(configuration: .default, delegate: streamingDelegate, delegateQueue: nil)
+        streamingSession = session
+        let task = session.dataTask(with: request)
         currentTask = task
-
-        // Start streaming request
         task.resume()
-
-        // Note: For true streaming, we need URLSessionDataDelegate
-        // This basic implementation will work but won't stream in real-time
-        // See StreamingURLSessionDelegate below for full streaming support
     }
 
     private func buildRequestBody(messages: [ChatMessage]) -> [String: Any] {
@@ -266,6 +238,8 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
     private let onChunk: (String) -> Void
     private let onComplete: (Result<String, LLMError>) -> Void
     private var fullResponse = ""
+    /// Guards against double-firing onComplete (e.g. [DONE] arrives then didCompleteWithError fires).
+    private var hasCompleted = false
 
     init(
         sseParser: SSEParser,
@@ -275,6 +249,40 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
         self.sseParser = sseParser
         self.onChunk = onChunk
         self.onComplete = onComplete
+    }
+
+    /// Fires onComplete exactly once.
+    private func fireComplete(_ result: Result<String, LLMError>) {
+        guard !hasCompleted else { return }
+        hasCompleted = true
+        onComplete(result)
+    }
+
+    /// Validate the HTTP status code before allowing data to flow through the parser.
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            completionHandler(.allow)
+            return
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = httpResponse.statusCode
+            let llmError: LLMError
+            switch statusCode {
+            case 401, 403: llmError = .authenticationFailed
+            case 429: llmError = .rateLimit(retryAfterSeconds: 60)
+            case 500...599: llmError = .providerError(statusCode: statusCode, message: "Server error")
+            default: llmError = .providerError(statusCode: statusCode, message: "HTTP \(statusCode)")
+            }
+            fireComplete(.failure(llmError))
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
     }
 
     func urlSession(
@@ -288,7 +296,7 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
 
             // Check for completion marker
             if event.isComplete {
-                self.onComplete(.success(self.fullResponse))
+                self.fireComplete(.success(self.fullResponse))
                 return
             }
 
@@ -305,15 +313,21 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
         task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
+        defer { session.finishTasksAndInvalidate() }
         if let error = error {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
-                onComplete(.failure(.cancelled))
+                fireComplete(.failure(.cancelled))
             } else if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
-                onComplete(.failure(.timeout))
+                fireComplete(.failure(.timeout))
             } else {
-                onComplete(.failure(.networkError(error)))
+                fireComplete(.failure(.networkError(error)))
             }
+        } else {
+            // Normal task completion; the [DONE] marker should have already fired
+            // onComplete via didReceive(_:data:).  If the server closed the stream
+            // without [DONE] (non-standard), fire it here as a fallback.
+            fireComplete(.success(fullResponse))
         }
     }
 }

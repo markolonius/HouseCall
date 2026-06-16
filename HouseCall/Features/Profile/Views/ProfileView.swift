@@ -2,8 +2,8 @@
 //  ProfileView.swift
 //  HouseCall
 //
-//  User profile sheet — shows account info, AI provider settings link,
-//  app about section, and a logout button.
+//  User profile sheet — shows account info, app about section,
+//  and a logout button.
 //  Presented as a sheet from the chat toolbar's Profile button.
 //
 
@@ -37,13 +37,6 @@ struct ProfileView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                    }
-                }
-
-                // MARK: - Settings Section
-                Section(header: Text("Settings")) {
-                    NavigationLink(destination: LLMProviderSettingsView()) {
-                        Label("AI Provider Settings", systemImage: "cpu")
                     }
                 }
 

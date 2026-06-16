@@ -15,7 +15,6 @@ struct ChatView: View {
 
     @State private var messageText: String = ""
     @State private var showError: Bool = false
-    @State private var showSettings: Bool = false
     @State private var showProfile: Bool = false
     @FocusState private var isInputFocused: Bool
 
@@ -86,9 +85,6 @@ struct ChatView: View {
                         .accessibilityLabel("Profile")
                 }
             }
-        }
-        .sheet(isPresented: $showSettings) {
-            LLMProviderSettingsView()
         }
         .sheet(isPresented: $showProfile) {
             ProfileView()

@@ -20,7 +20,7 @@
 
 ## 4. Markdown rendering
 
-- [ ] 4.1 Render assistant message content as Markdown in `MessageBubbleView` (headings, bold/italic, lists, inline code/code blocks, links).
+- [x] 4.1 Render assistant message content as Markdown in `MessageBubbleView` (headings, bold/italic, lists, inline code/code blocks, links).
 - [ ] 4.2 Keep user messages as plaintext; ensure Markdown rendering does not break VoiceOver labels or PHI handling.
 
 ## 5. Tests

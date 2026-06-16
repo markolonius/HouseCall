@@ -49,16 +49,41 @@ class LLMProviderConfigManager: ObservableObject {
         }
     }
 
+    // MARK: - Build Config Defaults
+
+    /// Provider specified via LLM_DEFAULT_PROVIDER build setting → Info.plist.
+    /// Returns nil if the value is absent or cannot be parsed as an LLMProviderType.
+    private func buildConfigDefaultProvider() -> LLMProviderType? {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "LLMDefaultProvider") as? String,
+              !raw.isEmpty,
+              let provider = LLMProviderType(rawValue: raw) else {
+            return nil
+        }
+        return provider
+    }
+
+    /// API key specified via LLM_DEFAULT_API_KEY build setting → Info.plist.
+    /// Returns nil when the value is absent or empty (never committed to git).
+    private func buildConfigAPIKey() -> String? {
+        guard let key = Bundle.main.object(forInfoDictionaryKey: "LLMDefaultAPIKey") as? String,
+              !key.isEmpty else {
+            return nil
+        }
+        return key
+    }
+
     // MARK: - Provider Selection
 
-    /// Set the active provider
+    /// Set the active provider (preserved for backward compat; does not override build config)
     func setActiveProvider(_ provider: LLMProviderType) {
         activeProvider = provider
     }
 
-    /// Get the current active provider
+    /// Returns the hardcoded build-config default provider.
+    /// Falls back to the UserDefaults-stored provider when no build config is present
+    /// (preserves behaviour for development environments that haven't set the xcconfig).
     func getActiveProvider() -> LLMProviderType {
-        return activeProvider
+        return buildConfigDefaultProvider() ?? activeProvider
     }
 
     // MARK: - API Key Management
@@ -69,8 +94,19 @@ class LLMProviderConfigManager: ObservableObject {
         try keychainManager.save(key, forKey: keychainKey)
     }
 
-    /// Retrieve API key for a provider
+    /// Retrieve API key for a provider.
+    ///
+    /// Priority:
+    ///  1. Build-config key (LLM_DEFAULT_API_KEY via Info.plist), when present and
+    ///     the queried provider matches the build-config default provider.
+    ///  2. Keychain value (preserves any previously stored key and existing tests).
     func getAPIKey(for provider: LLMProviderType) -> String? {
+        // Return the build-config key when it matches the queried provider.
+        if provider == buildConfigDefaultProvider(),
+           let key = buildConfigAPIKey() {
+            return key
+        }
+        // Fall back to Keychain.
         let keychainKey = getAPIKeyKey(for: provider)
         return try? keychainManager.get(key: keychainKey)
     }
@@ -81,7 +117,8 @@ class LLMProviderConfigManager: ObservableObject {
         try keychainManager.delete(key: keychainKey)
     }
 
-    /// Check if provider has an API key configured
+    /// Returns true if an API key exists for the provider
+    /// (checks both build-config and Keychain via getAPIKey(for:)).
     func hasAPIKey(for provider: LLMProviderType) -> Bool {
         return getAPIKey(for: provider) != nil
     }
@@ -179,8 +216,18 @@ class LLMProviderConfigManager: ObservableObject {
         return createProvider(type: activeProvider)
     }
 
-    /// Create a provider instance by type
+    /// Create a provider instance by type.
+    ///
+    /// When the build config supplies an API key for this provider, it is seeded
+    /// into the Keychain so that the provider instance's own `isConfigured` check
+    /// (which reads from Keychain directly) reflects the build-config value.
     func createProvider(type: LLMProviderType) -> LLMProvider? {
+        // Seed build-config key into Keychain so the provider can read it.
+        if type == buildConfigDefaultProvider(),
+           let key = buildConfigAPIKey() {
+            try? saveAPIKey(key, for: type)
+        }
+
         switch type {
         case .openai:
             let config = loadOpenAIConfig()
@@ -198,7 +245,11 @@ class LLMProviderConfigManager: ObservableObject {
         }
     }
 
-    /// Check if a provider is configured and ready to use
+    /// Returns true if the provider is configured and ready to use.
+    ///
+    /// For openai/claude: true when EITHER the build-config API key (non-empty)
+    /// OR a Keychain key exists — getAPIKey(for:) checks both sources.
+    /// For custom: URL validity + optional auth key (unchanged).
     func isProviderConfigured(_ type: LLMProviderType) -> Bool {
         switch type {
         case .openai, .claude:

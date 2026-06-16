@@ -89,12 +89,12 @@ struct MainAppView: View {
     var body: some View {
         // Tab bar removed; chat is the single root authenticated view.
         // Profile is accessible via the toolbar button in ChatView (ProfileView sheet).
-        conversationsTab
+        chatRootView
     }
 
-    // MARK: - Tabs
+    // MARK: - Chat Root
 
-    private var conversationsTab: some View {
+    private var chatRootView: some View {
         Group {
             if let user = authService.getCurrentUser(), let userId = user.id {
                 AutoLaunchChatView(

@@ -8,7 +8,7 @@
 ## 2. Remove provider configuration from the patient UI
 
 - [x] 2.1 Remove the provider picker menu and provider badge from `ChatView` toolbar.
-- [ ] 2.2 Remove the "AI Provider Settings" `NavigationLink` and `LLMProviderSettingsView` sheet from Profile / chat.
+- [x] 2.2 Remove the "AI Provider Settings" `NavigationLink` and `LLMProviderSettingsView` sheet from Profile / chat.
 - [ ] 2.3 Remove `switchProvider` from `ConversationViewModel` (and any provider-switch system messages no longer reachable).
 - [ ] 2.4 Introduce a hardcoded default provider + API key sourced from build config; wire `AIConversationService` to always use it.
 

@@ -21,7 +21,6 @@ class OpenAIProvider: LLMProvider {
     /// Dedicated session created per streaming request (URLSession.shared does not
     /// support per-request delegates).  Stored so `cancelStreaming()` can invalidate it.
     private var streamingSession: URLSession?
-    private let sseParser = SSEParser()
 
     /// Configuration for OpenAI requests
     private var config: OpenAIConfig
@@ -80,7 +79,6 @@ class OpenAIProvider: LLMProvider {
         currentTask = nil
         streamingSession?.invalidateAndCancel()
         streamingSession = nil
-        sseParser.reset()
     }
 
     // MARK: - Private Methods
@@ -145,14 +143,15 @@ class OpenAIProvider: LLMProvider {
         let requestBody = buildRequestBody(messages: messages)
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        // Create a fresh SSEParser per request so that cancelStreaming's sseParser.reset()
-        // cannot race with background delegate callbacks on the URLSession queue.
+        // Create a fresh SSEParser per request to isolate parser state across
+        // concurrent or back-to-back requests.
         let requestParser = SSEParser()
 
         let streamingDelegate = StreamingURLSessionDelegate(
             sseParser: requestParser,
             onChunk: onChunk,
-            onComplete: onComplete
+            onComplete: onComplete,
+            onSessionInvalidated: { [weak self] in self?.streamingSession = nil }
         )
         // URLSession.shared does not support per-request delegates; a dedicated session
         // is required so urlSession(_:dataTask:didReceive:) fires incrementally for
@@ -240,15 +239,19 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
     private var fullResponse = ""
     /// Guards against double-firing onComplete (e.g. [DONE] arrives then didCompleteWithError fires).
     private var hasCompleted = false
+    /// Called when the URLSession becomes invalid so the owning provider can clear its reference.
+    private let onSessionInvalidated: (() -> Void)?
 
     init(
         sseParser: SSEParser,
         onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
+        onComplete: @escaping (Result<String, LLMError>) -> Void,
+        onSessionInvalidated: (() -> Void)? = nil
     ) {
         self.sseParser = sseParser
         self.onChunk = onChunk
         self.onComplete = onComplete
+        self.onSessionInvalidated = onSessionInvalidated
     }
 
     /// Fires onComplete exactly once.
@@ -274,7 +277,11 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
             let llmError: LLMError
             switch statusCode {
             case 401, 403: llmError = .authenticationFailed
-            case 429: llmError = .rateLimit(retryAfterSeconds: 60)
+            case 429:
+                // Extract Retry-After header (integer seconds per HTTP spec); fall back to 60.
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                    .flatMap { Int($0) }
+                llmError = .rateLimit(retryAfterSeconds: retryAfter ?? 60)
             case 500...599: llmError = .providerError(statusCode: statusCode, message: "Server error")
             default: llmError = .providerError(statusCode: statusCode, message: "HTTP \(statusCode)")
             }
@@ -283,6 +290,10 @@ class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate {
             return
         }
         completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        onSessionInvalidated?()
     }
 
     func urlSession(

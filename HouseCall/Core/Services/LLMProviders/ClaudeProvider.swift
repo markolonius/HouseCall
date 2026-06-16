@@ -156,8 +156,7 @@ class ClaudeProvider: LLMProvider {
         let streamingDelegate = ClaudeStreamingDelegate(
             sseParser: requestParser,
             onChunk: onChunk,
-            onComplete: onComplete,
-            onSessionInvalidated: { [weak self] in self?.streamingSession = nil }
+            onComplete: onComplete
         )
         // URLSession.shared does not support per-request delegates; a dedicated session
         // is required so urlSession(_:dataTask:didReceive:) fires incrementally for
@@ -254,19 +253,15 @@ class ClaudeStreamingDelegate: NSObject, URLSessionDataDelegate {
     private var fullResponse = ""
     /// Guards against double-firing onComplete (e.g. message_stop arrives then didCompleteWithError fires).
     private var hasCompleted = false
-    /// Called when the URLSession becomes invalid so the owning provider can clear its reference.
-    private let onSessionInvalidated: (() -> Void)?
 
     init(
         sseParser: SSEParser,
         onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void,
-        onSessionInvalidated: (() -> Void)? = nil
+        onComplete: @escaping (Result<String, LLMError>) -> Void
     ) {
         self.sseParser = sseParser
         self.onChunk = onChunk
         self.onComplete = onComplete
-        self.onSessionInvalidated = onSessionInvalidated
     }
 
     /// Fires onComplete exactly once.
@@ -305,10 +300,6 @@ class ClaudeStreamingDelegate: NSObject, URLSessionDataDelegate {
             return
         }
         completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
-        onSessionInvalidated?()
     }
 
     func urlSession(

@@ -213,7 +213,7 @@ class LLMProviderConfigManager: ObservableObject {
 
     /// Create an instance of the active provider
     func createActiveProvider() -> LLMProvider? {
-        return createProvider(type: activeProvider)
+        return createProvider(type: getActiveProvider())
     }
 
     /// Create a provider instance by type.

@@ -26,18 +26,16 @@ struct ChatView: View {
                     LazyVStack(spacing: 8) {
                         // Messages
                         ForEach(viewModel.messages, id: \.id) { message in
+                            let isThisMessageStreaming = viewModel.isStreaming && message.id == viewModel.streamingMessageId
                             MessageBubbleView(
                                 message: message,
                                 messageRepository: viewModel.messageRepository,
-                                isStreaming: viewModel.isStreaming && message.id == viewModel.streamingMessageId
+                                isStreaming: isThisMessageStreaming,
+                                // Pass live text only for the in-progress assistant message
+                                // so tokens appear incrementally without a second bubble.
+                                streamingText: isThisMessageStreaming ? viewModel.streamingText : nil
                             )
                             .id(message.id)
-                        }
-
-                        // Streaming message (if not yet in messages array)
-                        if viewModel.isStreaming && !viewModel.streamingText.isEmpty {
-                            streamingBubbleView
-                                .id("streaming")
                         }
 
                         // Physician-approved recommendation cards delivered via
@@ -95,39 +93,6 @@ struct ChatView: View {
     }
 
     // MARK: - Subviews
-
-    private var streamingBubbleView: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.streamingText)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Color(.systemGray5))
-                    .foregroundColor(.primary)
-                    .cornerRadius(20)
-
-                // Typing indicator
-                HStack(spacing: 4) {
-                    ForEach(0..<3) { index in
-                        Circle()
-                            .fill(Color.gray)
-                            .frame(width: 6, height: 6)
-                            .animation(
-                                Animation
-                                    .easeInOut(duration: 0.6)
-                                    .repeatForever(autoreverses: true)
-                                    .delay(Double(index) * 0.2),
-                                value: index
-                            )
-                    }
-                }
-                .padding(.horizontal, 8)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-    }
 
     private var inputArea: some View {
         HStack(spacing: 12) {
@@ -251,8 +216,9 @@ struct ChatView: View {
     private func scrollToBottom(proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             withAnimation {
-                if viewModel.isStreaming {
-                    proxy.scrollTo("streaming", anchor: .bottom)
+                if viewModel.isStreaming, let streamingId = viewModel.streamingMessageId {
+                    // Scroll to the in-list streaming bubble (no separate "streaming" anchor needed)
+                    proxy.scrollTo(streamingId, anchor: .bottom)
                 } else if let lastMessage = viewModel.messages.last {
                     proxy.scrollTo(lastMessage.id, anchor: .bottom)
                 }

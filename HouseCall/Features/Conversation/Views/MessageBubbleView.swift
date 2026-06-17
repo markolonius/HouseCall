@@ -149,6 +149,10 @@ struct MessageBubbleView: View {
             // Start animation when the bubble transitions into streaming state.
             if isStreaming && !isUserMessage {
                 showDots = true
+            } else if !isStreaming {
+                // Reset so the indicator can re-trigger if this view instance
+                // ever re-enters the empty-streaming state.
+                showDots = false
             }
         }
     }

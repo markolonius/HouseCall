@@ -32,7 +32,14 @@ private enum MarkdownBlock {
 /// plain text rather than crashing or producing garbage output.
 private struct MarkdownParser {
 
+    // Cache: keyed on full content so identical SwiftUI re-renders skip re-parsing.
+    // Streaming correctness: each new chunk produces a distinct string → cache miss
+    // → parsed once → result stored. Evicted wholesale at >200 entries to bound
+    // memory across a long session.
+    private static var parseCache: [String: [MarkdownBlock]] = [:]
+
     static func parse(_ content: String) -> [MarkdownBlock] {
+        if let cached = parseCache[content] { return cached }
         var blocks: [MarkdownBlock] = []
         let lines = content.components(separatedBy: "\n")
         var i = 0
@@ -119,6 +126,8 @@ private struct MarkdownParser {
         }
 
         flushParagraph()
+        if parseCache.count > 200 { parseCache.removeAll() }
+        parseCache[content] = blocks
         return blocks
     }
 
@@ -201,8 +210,8 @@ struct MarkdownText: View {
     var body: some View {
         let blocks = MarkdownParser.parse(content)
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(for: block)
+            ForEach(blocks.indices, id: \.self) { i in
+                blockView(for: blocks[i])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,7 +301,9 @@ struct MarkdownText: View {
         case 1:  return .title2
         case 2:  return .title3
         case 3:  return .headline
-        default: return .subheadline
+        case 4:  return .subheadline   // bold via call-site .fontWeight(.bold)
+        case 5:  return .footnote      // visually smaller than h4
+        default: return .caption       // level 6 — smallest heading
         }
     }
 
@@ -326,8 +337,24 @@ struct MarkdownText: View {
                 }
             }
             .filter { !$0.isEmpty }
-            .joined(separator: ". ")
+            .reduce("") { acc, text in
+                guard !acc.isEmpty else { return text }
+                // If the previous block already ends with terminal punctuation
+                // (.  !  ?) don't prepend another period — use a plain space.
+                let terminalPunct: [Character] = [".", "!", "?"]
+                let sep = acc.last.map { terminalPunct.contains($0) } == true
+                    ? " " : ". "
+                return acc + sep + text
+            }
     }
+
+    // Compiled once and reused across all stripInlineMarkdown calls.
+    // linkRegex:        complete [text](url)  → text
+    // partialLinkRegex: dangling [text](url   → text  (no closing paren, end of string)
+    private static let linkRegex = try? NSRegularExpression(
+        pattern: #"\[([^\]]*)\]\([^)]*\)"#)
+    private static let partialLinkRegex = try? NSRegularExpression(
+        pattern: #"\[([^\]]*)\]\([^)]*$"#)
 
     /// Strips common inline Markdown markers from `text`.
     /// Order matters: remove `**`/`__` (bold) before `*`/`_` (italic) so that
@@ -346,8 +373,15 @@ struct MarkdownText: View {
         s = s.replacingOccurrences(of: "_", with: "")
         // Inline code backticks.
         s = s.replacingOccurrences(of: "`", with: "")
-        // Links: [link text](https://example.com) → link text.
-        if let regex = try? NSRegularExpression(pattern: #"\[([^\]]*)\]\([^)]*\)"#) {
+        // Complete links: [text](url) → text.
+        if let regex = Self.linkRegex {
+            let range = NSRange(s.startIndex..., in: s)
+            s = regex.stringByReplacingMatches(in: s, range: range,
+                                               withTemplate: "$1")
+        }
+        // Partial-streamed link: [text](url with no closing paren at end of
+        // string → text. Keeps mid-stream VoiceOver output clean.
+        if let regex = Self.partialLinkRegex {
             let range = NSRange(s.startIndex..., in: s)
             s = regex.stringByReplacingMatches(in: s, range: range,
                                                withTemplate: "$1")

@@ -21,7 +21,6 @@ class ClaudeProvider: LLMProvider {
     /// Dedicated session created per streaming request (URLSession.shared does not
     /// support per-request delegates).  Stored so `cancelStreaming()` can invalidate it.
     private var streamingSession: URLSession?
-    private let sseParser = SSEParser()
 
     /// Configuration for Claude requests
     private var config: ClaudeConfig
@@ -83,7 +82,6 @@ class ClaudeProvider: LLMProvider {
         currentTask = nil
         streamingSession?.invalidateAndCancel()
         streamingSession = nil
-        sseParser.reset()
     }
 
     // MARK: - Private Methods
@@ -151,8 +149,8 @@ class ClaudeProvider: LLMProvider {
         let requestBody = buildRequestBody(messages: messages)
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        // Create a fresh SSEParser per request so that cancelStreaming's sseParser.reset()
-        // cannot race with background delegate callbacks on the URLSession queue.
+        // Create a fresh SSEParser per request to isolate parser state across
+        // concurrent or back-to-back requests.
         let requestParser = SSEParser()
 
         let streamingDelegate = ClaudeStreamingDelegate(
@@ -289,7 +287,11 @@ class ClaudeStreamingDelegate: NSObject, URLSessionDataDelegate {
             let llmError: LLMError
             switch statusCode {
             case 401, 403: llmError = .authenticationFailed
-            case 429: llmError = .rateLimit(retryAfterSeconds: 60)
+            case 429:
+                // Extract Retry-After header (integer seconds per HTTP spec); fall back to 60.
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                    .flatMap { Int($0) }
+                llmError = .rateLimit(retryAfterSeconds: retryAfter ?? 60)
             case 500...599: llmError = .providerError(statusCode: statusCode, message: "Server error")
             default: llmError = .providerError(statusCode: statusCode, message: "HTTP \(statusCode)")
             }

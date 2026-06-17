@@ -450,8 +450,14 @@ class AIConversationService: ObservableObject {
         conversationId: UUID,
         providerType: LLMProviderType
     ) async {
+        // INVARIANT: keep isStreaming = false, streamingMessageId = nil, and
+        // messages[index] = updatedMessage free of any `await` between them so
+        // SwiftUI coalesces all three into a single render pass and avoids a
+        // blank-flash where the streaming overlay disappears before the final
+        // message text appears.
         isStreaming = false
         streamingMessageId = nil
+        streamingText = ""
 
         switch result {
         case .success(let fullText):
@@ -542,8 +548,6 @@ class AIConversationService: ObservableObject {
                 )
             }
         }
-
-        streamingText = ""
     }
 
     /// Builds chat context from conversation messages

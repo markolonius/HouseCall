@@ -15,7 +15,7 @@ import SwiftUI
 // MARK: - Block Model
 
 /// A parsed Markdown block element.
-private enum MarkdownBlock {
+enum MarkdownBlock: Equatable {
     case heading(level: Int, text: String)
     case paragraph(text: String)
     case unorderedItem(indent: Int, text: String)
@@ -33,7 +33,7 @@ private enum MarkdownBlock {
 /// Safe with partial/unterminated Markdown that arrives during streaming:
 /// an unclosed fence or incomplete inline span is treated as best-effort
 /// plain text rather than crashing or producing garbage output.
-private struct MarkdownParser {
+struct MarkdownParser {
 
     static func parse(_ content: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -333,7 +333,7 @@ struct MarkdownText: View {
     /// PHI note: the returned string contains message content. That is
     /// correct — VoiceOver is on-device display, equivalent to reading the
     /// visible text. Nothing here is logged, printed, or sent to any service.
-    private static func plainText(from blocks: [MarkdownBlock]) -> String {
+    static func plainText(from blocks: [MarkdownBlock]) -> String {
         blocks
             .compactMap { block -> String? in
                 switch block {
@@ -379,7 +379,7 @@ struct MarkdownText: View {
     ///   *italic*    → italic
     ///   `code`      → code
     ///   [text](url) → text
-    private static func stripInlineMarkdown(_ text: String) -> String {
+    static func stripInlineMarkdown(_ text: String) -> String {
         var s = text
         // Bold markers first (two-char sequences).
         s = s.replacingOccurrences(of: "**", with: "")

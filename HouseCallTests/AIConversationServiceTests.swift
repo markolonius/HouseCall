@@ -7,6 +7,7 @@
 
 import Testing
 import CoreData
+import Combine
 @testable import HouseCall
 
 @Suite("AIConversationService Tests")
@@ -467,6 +468,120 @@ struct AIConversationServiceTests {
         #expect(service.currentConversation != nil)
         #expect(service.messages.count >= 1)
     }
+
+    // MARK: - Streaming Regression Tests
+
+    /// Regression guard for the Phase-3 bug where providers emitted an empty
+    /// string and never called `onChunk`, leaving `streamingText` blank and
+    /// persisting an empty assistant message.
+    ///
+    /// This test MUST FAIL if:
+    /// - `streamingText` never updates (stays empty or delivers a single blob)
+    /// - The final persisted assistant message is empty
+    @Test("streamingText updates incrementally and final assistant message is persisted non-empty")
+    func testStreamingTextIncrementalUpdatesAndPersistence() async throws {
+        let context = createInMemoryContext()
+        let userId = UUID()
+
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            providerConfigManager: LLMProviderConfigManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        service._testProviderOverride = MultiChunkStubProvider()
+
+        // Collect every non-empty streamingText value in publication order.
+        // The Combine sink fires synchronously (willSet) on the main actor, so
+        // each handleStreamChunk call appends exactly one entry here before
+        // execution moves on to the next chunk.
+        var streamingHistory: [String] = []
+        var cancellables = Set<AnyCancellable>()
+        service.$streamingText
+            .filter { !$0.isEmpty }
+            .sink { streamingHistory.append($0) }
+            .store(in: &cancellables)
+
+        // Track isStreaming transitions (initial false, true during, false after).
+        var isStreamingHistory: [Bool] = []
+        service.$isStreaming
+            .sink { isStreamingHistory.append($0) }
+            .store(in: &cancellables)
+
+        let conversation = try await service.createConversation()
+
+        // sendMessage sets isStreaming = true, calls the provider synchronously,
+        // then returns. The handleStreamChunk / handleStreamComplete closures are
+        // dispatched as Task { @MainActor in … } and run after we yield below.
+        try await service.sendMessage(conversationId: conversation.id!, content: "regression test input")
+
+        // Drain the main-actor queue so all spawned Tasks complete:
+        //   3 × handleStreamChunk  +  1 × handleStreamComplete.
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        // 1. streamingText must have grown INCREMENTALLY — at least 2 distinct
+        //    non-empty values observed, ending at the full expected text.
+        let expectedFull = MultiChunkStubProvider.expectedText
+        #expect(
+            streamingHistory.count >= 2,
+            "streamingText must update incrementally — observed \(streamingHistory.count) non-empty emission(s), need ≥ 2"
+        )
+        #expect(
+            streamingHistory.last == expectedFull,
+            "last observed streamingText must equal the full chunk sequence '\(expectedFull)'"
+        )
+
+        // 2. Each successive value must be strictly longer (monotonically growing).
+        for i in 0..<(streamingHistory.count - 1) {
+            #expect(
+                streamingHistory[i + 1].hasPrefix(streamingHistory[i]),
+                "streamingText must grow monotonically: '\(streamingHistory[i])' → '\(streamingHistory[i + 1])'"
+            )
+        }
+
+        // 3. isStreaming lifecycle: went true during streaming, false when done.
+        #expect(
+            isStreamingHistory.contains(true),
+            "isStreaming must have been true during the streaming window"
+        )
+        #expect(
+            service.isStreaming == false,
+            "isStreaming must be false after completion"
+        )
+
+        // 4. Core regression guard: final assistant message is persisted with the
+        //    FULL concatenated content — not empty, not a placeholder.
+        let allMessages = try messageRepo.fetchAllMessages(conversationId: conversation.id!)
+        let assistantMessages = allMessages.filter { $0.role == "assistant" }
+        #expect(assistantMessages.count == 1, "exactly one assistant message must be persisted")
+
+        let persistedContent = try messageRepo.decryptMessageContent(assistantMessages[0])
+        #expect(
+            !persistedContent.isEmpty,
+            "persisted assistant message must not be empty — regression guard against the empty-chunk bug"
+        )
+        #expect(
+            persistedContent == expectedFull,
+            "persisted content must equal the full concatenated response '\(expectedFull)'"
+        )
+        #expect(
+            assistantMessages[0].streamingComplete == true,
+            "persisted message must be marked streamingComplete = true"
+        )
+    }
 }
 
 // MARK: - Test In-Memory Keychain
@@ -520,6 +635,41 @@ private class StubLLMProvider: LLMProvider {
         let response = "Stub response from provider."
         onChunk(response)
         onComplete(.success(response))
+    }
+
+    func cancelStreaming() {}
+}
+
+// MARK: - Multi-Chunk Stub LLM Provider (streaming regression test)
+
+/// Deterministic multi-chunk provider used by `testStreamingTextIncrementalUpdatesAndPersistence`.
+///
+/// Emits a known sequence of chunks — "Hello", " ", "world" — via `onChunk`,
+/// then calls `onComplete(.success("Hello world"))`.  This lets the test
+/// verify that `streamingText` grows INCREMENTALLY (one entry per chunk) and
+/// that the final persisted message equals the full concatenated text.
+///
+/// The test FAILS if streaming reverts to the Phase-3 bug where the provider
+/// delivered an empty string without emitting any chunks.
+private class MultiChunkStubProvider: LLMProvider {
+    let providerType: LLMProviderType = .openai
+    let isConfigured: Bool = true
+
+    /// The ordered chunk sequence emitted during one completion call.
+    static let chunks: [String] = ["Hello", " ", "world"]
+
+    /// Full text the caller should expect after all chunks arrive.
+    static var expectedText: String { chunks.joined() }
+
+    func streamCompletion(
+        messages: [ChatMessage],
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping (Result<String, LLMError>) -> Void
+    ) async throws {
+        for chunk in Self.chunks {
+            onChunk(chunk)
+        }
+        onComplete(.success(Self.expectedText))
     }
 
     func cancelStreaming() {}

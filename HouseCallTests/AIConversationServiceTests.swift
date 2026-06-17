@@ -8,6 +8,7 @@
 import Testing
 import CoreData
 import Combine
+import CryptoKit
 @testable import HouseCall
 
 @Suite("AIConversationService Tests")
@@ -483,14 +484,27 @@ struct AIConversationServiceTests {
         let context = createInMemoryContext()
         let userId = UUID()
 
+        // Use a private EncryptionManager instance so parallel test workers
+        // (SecurityTests, EncryptionManagerTests) cannot race on the shared
+        // singleton's key cache between the encrypt (inside sendMessage) and the
+        // decrypt assertion below.  SecurityTests.clearCache() wipes the shared
+        // masterKey from memory; because _testInjectMasterKey bypasses the
+        // Keychain, the subsequent getMasterKey() call regenerates a DIFFERENT
+        // random key, making decryption of content encrypted under the original
+        // key fail.  A per-test instance with its own InMemoryKeychainManager and
+        // an injected master key is fully isolated from that race.
+        let localKeychain = InMemoryKeychainManager()
+        let localEncryption = EncryptionManager._testMakeInstance(keychainManager: localKeychain)
+        localEncryption._testInjectMasterKey(SymmetricKey(size: .bits256))
+
         let conversationRepo = CoreDataConversationRepository(
             context: context,
-            encryptionManager: EncryptionManager.shared,
+            encryptionManager: localEncryption,
             auditLogger: AuditLogger(context: context)
         )
         let messageRepo = CoreDataMessageRepository(
             context: context,
-            encryptionManager: EncryptionManager.shared,
+            encryptionManager: localEncryption,
             auditLogger: AuditLogger(context: context)
         )
         let service = AIConversationService(

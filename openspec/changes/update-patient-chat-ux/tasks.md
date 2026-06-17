@@ -26,6 +26,6 @@
 ## 5. Tests
 
 - [x] 5.1 Update/remove tests covering provider selection and conversation-list navigation.
-- [ ] 5.2 Add a streaming regression test asserting `streamingText` updates incrementally and the final message is persisted.
+- [x] 5.2 Add a streaming regression test asserting `streamingText` updates incrementally and the final message is persisted.
 - [ ] 5.3 Add a Markdown rendering test for assistant bubbles.
 - [ ] 5.4 Update `ChatInterfaceUITests` for single-chat entry + top-right profile button.

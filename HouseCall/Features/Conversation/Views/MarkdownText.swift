@@ -27,19 +27,15 @@ private enum MarkdownBlock {
 
 /// Converts a raw Markdown string into an ordered list of block elements.
 ///
+/// Pure function — no mutable state. Memoization is the caller's responsibility
+/// (see `MarkdownText.cached` for the view-scoped cache).
+///
 /// Safe with partial/unterminated Markdown that arrives during streaming:
 /// an unclosed fence or incomplete inline span is treated as best-effort
 /// plain text rather than crashing or producing garbage output.
 private struct MarkdownParser {
 
-    // Cache: keyed on full content so identical SwiftUI re-renders skip re-parsing.
-    // Streaming correctness: each new chunk produces a distinct string → cache miss
-    // → parsed once → result stored. Evicted wholesale at >200 entries to bound
-    // memory across a long session.
-    private static var parseCache: [String: [MarkdownBlock]] = [:]
-
     static func parse(_ content: String) -> [MarkdownBlock] {
-        if let cached = parseCache[content] { return cached }
         var blocks: [MarkdownBlock] = []
         let lines = content.components(separatedBy: "\n")
         var i = 0
@@ -126,8 +122,6 @@ private struct MarkdownParser {
         }
 
         flushParagraph()
-        if parseCache.count > 200 { parseCache.removeAll() }
-        parseCache[content] = blocks
         return blocks
     }
 
@@ -207,8 +201,22 @@ private struct MarkdownParser {
 struct MarkdownText: View {
     let content: String
 
+    /// View-scoped parse memo. Holds the most-recently-parsed `(content, blocks)`
+    /// pair. Released when this view is torn down — decrypted message text is
+    /// never retained beyond the view's lifetime (HIPAA: PHI-in-memory scope
+    /// matches `decryptedContent` in `MessageBubbleView`).
+    @State private var cached: (content: String, blocks: [MarkdownBlock])? = nil
+
     var body: some View {
-        let blocks = MarkdownParser.parse(content)
+        // Read-only access to @State — no mutation during view evaluation, so no
+        // "Modifying state during view update" warning.
+        // Falls back to a direct parse when the cache is cold (first render before
+        // onAppear fires). Each distinct streaming chunk causes one parse; identical
+        // re-renders (same content) return the cached result immediately.
+        let blocks = (cached?.content == content)
+            ? cached!.blocks
+            : MarkdownParser.parse(content)
+
         VStack(alignment: .leading, spacing: 4) {
             ForEach(blocks.indices, id: \.self) { i in
                 blockView(for: blocks[i])
@@ -223,6 +231,14 @@ struct MarkdownText: View {
         // Markdown markers stripped (no "pound pound", "star star", backticks).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.plainText(from: blocks))
+        // Populate the cache after the first render and whenever content grows
+        // (streaming). Mutations happen in lifecycle callbacks — never inside body.
+        .onAppear {
+            cached = (content, MarkdownParser.parse(content))
+        }
+        .onChange(of: content) {
+            cached = (content, MarkdownParser.parse(content))
+        }
     }
 
     // MARK: Block Rendering

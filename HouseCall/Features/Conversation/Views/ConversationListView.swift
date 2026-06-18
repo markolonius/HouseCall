@@ -311,7 +311,6 @@ class ConversationListViewModel: ObservableObject {
     private func handleError(_ error: Error, message: String) {
         errorMessage = message
         showError = true
-        print("ConversationListViewModel error: \(error.localizedDescription)")
     }
 }
 

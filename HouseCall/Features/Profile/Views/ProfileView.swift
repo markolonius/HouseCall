@@ -74,6 +74,7 @@ struct ProfileView: View {
                             Spacer()
                         }
                     }
+                    .accessibilityIdentifier("profileLogoutButton")
                 }
             }
             .navigationTitle("Profile")

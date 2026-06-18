@@ -82,6 +82,7 @@ struct ChatView: View {
                     Image(systemName: "person.circle")
                         .accessibilityLabel("Profile")
                 }
+                .accessibilityIdentifier("profileButton")
             }
         }
         .sheet(isPresented: $showProfile) {
@@ -102,6 +103,7 @@ struct ChatView: View {
                 .focused($isInputFocused)
                 .disabled(viewModel.isStreaming)
                 .lineLimit(1...5)
+                .accessibilityIdentifier("chatMessageInput")
 
             // Clear button
             if !messageText.isEmpty && !viewModel.isStreaming {
@@ -118,6 +120,7 @@ struct ChatView: View {
                     .foregroundColor(canSend ? .blue : .gray)
             }
             .disabled(!canSend)
+            .accessibilityIdentifier("chatSendButton")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

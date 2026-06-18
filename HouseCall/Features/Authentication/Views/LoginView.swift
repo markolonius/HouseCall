@@ -41,6 +41,7 @@ struct LoginView: View {
                                 .autocapitalization(.none)
                                 .keyboardType(.emailAddress)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .accessibilityIdentifier("loginEmailField")
                         }
 
                         // Credential (Password or Passcode)
@@ -58,6 +59,7 @@ struct LoginView: View {
                                     SecureField("Enter password", text: $viewModel.credential)
                                         .textContentType(.password)
                                         .textFieldStyle(RoundedBorderTextFieldStyle())
+                                        .accessibilityIdentifier("loginPasswordField")
                                 }
                             }
                         }
@@ -115,6 +117,7 @@ struct LoginView: View {
                         .cornerRadius(10)
                     }
                     .disabled(!viewModel.canSubmit)
+                    .accessibilityIdentifier("loginSubmitButton")
 
                     // Sign Up Link
                     VStack(spacing: 16) {

@@ -82,7 +82,7 @@ class EncryptionManager {
     ///
     /// Behaviour:
     /// 1. Returns the in-memory cached key immediately (fastest path, also used
-    ///    when `_testInjectMasterKey` has been called in DEBUG builds).
+    ///    when `_testInjectMasterKey` has been called in `#if DEBUG` builds).
     /// 2. Retrieves an existing key from the Keychain.
     /// 3. Generates a fresh 256-bit key and persists it in the Keychain.
     ///    If the Keychain write fails the error is propagated — silently
@@ -248,6 +248,7 @@ class EncryptionManager {
 
     // MARK: - Test Support
 
+#if DEBUG
     /// Seeds a fixed master key directly into the in-memory cache without
     /// touching the Keychain.
     ///
@@ -274,4 +275,5 @@ class EncryptionManager {
     static func _testMakeInstance(keychainManager: KeychainManager) -> EncryptionManager {
         EncryptionManager(keychainManager: keychainManager)
     }
+#endif
 }

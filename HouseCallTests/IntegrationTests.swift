@@ -600,48 +600,6 @@ struct AIChatIntegrationTests {
         #expect(assistantMessages[0].streamingComplete == true)
     }
 
-    @Test("Provider switching maintains conversation context")
-    @MainActor
-    func testProviderSwitching() async throws {
-        let components = createChatTestComponents()
-        let aiService = components.aiService
-        let userId = components.userId
-        let conversationRepo = components.conversationRepo
-
-        // Create conversation with OpenAI
-        let conversation = try await aiService.createConversation(
-            provider: .openai
-        )
-
-        #expect(conversation.llmProvider == "openai")
-
-        // Send first message
-        try await aiService.sendMessage(
-            conversationId: conversation.id!,
-            content: "First message"
-        )
-
-        // Switch to Claude
-        try await aiService.switchProvider(
-            conversationId: conversation.id!,
-            to: .claude
-        )
-
-        // Verify provider switched
-        let updatedConversation = try conversationRepo.fetchConversation(id: conversation.id!)
-        #expect(updatedConversation?.llmProvider == "claude")
-
-        // Send second message with new provider
-        try await aiService.sendMessage(
-            conversationId: conversation.id!,
-            content: "Second message"
-        )
-
-        // Both messages should be in the conversation
-        let messages = try components.messageRepo.fetchAllMessages(conversationId: conversation.id!)
-        #expect(messages.count >= 4) // 2 user messages + 2 AI responses
-    }
-
     @Test("Streaming message updates work correctly")
     @MainActor
     func testStreamingMessageUpdates() async throws {

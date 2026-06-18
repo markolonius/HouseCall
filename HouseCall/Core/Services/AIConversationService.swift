@@ -176,57 +176,6 @@ class AIConversationService: ObservableObject {
         self.messages = fetchedMessages
     }
 
-    /// Switches the LLM provider for a conversation
-    /// - Parameters:
-    ///   - conversationId: UUID of the conversation
-    ///   - newProvider: New provider type to use
-    /// - Throws: ConversationRepositoryError, LLMError
-    func switchProvider(conversationId: UUID, to newProvider: LLMProviderType) async throws {
-        // Verify provider is configured.
-        // In DEBUG builds a test-provider override bypasses this check.
-        #if DEBUG
-        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(newProvider) else {
-            throw LLMError.notConfigured
-        }
-        #else
-        guard providerConfigManager.isProviderConfigured(newProvider) else {
-            throw LLMError.notConfigured
-        }
-        #endif
-
-        // Update conversation provider
-        try conversationRepository.updateConversationProvider(id: conversationId, provider: newProvider)
-
-        // Create system message indicating switch
-        let systemMessage = try messageRepository.createMessage(
-            conversationId: conversationId,
-            role: .system,
-            content: "Provider switched to \(newProvider.displayName)",
-            streamingComplete: true
-        )
-
-        // Log provider switch
-        try? auditLogger.log(
-            event: .conversationProviderSwitched,
-            userId: userId,
-            details: AuditEventDetails(
-                additionalInfo: [
-                    "conversationId": conversationId.uuidString,
-                    "newProvider": newProvider.rawValue
-                ]
-            )
-        )
-
-        // Update current conversation if it's the active one
-        if currentConversation?.id == conversationId {
-            currentConversation = try conversationRepository.fetchConversation(id: conversationId)
-            messages.append(systemMessage)
-        }
-
-        // Clear current provider to force recreation with new type
-        currentProvider = nil
-    }
-
     // MARK: - Message Handling
 
     /// Sends a message and either POSTs to the Core API (cloud path) or falls

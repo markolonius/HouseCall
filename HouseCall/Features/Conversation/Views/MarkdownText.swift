@@ -15,7 +15,7 @@ import SwiftUI
 // MARK: - Block Model
 
 /// A parsed Markdown block element.
-private enum MarkdownBlock {
+enum MarkdownBlock: Equatable {
     case heading(level: Int, text: String)
     case paragraph(text: String)
     case unorderedItem(indent: Int, text: String)
@@ -27,10 +27,13 @@ private enum MarkdownBlock {
 
 /// Converts a raw Markdown string into an ordered list of block elements.
 ///
+/// Pure function — no mutable state. Memoization is the caller's responsibility
+/// (see `MarkdownText.cached` for the view-scoped cache).
+///
 /// Safe with partial/unterminated Markdown that arrives during streaming:
 /// an unclosed fence or incomplete inline span is treated as best-effort
 /// plain text rather than crashing or producing garbage output.
-private struct MarkdownParser {
+struct MarkdownParser {
 
     static func parse(_ content: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -198,11 +201,25 @@ private struct MarkdownParser {
 struct MarkdownText: View {
     let content: String
 
+    /// View-scoped parse memo. Holds the most-recently-parsed `(content, blocks)`
+    /// pair. Released when this view is torn down — decrypted message text is
+    /// never retained beyond the view's lifetime (HIPAA: PHI-in-memory scope
+    /// matches `decryptedContent` in `MessageBubbleView`).
+    @State private var cached: (content: String, blocks: [MarkdownBlock])? = nil
+
     var body: some View {
-        let blocks = MarkdownParser.parse(content)
+        // Read-only access to @State — no mutation during view evaluation, so no
+        // "Modifying state during view update" warning.
+        // Falls back to a direct parse when the cache is cold (first render before
+        // onAppear fires). Each distinct streaming chunk causes one parse; identical
+        // re-renders (same content) return the cached result immediately.
+        let blocks = (cached?.content == content)
+            ? cached!.blocks
+            : MarkdownParser.parse(content)
+
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(for: block)
+            ForEach(blocks.indices, id: \.self) { i in
+                blockView(for: blocks[i])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -214,6 +231,14 @@ struct MarkdownText: View {
         // Markdown markers stripped (no "pound pound", "star star", backticks).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.plainText(from: blocks))
+        // Populate the cache after the first render and whenever content grows
+        // (streaming). Mutations happen in lifecycle callbacks — never inside body.
+        .onAppear {
+            cached = (content, MarkdownParser.parse(content))
+        }
+        .onChange(of: content) {
+            cached = (content, MarkdownParser.parse(content))
+        }
     }
 
     // MARK: Block Rendering
@@ -292,7 +317,9 @@ struct MarkdownText: View {
         case 1:  return .title2
         case 2:  return .title3
         case 3:  return .headline
-        default: return .subheadline
+        case 4:  return .subheadline   // bold via call-site .fontWeight(.bold)
+        case 5:  return .footnote      // visually smaller than h4
+        default: return .caption       // level 6 — smallest heading
         }
     }
 
@@ -306,7 +333,7 @@ struct MarkdownText: View {
     /// PHI note: the returned string contains message content. That is
     /// correct — VoiceOver is on-device display, equivalent to reading the
     /// visible text. Nothing here is logged, printed, or sent to any service.
-    private static func plainText(from blocks: [MarkdownBlock]) -> String {
+    static func plainText(from blocks: [MarkdownBlock]) -> String {
         blocks
             .compactMap { block -> String? in
                 switch block {
@@ -326,8 +353,24 @@ struct MarkdownText: View {
                 }
             }
             .filter { !$0.isEmpty }
-            .joined(separator: ". ")
+            .reduce("") { acc, text in
+                guard !acc.isEmpty else { return text }
+                // If the previous block already ends with terminal punctuation
+                // (.  !  ?) don't prepend another period — use a plain space.
+                let terminalPunct: [Character] = [".", "!", "?"]
+                let sep = acc.last.map { terminalPunct.contains($0) } == true
+                    ? " " : ". "
+                return acc + sep + text
+            }
     }
+
+    // Compiled once and reused across all stripInlineMarkdown calls.
+    // linkRegex:        complete [text](url)  → text
+    // partialLinkRegex: dangling [text](url   → text  (no closing paren, end of string)
+    private static let linkRegex = try? NSRegularExpression(
+        pattern: #"\[([^\]]*)\]\([^)]*\)"#)
+    private static let partialLinkRegex = try? NSRegularExpression(
+        pattern: #"\[([^\]]*)\]\([^)]*$"#)
 
     /// Strips common inline Markdown markers from `text`.
     /// Order matters: remove `**`/`__` (bold) before `*`/`_` (italic) so that
@@ -336,7 +379,7 @@ struct MarkdownText: View {
     ///   *italic*    → italic
     ///   `code`      → code
     ///   [text](url) → text
-    private static func stripInlineMarkdown(_ text: String) -> String {
+    static func stripInlineMarkdown(_ text: String) -> String {
         var s = text
         // Bold markers first (two-char sequences).
         s = s.replacingOccurrences(of: "**", with: "")
@@ -346,8 +389,15 @@ struct MarkdownText: View {
         s = s.replacingOccurrences(of: "_", with: "")
         // Inline code backticks.
         s = s.replacingOccurrences(of: "`", with: "")
-        // Links: [link text](https://example.com) → link text.
-        if let regex = try? NSRegularExpression(pattern: #"\[([^\]]*)\]\([^)]*\)"#) {
+        // Complete links: [text](url) → text.
+        if let regex = Self.linkRegex {
+            let range = NSRange(s.startIndex..., in: s)
+            s = regex.stringByReplacingMatches(in: s, range: range,
+                                               withTemplate: "$1")
+        }
+        // Partial-streamed link: [text](url with no closing paren at end of
+        // string → text. Keeps mid-stream VoiceOver output clean.
+        if let regex = Self.partialLinkRegex {
             let range = NSRange(s.startIndex..., in: s)
             s = regex.stringByReplacingMatches(in: s, range: range,
                                                withTemplate: "$1")

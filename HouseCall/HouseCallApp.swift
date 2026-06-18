@@ -12,9 +12,23 @@ import CoreData
 struct HouseCallApp: App {
     let persistenceController = PersistenceController.shared
 
-    @StateObject private var authService = AuthenticationService.shared
-    @StateObject private var screenProtectionManager = ScreenProtectionManager.shared
+    // Declared without a default value so that init() can run the UI-test
+    // bootstrap (session-clear + test-user seed) BEFORE AuthenticationService
+    // is initialised and calls restoreSession().
+    @StateObject private var authService: AuthenticationService
+    @StateObject private var screenProtectionManager: ScreenProtectionManager
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        #if DEBUG
+        // Must run before AuthenticationService.shared is initialised.
+        // Clears any leftover Keychain session and seeds the synthetic test
+        // account so UI tests always start on the login screen.
+        UITestBootstrap.prepareIfNeeded()
+        #endif
+        _authService = StateObject(wrappedValue: AuthenticationService.shared)
+        _screenProtectionManager = StateObject(wrappedValue: ScreenProtectionManager.shared)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -217,6 +231,45 @@ private struct AutoLaunchChatView: View {
         }
     }
 }
+
+#if DEBUG
+// MARK: - UI Test Bootstrap (DEBUG only — never shipped in production builds)
+
+/// Bootstraps a deterministic synthetic test account when the app is launched
+/// under XCUITest.  Protected by BOTH a compiler flag (#if DEBUG) and the
+/// explicit "UI-TESTING" launch argument, so it cannot activate in a Release
+/// build or in a normal debug run that omits the argument.
+///
+/// HIPAA note: the seeded account uses a wholly synthetic identifier
+/// (uitest@housecall.app) with no real patient data. The bootstrap is
+/// idempotent — if the test user already exists the creation error is
+/// swallowed. No PHI is logged.
+enum UITestBootstrap {
+    // Must stay in sync with ChatInterfaceUITests.loginTestUser().
+    static let testEmail    = "uitest@housecall.app"
+    static let testPassword = "UITest12345!"
+
+    static func prepareIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("UI-TESTING") else { return }
+
+        // 1. Clear any Keychain session token left over from a previous test
+        //    run so AuthenticationService.restoreSession() finds nothing and
+        //    the app always starts on the login screen.
+        try? KeychainManager.shared.deleteSessionToken()
+
+        // 2. Seed the synthetic test account (no-op if it already exists).
+        let repo = CoreDataUserRepository()
+        guard !repo.isEmailRegistered(testEmail) else { return }
+        _ = try? repo.createUser(
+            email: testEmail,
+            password: testPassword,
+            passcode: nil,
+            fullName: "UI Test",      // Synthetic — not real PHI
+            authMethod: .password
+        )
+    }
+}
+#endif
 
 #Preview {
     RootView()

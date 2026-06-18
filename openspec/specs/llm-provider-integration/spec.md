@@ -1,10 +1,11 @@
-# Specification: LLM Provider Integration
+# llm-provider-integration Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change add-ai-chat-interface. Update Purpose after archive.
+## Requirements
 ### Requirement: Support multiple LLM providers
 
-The system shall support integration with OpenAI, Anthropic Claude, and custom/self-hosted LLM providers through a unified provider interface.
+The system SHALL support integration with OpenAI, Anthropic Claude, and custom/self-hosted LLM providers through a unified provider interface.
 
 #### Scenario: OpenAI provider generates response
 
@@ -39,7 +40,7 @@ The system shall support integration with OpenAI, Anthropic Claude, and custom/s
 
 ### Requirement: Stream responses using Server-Sent Events
 
-All LLM providers shall return streaming responses using SSE format to enable real-time token-by-token display.
+All LLM providers SHALL return streaming responses using SSE format to enable real-time token-by-token display.
 
 #### Scenario: Parse OpenAI SSE stream
 
@@ -73,7 +74,7 @@ Packet 2: "tent\":\"Hello\"}}]}\n\n"
 
 ### Requirement: Implement provider-specific authentication
 
-Each LLM provider shall use its required authentication mechanism securely.
+Each LLM provider SHALL use its required authentication mechanism securely.
 
 #### Scenario: OpenAI authentication with API key
 
@@ -102,7 +103,7 @@ Each LLM provider shall use its required authentication mechanism securely.
 
 ### Requirement: Handle provider errors gracefully
 
-The system shall detect and handle provider-specific errors with appropriate retry logic and user feedback.
+The system SHALL detect and handle provider-specific errors with appropriate retry logic and user feedback.
 
 #### Scenario: OpenAI rate limit error (429)
 
@@ -135,7 +136,7 @@ The system shall detect and handle provider-specific errors with appropriate ret
 
 ### Requirement: Manage conversation context across providers
 
-When switching providers, the system shall maintain conversation history and context appropriately.
+When switching providers, the system SHALL maintain conversation history and context appropriately.
 
 #### Scenario: Switch from OpenAI to Claude mid-conversation
 
@@ -154,7 +155,7 @@ When switching providers, the system shall maintain conversation history and con
 
 ### Requirement: Implement retry logic with exponential backoff
 
-Transient network errors shall be handled with intelligent retry logic to improve reliability.
+Transient network errors SHALL be handled with intelligent retry logic to improve reliability.
 
 #### Scenario: Retry on network failure
 
@@ -179,7 +180,7 @@ Transient network errors shall be handled with intelligent retry logic to improv
 
 ### Requirement: Support provider-specific configuration
 
-Each provider shall have configurable settings including model selection, temperature, max tokens, and system prompts.
+Each provider SHALL have configurable settings including model selection, temperature, max tokens, and system prompts.
 
 #### Scenario: Configure OpenAI model selection
 
@@ -214,7 +215,7 @@ Each provider shall have configurable settings including model selection, temper
 
 ### Requirement: Implement provider fallback mechanism
 
-The system shall support automatic fallback to alternative providers when the primary provider fails.
+The system SHALL support automatic fallback to alternative providers when the primary provider fails.
 
 #### Scenario: Fallback from OpenAI to Claude on failure
 
@@ -238,7 +239,7 @@ The system shall support automatic fallback to alternative providers when the pr
 
 ### Requirement: Log all provider interactions for audit compliance
 
-All LLM API calls shall be logged to the audit trail for HIPAA compliance.
+All LLM API calls SHALL be logged to the audit trail for HIPAA compliance.
 
 #### Scenario: Log successful API interaction
 
@@ -265,3 +266,23 @@ All LLM API calls shall be logged to the audit trail for HIPAA compliance.
 - Error code: 500
 - Success: false
 **And** the error response body is NOT logged (may contain PHI)
+
+### Requirement: Use a hardcoded default provider with no user configuration
+
+The app SHALL use a single default LLM provider and API key sourced from build
+configuration. No provider selection, API-key entry, or model/temperature
+configuration SHALL be exposed in the patient-facing UI.
+
+#### Scenario: Every conversation uses the default provider
+
+- **GIVEN** a patient starts or resumes any conversation
+- **WHEN** a message is sent
+- **THEN** the request uses the hardcoded default provider and key
+- **AND** the patient is never prompted to choose or configure a provider
+
+#### Scenario: No provider configuration surface exists
+
+- **WHEN** the patient navigates the app, including the profile surface
+- **THEN** there is no screen, link, or control for AI/LLM provider settings
+- **AND** the API key is not displayed anywhere in the UI
+

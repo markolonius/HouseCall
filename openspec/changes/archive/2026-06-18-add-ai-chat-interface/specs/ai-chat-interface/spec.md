@@ -4,7 +4,7 @@
 
 ### Requirement: Display real-time chat conversation
 
-Users shall be able to view a real-time chat conversation with the AI health assistant, displaying both user messages and AI responses in a familiar messaging interface.
+Users SHALL be able to view a real-time chat conversation with the AI health assistant, displaying both user messages and AI responses in a familiar messaging interface.
 
 #### Scenario: User sends message and receives streaming response
 
@@ -28,7 +28,7 @@ Users shall be able to view a real-time chat conversation with the AI health ass
 
 ### Requirement: Stream AI responses in real-time
 
-AI responses shall stream token-by-token to the user interface, providing immediate feedback and reducing perceived latency for long responses.
+AI responses SHALL stream token-by-token to the user interface, providing immediate feedback and reducing perceived latency for long responses.
 
 #### Scenario: Long AI response streams smoothly
 
@@ -52,7 +52,7 @@ AI responses shall stream token-by-token to the user interface, providing immedi
 
 ### Requirement: Enable message input and sending
 
-Users shall be able to compose and send text messages to the AI assistant through an intuitive input interface.
+Users SHALL be able to compose and send text messages to the AI assistant through an intuitive input interface.
 
 #### Scenario: User composes and sends a message
 
@@ -83,7 +83,7 @@ Users shall be able to compose and send text messages to the AI assistant throug
 
 ### Requirement: Provide conversation list view
 
-Users shall be able to view a list of all their conversations and create new conversations with the AI assistant.
+Users SHALL be able to view a list of all their conversations and create new conversations with the AI assistant.
 
 #### Scenario: User views all conversations
 
@@ -116,7 +116,7 @@ Users shall be able to view a list of all their conversations and create new con
 
 ### Requirement: Support LLM provider selection
 
-Users shall be able to view and select which LLM provider to use for each conversation.
+Users SHALL be able to view and select which LLM provider to use for each conversation.
 
 #### Scenario: User views current provider
 
@@ -138,7 +138,7 @@ Users shall be able to view and select which LLM provider to use for each conver
 
 ### Requirement: Display error states gracefully
 
-The chat interface shall display clear, actionable error messages when issues occur, without exposing sensitive system information.
+The chat interface SHALL display clear, actionable error messages when issues occur, without exposing sensitive system information.
 
 #### Scenario: API authentication failure
 
@@ -169,7 +169,7 @@ The chat interface shall display clear, actionable error messages when issues oc
 
 ### Requirement: Maintain HIPAA compliance in UI
 
-All patient health information displayed in the chat interface shall be protected according to HIPAA requirements.
+All patient health information displayed in the chat interface SHALL be protected according to HIPAA requirements.
 
 #### Scenario: Screen capture protection
 

@@ -4,7 +4,7 @@
 
 ### Requirement: Create and store conversations securely
 
-Conversations and their messages shall be created, encrypted, and persisted to Core Data with full HIPAA compliance.
+Conversations and their messages SHALL be created, encrypted, and persisted to Core Data with full HIPAA compliance.
 
 #### Scenario: Create new conversation
 
@@ -34,7 +34,7 @@ Conversations and their messages shall be created, encrypted, and persisted to C
 
 ### Requirement: Store messages with encryption
 
-All conversation messages shall be encrypted before storage in Core Data.
+All conversation messages SHALL be encrypted before storage in Core Data.
 
 #### Scenario: Save user message
 
@@ -71,7 +71,7 @@ All conversation messages shall be encrypted before storage in Core Data.
 
 ### Requirement: Retrieve and decrypt conversations
 
-Users shall be able to retrieve their conversation history with transparent decryption.
+Users SHALL be able to retrieve their conversation history with transparent decryption.
 
 #### Scenario: Fetch all conversations for user
 
@@ -95,7 +95,7 @@ Users shall be able to retrieve their conversation history with transparent decr
 
 ### Requirement: Update conversation metadata
 
-Conversation metadata (last updated time, title) shall update automatically when new messages are added.
+Conversation metadata (last updated time, title) SHALL update automatically when new messages are added.
 
 #### Scenario: Update conversation timestamp on new message
 
@@ -115,7 +115,7 @@ Conversation metadata (last updated time, title) shall update automatically when
 
 ### Requirement: Delete conversations securely
 
-Users shall be able to delete conversations with secure deletion of all associated data.
+Users SHALL be able to delete conversations with secure deletion of all associated data.
 
 #### Scenario: Delete single conversation
 
@@ -141,7 +141,7 @@ Users shall be able to delete conversations with secure deletion of all associat
 
 ### Requirement: Implement conversation pagination
 
-For conversations with many messages, the system shall implement efficient pagination to avoid memory issues.
+For conversations with many messages, the system SHALL implement efficient pagination to avoid memory issues.
 
 #### Scenario: Load initial messages
 
@@ -163,7 +163,7 @@ For conversations with many messages, the system shall implement efficient pagin
 
 ### Requirement: Handle offline conversation access
 
-Users shall be able to view existing conversations even when offline, with graceful handling of offline limitations.
+Users SHALL be able to view existing conversations even when offline, with graceful handling of offline limitations.
 
 #### Scenario: View conversation history offline
 
@@ -186,7 +186,7 @@ Users shall be able to view existing conversations even when offline, with grace
 
 ### Requirement: Maintain message ordering and integrity
 
-Message timestamps and ordering shall be strictly maintained to preserve conversation flow.
+Message timestamps and ordering SHALL be strictly maintained to preserve conversation flow.
 
 #### Scenario: Preserve message order
 
@@ -212,7 +212,7 @@ Message timestamps and ordering shall be strictly maintained to preserve convers
 
 ### Requirement: Integrate with audit logging system
 
-All conversation operations shall be logged to the existing HIPAA-compliant audit trail.
+All conversation operations SHALL be logged to the existing HIPAA-compliant audit trail.
 
 #### Scenario: Log conversation creation
 
@@ -251,7 +251,7 @@ All conversation operations shall be logged to the existing HIPAA-compliant audi
 
 ### Requirement: Support conversation export (future capability placeholder)
 
-The system shall be designed to support future conversation export functionality for patient records.
+The system SHALL be designed to support future conversation export functionality for patient records.
 
 #### Scenario: Placeholder for FHIR export
 
@@ -269,7 +269,7 @@ The system shall be designed to support future conversation export functionality
 
 ### Requirement: Handle Core Data conflicts gracefully
 
-The system shall handle potential Core Data merge conflicts without data loss.
+The system SHALL handle potential Core Data merge conflicts without data loss.
 
 #### Scenario: Resolve merge conflict on save
 

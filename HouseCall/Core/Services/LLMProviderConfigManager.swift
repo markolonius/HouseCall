@@ -72,6 +72,39 @@ class LLMProviderConfigManager: ObservableObject {
         return key
     }
 
+    /// Custom provider config derived from LLM_CUSTOM_BASE_URL / LLM_CUSTOM_ENDPOINT /
+    /// LLM_CUSTOM_MODEL build settings (substituted via Info.plist at build time).
+    ///
+    /// Returns nil when LLMCustomBaseURL is absent or empty (unsubstituted `$(…)` values
+    /// are treated as absent so a missing Secrets.xcconfig never produces a broken config).
+    ///
+    /// Ollama needs no API key, so `requiresAuth` is always false here.
+    private func buildConfigCustomConfig() -> CustomProviderConfig? {
+        guard let baseURL = Bundle.main.object(forInfoDictionaryKey: "LLMCustomBaseURL") as? String,
+              !baseURL.isEmpty,
+              // Guard against unresolved xcconfig placeholders such as "$(LLM_CUSTOM_BASE_URL)"
+              !baseURL.hasPrefix("$(") else {
+            return nil
+        }
+
+        let rawEndpoint = Bundle.main.object(forInfoDictionaryKey: "LLMCustomEndpoint") as? String ?? ""
+        let endpoint = (rawEndpoint.isEmpty || rawEndpoint.hasPrefix("$("))
+            ? "v1/chat/completions"
+            : rawEndpoint
+
+        let rawModel = Bundle.main.object(forInfoDictionaryKey: "LLMCustomModel") as? String ?? ""
+        let model = (rawModel.isEmpty || rawModel.hasPrefix("$("))
+            ? "llama3"
+            : rawModel
+
+        return CustomProviderConfig(
+            baseURL: baseURL,
+            endpoint: endpoint,
+            model: model,
+            requiresAuth: false
+        )
+    }
+
     // MARK: - Provider Selection
 
     /// Set the active provider (preserved for backward compat; does not override build config)
@@ -175,14 +208,23 @@ class LLMProviderConfigManager: ObservableObject {
         }
     }
 
-    /// Load custom provider configuration
+    /// Load custom provider configuration.
+    ///
+    /// Priority:
+    ///  1. UserDefaults (any config previously saved via saveCustomProviderConfig(_:)).
+    ///  2. Build-config values from LLM_CUSTOM_BASE_URL / LLM_CUSTOM_ENDPOINT /
+    ///     LLM_CUSTOM_MODEL (substituted via Info.plist at build time).
+    ///
+    /// This lets Secrets.xcconfig act as the working default for local Ollama
+    /// testing with no Settings UI required.
     func loadCustomProviderConfig() -> CustomProviderConfig? {
         let key = "\(configKeyPrefix)_custom"
         if let data = userDefaults.data(forKey: key),
            let config = try? JSONDecoder().decode(CustomProviderConfig.self, from: data) {
             return config
         }
-        return nil
+        // Fall back to build-config (Secrets.xcconfig → Info.plist substitution).
+        return buildConfigCustomConfig()
     }
 
     // MARK: - Provider Configuration Access

@@ -7,5 +7,24 @@
 	<string>$(LLM_DEFAULT_PROVIDER)</string>
 	<key>LLMDefaultAPIKey</key>
 	<string>$(LLM_DEFAULT_API_KEY)</string>
+	<!-- Custom / self-hosted provider settings (used when LLMDefaultProvider = custom). -->
+	<key>LLMCustomBaseURL</key>
+	<string>$(LLM_CUSTOM_BASE_URL)</string>
+	<key>LLMCustomEndpoint</key>
+	<string>$(LLM_CUSTOM_ENDPOINT)</string>
+	<key>LLMCustomModel</key>
+	<string>$(LLM_CUSTOM_MODEL)</string>
+	<!--
+	    NSAllowsLocalNetworking permits plain-HTTP connections to loopback
+	    (127.0.0.1 / localhost) and .local mDNS hosts only.
+	    This is the minimal ATS exception needed for local Ollama (HTTP) during
+	    local/dev testing.  It does NOT enable arbitrary HTTP.
+	    Production PHI traffic must always use TLS.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

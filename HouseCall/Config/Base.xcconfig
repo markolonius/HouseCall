@@ -11,12 +11,23 @@
 // The '?' in #include? makes the include optional: the build succeeds even when
 // Secrets.xcconfig is absent (fresh clone, CI environment without the file).
 
+// xcconfig does not allow // in values (it starts a comment).
+// SLASH = / lets you embed slashes when defining URL-valued settings, e.g.:
+//   LLM_CUSTOM_BASE_URL = http:$(SLASH)$(SLASH)localhost:11434
+SLASH = /
+
 // Default LLM provider used for every patient conversation.
 LLM_DEFAULT_PROVIDER = openai
 
 // API key for the default provider.
 // Keep this EMPTY here. Set the real value in the gitignored Secrets.xcconfig.
 LLM_DEFAULT_API_KEY =
+
+// Custom / self-hosted provider settings (used when LLM_DEFAULT_PROVIDER = custom).
+// Keep EMPTY here. Set real values in the gitignored Secrets.xcconfig.
+LLM_CUSTOM_BASE_URL =
+LLM_CUSTOM_ENDPOINT =
+LLM_CUSTOM_MODEL =
 
 // Optional include of the gitignored secrets file.
 // Values in Secrets.xcconfig override the defaults above.

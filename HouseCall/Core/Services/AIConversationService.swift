@@ -330,6 +330,10 @@ class AIConversationService: ObservableObject {
             ? AIConversationService.summaryMaxTokens
             : AIConversationService.gatheringMaxTokens
 
+        // Phase 3: when wiring the summary turn, also pass
+        // `useSummaryPrompt: summaryTurn` here so the summary prompt is swapped
+        // in alongside the larger budget — otherwise a `summaryTurn: true` call
+        // silently keeps the gathering prompt.
         let chatMessages = try buildChatContext(conversationId: conversationId)
 
         try? auditLogger.log(

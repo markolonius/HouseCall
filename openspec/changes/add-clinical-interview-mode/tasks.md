@@ -8,7 +8,7 @@ Replace `HealthcareSystemPrompt.default` with a clinician history-taking prompt
 HPI structure, open-then-focused questioning, red-flag override, professional-
 care disclaimer). Keep all existing safety constraints.
 
-### Task 1.2: Add a few-shot interview exemplar
+### Task 1.2: Add a few-shot interview exemplar  [x]
 Embed 2–3 short example turns in the prompt demonstrating the desired short
 interview cadence.
 

@@ -2,17 +2,17 @@
 
 ## Phase 1: Clinical system prompt
 
-### Task 1.1: Rewrite HealthcareSystemPrompt for interview mode
+### Task 1.1: Rewrite HealthcareSystemPrompt for interview mode  [x]
 Replace `HealthcareSystemPrompt.default` with a clinician history-taking prompt
 (persona, one-question-per-turn, brevity ≤2 sentences + single question, OPQRST
 HPI structure, open-then-focused questioning, red-flag override, professional-
 care disclaimer). Keep all existing safety constraints.
 
-### Task 1.2: Add a few-shot interview exemplar
+### Task 1.2: Add a few-shot interview exemplar  [x]
 Embed 2–3 short example turns in the prompt demonstrating the desired short
 interview cadence.
 
-### Task 1.3: Add the summary prompt variant
+### Task 1.3: Add the summary prompt variant  [x]
 Add `HealthcareSystemPrompt.summary` instructing a concise summary + preliminary
 non-diagnostic guidance + triage/red-flag advice. Define `.interview` as the
 gathering variant. Update `buildChatContext` to select the variant by phase.

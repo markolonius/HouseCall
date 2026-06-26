@@ -506,17 +506,28 @@ class AIConversationService: ObservableObject {
         }
     }
 
-    /// Builds chat context from conversation messages
-    /// - Parameter conversationId: UUID of the conversation
-    /// - Returns: Array of ChatMessage for LLM provider
+    /// Builds chat context from conversation messages.
+    /// - Parameters:
+    ///   - conversationId: UUID of the conversation.
+    ///   - useSummaryPrompt: When `true`, injects `HealthcareSystemPrompt.summary`
+    ///     (closing-turn variant). Defaults to `false`, which uses the normal
+    ///     `HealthcareSystemPrompt.interview` gathering prompt. Phase 3 will pass
+    ///     `true` when the conversation is in the summary phase; all other callers
+    ///     use the default.
+    /// - Returns: Array of ChatMessage for the LLM provider.
     /// - Throws: MessageRepositoryError
-    private func buildChatContext(conversationId: UUID) throws -> [ChatMessage] {
+    private func buildChatContext(conversationId: UUID, useSummaryPrompt: Bool = false) throws -> [ChatMessage] {
         var chatMessages: [ChatMessage] = []
+
+        // Select the prompt variant: summary for the closing turn, interview for all others.
+        let systemPrompt = useSummaryPrompt
+            ? HealthcareSystemPrompt.summary
+            : HealthcareSystemPrompt.interview
 
         // Add system prompt first
         chatMessages.append(ChatMessage(
             role: .system,
-            content: HealthcareSystemPrompt.default
+            content: systemPrompt
         ))
 
         // Add all conversation messages (excluding the placeholder we just created)

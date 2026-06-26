@@ -273,13 +273,13 @@ struct ClaudeProviderTests {
     @Test("Healthcare system prompt is used")
     func testHealthcareSystemPrompt() {
         let (provider, _, _) = createTestProvider()
-        // HealthcareSystemPrompt.default is used internally
+        // HealthcareSystemPrompt.interview is used internally
         #expect(provider.providerType == .claude)
     }
 
     @Test("System prompt can be extended")
     func testExtendedSystemPrompt() {
-        let basePrompt = HealthcareSystemPrompt.default
+        let basePrompt = HealthcareSystemPrompt.interview
         let customAddition = "Focus on pediatric care"
         let extendedPrompt = basePrompt + "\n\n" + customAddition
 
@@ -303,7 +303,7 @@ struct ClaudeProviderTests {
         let (provider, _, _) = createTestProvider()
 
         let messages = [
-            ChatMessage(role: .system, content: HealthcareSystemPrompt.default),
+            ChatMessage(role: .system, content: HealthcareSystemPrompt.interview),
             ChatMessage(role: .user, content: "I have a headache"),
             ChatMessage(role: .assistant, content: "How long have you had the headache?"),
             ChatMessage(role: .user, content: "Since this morning"),

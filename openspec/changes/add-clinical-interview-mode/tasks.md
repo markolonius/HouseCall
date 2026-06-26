@@ -12,7 +12,7 @@ care disclaimer). Keep all existing safety constraints.
 Embed 2–3 short example turns in the prompt demonstrating the desired short
 interview cadence.
 
-### Task 1.3: Add the summary prompt variant
+### Task 1.3: Add the summary prompt variant  [x]
 Add `HealthcareSystemPrompt.summary` instructing a concise summary + preliminary
 non-diagnostic guidance + triage/red-flag advice. Define `.interview` as the
 gathering variant. Update `buildChatContext` to select the variant by phase.

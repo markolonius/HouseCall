@@ -18,6 +18,21 @@ import Foundation
 import Combine
 import CoreData
 
+/// Tracks which phase of the clinical interview is active for the current conversation.
+///
+/// Phase is held in-memory only (no Core Data persistence). A conversation
+/// reopened later always starts back in `.gathering`.
+///
+/// - `gathering`: normal history-taking turns — uses the interview prompt and
+///   the small per-turn token budget.
+/// - `summary`: the closing turn — uses the summary prompt and the larger
+///   token budget. Phase 3.2 flips to this state and returns to `.gathering`
+///   after the summary turn completes.
+enum InterviewPhase {
+    case gathering
+    case summary
+}
+
 /// Service for managing AI conversations with streaming support
 @MainActor
 class AIConversationService: ObservableObject {
@@ -40,6 +55,11 @@ class AIConversationService: ObservableObject {
 
     /// ID of the message currently being streamed
     @Published private(set) var streamingMessageId: UUID?
+
+    /// Current interview phase for this conversation (in-memory only; resets to
+    /// `.gathering` when the conversation is closed or the app restarts).
+    /// Observe this from the view model to enable/disable phase-specific controls.
+    @Published private(set) var interviewPhase: InterviewPhase = .gathering
 
     // MARK: - Interview Turn Budgets
 
@@ -330,11 +350,10 @@ class AIConversationService: ObservableObject {
             ? AIConversationService.summaryMaxTokens
             : AIConversationService.gatheringMaxTokens
 
-        // Phase 3: when wiring the summary turn, also pass
-        // `useSummaryPrompt: summaryTurn` here so the summary prompt is swapped
-        // in alongside the larger budget — otherwise a `summaryTurn: true` call
-        // silently keeps the gathering prompt.
-        let chatMessages = try buildChatContext(conversationId: conversationId)
+        // Pass `useSummaryPrompt: summaryTurn` so the prompt variant and the
+        // token budget always match: summary budget ↔ summary prompt,
+        // gathering budget ↔ interview prompt.
+        let chatMessages = try buildChatContext(conversationId: conversationId, useSummaryPrompt: summaryTurn)
 
         try? auditLogger.log(
             event: .aiStreamingStarted,

@@ -19,12 +19,12 @@ gathering variant. Update `buildChatContext` to select the variant by phase.
 
 ## Phase 2: Interview-turn generation parameters
 
-### Task 2.1: Thread a per-request maxTokens override through the provider path
+### Task 2.1: Thread a per-request maxTokens override through the provider path  [x]
 Allow `AIConversationService` to pass a per-request `maxTokens` to the provider
 for the current turn without mutating stored provider config (OpenAI, Claude,
 Custom request bodies).
 
-### Task 2.2: Apply per-phase token budgets
+### Task 2.2: Apply per-phase token budgets  [x]
 Use a small budget (~160) for gathering turns and a larger budget (~512) for the
 summary turn.
 

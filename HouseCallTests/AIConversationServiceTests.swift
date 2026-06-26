@@ -638,6 +638,7 @@ private class StubLLMProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -677,6 +678,7 @@ private class MultiChunkStubProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {

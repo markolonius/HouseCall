@@ -20,17 +20,40 @@ protocol LLMProvider {
     /// Stream a completion response from the LLM
     /// - Parameters:
     ///   - messages: Array of chat messages forming the conversation context
+    ///   - maxTokensOverride: Per-request token budget that overrides the stored config
+    ///     value for this call only. Pass `nil` (the default) to use the configured value.
     ///   - onChunk: Callback invoked for each streamed token/chunk of text
     ///   - onComplete: Callback invoked when streaming completes (success or error)
     /// - Throws: LLMError if the request cannot be initiated
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws
 
     /// Cancel an ongoing streaming request
     func cancelStreaming()
+}
+
+// MARK: - LLMProvider default overload
+
+extension LLMProvider {
+    /// Convenience overload that omits `maxTokensOverride`, defaulting it to `nil`.
+    /// Allows existing call sites to continue compiling unchanged while the
+    /// four-argument form is the canonical protocol requirement.
+    func streamCompletion(
+        messages: [ChatMessage],
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping (Result<String, LLMError>) -> Void
+    ) async throws {
+        try await streamCompletion(
+            messages: messages,
+            maxTokensOverride: nil,
+            onChunk: onChunk,
+            onComplete: onComplete
+        )
+    }
 }
 
 /// Enumeration of supported LLM provider types

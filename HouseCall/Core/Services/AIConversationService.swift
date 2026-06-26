@@ -41,6 +41,20 @@ class AIConversationService: ObservableObject {
     /// ID of the message currently being streamed
     @Published private(set) var streamingMessageId: UUID?
 
+    // MARK: - Interview Turn Budgets
+
+    /// Per-phase token budgets for clinical interview turns.
+    ///
+    /// A small budget physically caps turn length, preventing essay-length replies
+    /// even when the model ignores the brevity instruction in the system prompt.
+    ///
+    /// - `gatheringMaxTokens` (~160): one short question per gathering turn.
+    /// - `summaryMaxTokens` (~512): room for the structured closing summary.
+    ///
+    /// Phase 3 selects between them via the `summaryTurn` parameter on `sendMessage`.
+    private static let gatheringMaxTokens = 160
+    private static let summaryMaxTokens   = 512
+
     // MARK: - Dependencies
 
     private let conversationRepository: ConversationRepositoryProtocol
@@ -193,7 +207,7 @@ class AIConversationService: ObservableObject {
     ///   - conversationId: UUID of the conversation
     ///   - content: User's message content
     /// - Throws: Various errors from repositories and LLM providers
-    func sendMessage(conversationId: UUID, content: String) async throws {
+    func sendMessage(conversationId: UUID, content: String, summaryTurn: Bool = false) async throws {
         // Clear any previous errors
         errorMessage = nil
 
@@ -309,6 +323,17 @@ class AIConversationService: ObservableObject {
         streamingText = ""
         isStreaming = true
 
+        // Choose the per-phase token budget.  Phase 3 will pass `summaryTurn: true`
+        // when triggering the closing summary turn; all gathering turns use the
+        // smaller budget to cap reply length regardless of model behaviour.
+        let maxTokens = summaryTurn
+            ? AIConversationService.summaryMaxTokens
+            : AIConversationService.gatheringMaxTokens
+
+        // Phase 3: when wiring the summary turn, also pass
+        // `useSummaryPrompt: summaryTurn` here so the summary prompt is swapped
+        // in alongside the larger budget — otherwise a `summaryTurn: true` call
+        // silently keeps the gathering prompt.
         let chatMessages = try buildChatContext(conversationId: conversationId)
 
         try? auditLogger.log(
@@ -325,6 +350,7 @@ class AIConversationService: ObservableObject {
         do {
             try await provider.streamCompletion(
                 messages: chatMessages,
+                maxTokensOverride: maxTokens,
                 onChunk: { [weak self] chunk in
                     Task { @MainActor in
                         self?.handleStreamChunk(chunk, messageId: aiMessage.id!)

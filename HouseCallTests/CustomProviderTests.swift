@@ -394,7 +394,7 @@ struct CustomProviderTests {
         let (provider, _, _) = createTestProvider()
 
         let messages = [
-            ChatMessage(role: .system, content: HealthcareSystemPrompt.default),
+            ChatMessage(role: .system, content: HealthcareSystemPrompt.interview),
             ChatMessage(role: .user, content: "I have a headache"),
             ChatMessage(role: .assistant, content: "How long?"),
             ChatMessage(role: .user, content: "Since morning")

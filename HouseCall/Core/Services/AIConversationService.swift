@@ -295,41 +295,154 @@ class AIConversationService: ObservableObject {
         }
 
         // --- Legacy LLM streaming path (no coordinator injected) ---
-        // Resolve from the conversation's stored provider, but fall back to the
-        // active (build-config) provider when the stored one isn't configured.
-        // This rescues conversations created under an older default provider
-        // (e.g. "openai") once the app is pointed at a hardcoded provider.
+        let (provider, providerType) = try resolveProvider(for: conversation)
+        self.currentProvider = provider
+        try await streamAssistantTurn(
+            conversationId: conversationId,
+            provider: provider,
+            providerType: providerType,
+            summaryTurn: summaryTurn
+        )
+    }
+
+    /// Transitions the current interview to its summary turn.
+    ///
+    /// Sets `interviewPhase` to `.summary`, runs a single assistant turn using
+    /// the summary prompt and the larger token budget, then resets the phase to
+    /// `.gathering` so the patient can continue the conversation.  No user
+    /// message is persisted — the model is asked to synthesise the history
+    /// gathered so far.
+    ///
+    /// Phase reset is guaranteed:
+    /// - On a synchronous setup error the `catch` block below resets immediately.
+    /// - On an asynchronous stream outcome `handleStreamComplete` resets at the
+    ///   end of the turn.
+    ///
+    /// - Parameter conversationId: UUID of the conversation to summarise.
+    /// - Throws: `ConversationRepositoryError.conversationNotFound` if the
+    ///   conversation does not exist or belongs to a different user;
+    ///   `LLMError.notConfigured` if no LLM provider is available;
+    ///   `MessageRepositoryError` on persistence failure.
+    func requestSummary(conversationId: UUID) async throws {
+        errorMessage = nil
+
+        guard let conversation = try conversationRepository.fetchConversation(id: conversationId) else {
+            throw ConversationRepositoryError.conversationNotFound
+        }
+        guard conversation.userId == userId else {
+            throw ConversationRepositoryError.conversationNotFound
+        }
+
+        // Log the summary-turn transition — event name + identifiers only, no PHI.
+        try? auditLogger.log(
+            event: .aiStreamingStarted,
+            userId: userId,
+            details: AuditEventDetails(
+                additionalInfo: [
+                    "conversationId": conversationId.uuidString,
+                    "summaryTransition": "true"
+                ]
+            )
+        )
+
+        // Flip to summary phase.  On a synchronous setup error the catch block
+        // below resets immediately; on an asynchronous stream outcome
+        // handleStreamComplete resets at the end of the turn.
+        interviewPhase = .summary
+
+        do {
+            let (provider, providerType) = try resolveProvider(for: conversation)
+            self.currentProvider = provider
+            // Run one assistant turn with the summary prompt — no user message is created.
+            try await streamAssistantTurn(
+                conversationId: conversationId,
+                provider: provider,
+                providerType: providerType,
+                summaryTurn: true
+            )
+        } catch {
+            // Synchronous setup failed — reset phase immediately so the service
+            // is not stuck in .summary.
+            interviewPhase = .gathering
+            throw error
+        }
+    }
+
+    /// Cancels the current streaming request
+    func cancelStreaming() {
+        currentProvider?.cancelStreaming()
+        isStreaming = false
+        streamingMessageId = nil
+        streamingText = ""
+
+        // Log interruption
+        if let conversationId = currentConversation?.id {
+            try? auditLogger.log(
+                event: .aiStreamingInterrupted,
+                userId: userId,
+                details: AuditEventDetails(
+                    message: "User cancelled streaming",
+                    additionalInfo: ["conversationId": conversationId.uuidString]
+                )
+            )
+        }
+    }
+
+    // MARK: - Private Methods
+
+    /// Resolves the LLM provider instance and type for a given conversation.
+    ///
+    /// Falls back to the active (build-config) provider when the stored provider
+    /// is not configured.  This rescues conversations created under an older
+    /// default provider (e.g. "openai") once the app is pointed at a hardcoded
+    /// provider.  In DEBUG builds, returns the test-injected override when present.
+    ///
+    /// - Parameter conversation: The conversation for which to resolve the provider.
+    /// - Returns: A tuple of the resolved `LLMProvider` instance and its type.
+    /// - Throws: `LLMError.notConfigured` if no usable provider is available.
+    private func resolveProvider(for conversation: Conversation) throws -> (LLMProvider, LLMProviderType) {
         var providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
         if !providerConfigManager.isProviderConfigured(providerType) {
             providerType = providerConfigManager.getActiveProvider()
         }
         // In DEBUG builds use the test-injected provider when present;
         // otherwise (and always in Release) resolve via the config manager.
-        let provider: LLMProvider
         #if DEBUG
         if let override = _testProviderOverride {
-            provider = override
-        } else {
-            guard let resolved = providerConfigManager.createProvider(type: providerType) else {
-                throw LLMError.notConfigured
-            }
-            guard resolved.isConfigured else {
-                throw LLMError.notConfigured
-            }
-            provider = resolved
+            return (override, providerType)
         }
-        #else
+        #endif
         guard let resolved = providerConfigManager.createProvider(type: providerType) else {
             throw LLMError.notConfigured
         }
         guard resolved.isConfigured else {
             throw LLMError.notConfigured
         }
-        provider = resolved
-        #endif
+        return (resolved, providerType)
+    }
 
-        self.currentProvider = provider
-
+    /// Creates the AI placeholder message, builds the chat context, and starts
+    /// the streaming turn.  Does NOT create or persist a user message.
+    ///
+    /// On success the streaming session is live; `handleStreamComplete` fires
+    /// asynchronously when the provider closes the stream.
+    /// On a synchronous setup failure the placeholder message is removed and the
+    /// error is rethrown.
+    ///
+    /// - Parameters:
+    ///   - conversationId: UUID of the conversation receiving the turn.
+    ///   - provider:       Resolved `LLMProvider` instance.
+    ///   - providerType:   Provider type used for audit logging.
+    ///   - summaryTurn:    When `true`, selects the summary prompt and the larger
+    ///                     token budget; `false` selects the gathering prompt.
+    /// - Throws: `MessageRepositoryError`, `LLMError`, or any error thrown by
+    ///   the provider's `streamCompletion` during request setup.
+    private func streamAssistantTurn(
+        conversationId: UUID,
+        provider: LLMProvider,
+        providerType: LLMProviderType,
+        summaryTurn: Bool
+    ) async throws {
         // Create placeholder AI message
         let aiMessage = try messageRepository.createMessage(
             conversationId: conversationId,
@@ -343,16 +456,12 @@ class AIConversationService: ObservableObject {
         streamingText = ""
         isStreaming = true
 
-        // Choose the per-phase token budget.  Phase 3 will pass `summaryTurn: true`
-        // when triggering the closing summary turn; all gathering turns use the
-        // smaller budget to cap reply length regardless of model behaviour.
+        // Choose the per-phase token budget and prompt variant.  Summary budget
+        // and prompt always travel together so the model receives consistent
+        // instructions for each phase.
         let maxTokens = summaryTurn
             ? AIConversationService.summaryMaxTokens
             : AIConversationService.gatheringMaxTokens
-
-        // Pass `useSummaryPrompt: summaryTurn` so the prompt variant and the
-        // token budget always match: summary budget ↔ summary prompt,
-        // gathering budget ↔ interview prompt.
         let chatMessages = try buildChatContext(conversationId: conversationId, useSummaryPrompt: summaryTurn)
 
         try? auditLogger.log(
@@ -411,28 +520,6 @@ class AIConversationService: ObservableObject {
         }
     }
 
-    /// Cancels the current streaming request
-    func cancelStreaming() {
-        currentProvider?.cancelStreaming()
-        isStreaming = false
-        streamingMessageId = nil
-        streamingText = ""
-
-        // Log interruption
-        if let conversationId = currentConversation?.id {
-            try? auditLogger.log(
-                event: .aiStreamingInterrupted,
-                userId: userId,
-                details: AuditEventDetails(
-                    message: "User cancelled streaming",
-                    additionalInfo: ["conversationId": conversationId.uuidString]
-                )
-            )
-        }
-    }
-
-    // MARK: - Private Methods
-
     /// Handles a chunk of streamed text
     private func handleStreamChunk(_ chunk: String, messageId: UUID) {
         streamingText += chunk
@@ -451,6 +538,10 @@ class AIConversationService: ObservableObject {
         conversationId: UUID,
         providerType: LLMProviderType
     ) async {
+        // Capture before modifying state so the reset at the end of this method
+        // is reliable regardless of what the success/failure branches do.
+        let wasSummaryTurn = (interviewPhase == .summary)
+
         // INVARIANT: keep isStreaming = false, streamingMessageId = nil, and
         // messages[index] = updatedMessage free of any `await` between them so
         // SwiftUI coalesces all three into a single render pass and avoids a
@@ -549,6 +640,12 @@ class AIConversationService: ObservableObject {
                 )
             }
         }
+
+        // If this completed the summary turn, return the phase to .gathering so
+        // the patient can continue the interview after seeing the summary.
+        if wasSummaryTurn {
+            interviewPhase = .gathering
+        }
     }
 
     /// Builds chat context from conversation messages.
@@ -604,7 +701,11 @@ class AIConversationService: ObservableObject {
         return chatMessages
     }
 
-    /// Clears the current conversation and messages
+    /// Clears the current conversation and messages.
+    ///
+    /// Resets all in-memory state including `interviewPhase` so that the next
+    /// conversation always starts in `.gathering` regardless of how the previous
+    /// one ended.
     func clearCurrentConversation() {
         currentConversation = nil
         messages = []
@@ -613,6 +714,7 @@ class AIConversationService: ObservableObject {
         isStreaming = false
         errorMessage = nil
         currentProvider = nil
+        interviewPhase = .gathering
     }
 
     // MARK: - Sync state helpers

@@ -57,6 +57,7 @@ class ClaudeProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -72,6 +73,7 @@ class ClaudeProvider: LLMProvider {
         try await performRequestWithRetry(
             messages: messages,
             apiKey: apiKey,
+            maxTokensOverride: maxTokensOverride,
             onChunk: onChunk,
             onComplete: onComplete
         )
@@ -93,6 +95,7 @@ class ClaudeProvider: LLMProvider {
     private func performRequestWithRetry(
         messages: [ChatMessage],
         apiKey: String,
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void,
         retryCount: Int = 0
@@ -101,6 +104,7 @@ class ClaudeProvider: LLMProvider {
             try await performRequest(
                 messages: messages,
                 apiKey: apiKey,
+                maxTokensOverride: maxTokensOverride,
                 onChunk: onChunk,
                 onComplete: onComplete
             )
@@ -115,6 +119,7 @@ class ClaudeProvider: LLMProvider {
                 try await performRequestWithRetry(
                     messages: messages,
                     apiKey: apiKey,
+                    maxTokensOverride: maxTokensOverride,
                     onChunk: onChunk,
                     onComplete: onComplete,
                     retryCount: retryCount + 1
@@ -128,6 +133,7 @@ class ClaudeProvider: LLMProvider {
     private func performRequest(
         messages: [ChatMessage],
         apiKey: String,
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -146,7 +152,7 @@ class ClaudeProvider: LLMProvider {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
 
         // Build request body
-        let requestBody = buildRequestBody(messages: messages)
+        let requestBody = buildRequestBody(messages: messages, maxTokensOverride: maxTokensOverride)
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
         // Create a fresh SSEParser per request to isolate parser state across
@@ -168,7 +174,7 @@ class ClaudeProvider: LLMProvider {
         task.resume()
     }
 
-    private func buildRequestBody(messages: [ChatMessage]) -> [String: Any] {
+    private func buildRequestBody(messages: [ChatMessage], maxTokensOverride: Int? = nil) -> [String: Any] {
         // Claude API requires separating system messages from conversation messages
         var systemPrompt = HealthcareSystemPrompt.interview
         var conversationMessages: [[String: String]] = []
@@ -188,7 +194,7 @@ class ClaudeProvider: LLMProvider {
 
         return [
             "model": config.model,
-            "max_tokens": config.maxTokens,
+            "max_tokens": maxTokensOverride ?? config.maxTokens,
             "temperature": config.temperature,
             "system": systemPrompt,
             "messages": conversationMessages,

@@ -865,6 +865,7 @@ private class MockLLMProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -909,6 +910,7 @@ private class AIChatStubProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {

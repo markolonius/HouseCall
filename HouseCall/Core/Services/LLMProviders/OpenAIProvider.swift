@@ -54,6 +54,7 @@ class OpenAIProvider: LLMProvider {
 
     func streamCompletion(
         messages: [ChatMessage],
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -69,6 +70,7 @@ class OpenAIProvider: LLMProvider {
         try await performRequestWithRetry(
             messages: messages,
             apiKey: apiKey,
+            maxTokensOverride: maxTokensOverride,
             onChunk: onChunk,
             onComplete: onComplete
         )
@@ -90,6 +92,7 @@ class OpenAIProvider: LLMProvider {
     private func performRequestWithRetry(
         messages: [ChatMessage],
         apiKey: String,
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void,
         retryCount: Int = 0
@@ -98,6 +101,7 @@ class OpenAIProvider: LLMProvider {
             try await performRequest(
                 messages: messages,
                 apiKey: apiKey,
+                maxTokensOverride: maxTokensOverride,
                 onChunk: onChunk,
                 onComplete: onComplete
             )
@@ -112,6 +116,7 @@ class OpenAIProvider: LLMProvider {
                 try await performRequestWithRetry(
                     messages: messages,
                     apiKey: apiKey,
+                    maxTokensOverride: maxTokensOverride,
                     onChunk: onChunk,
                     onComplete: onComplete,
                     retryCount: retryCount + 1
@@ -125,6 +130,7 @@ class OpenAIProvider: LLMProvider {
     private func performRequest(
         messages: [ChatMessage],
         apiKey: String,
+        maxTokensOverride: Int? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMError>) -> Void
     ) async throws {
@@ -140,7 +146,7 @@ class OpenAIProvider: LLMProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // Build request body
-        let requestBody = buildRequestBody(messages: messages)
+        let requestBody = buildRequestBody(messages: messages, maxTokensOverride: maxTokensOverride)
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
         // Create a fresh SSEParser per request to isolate parser state across
@@ -162,7 +168,7 @@ class OpenAIProvider: LLMProvider {
         task.resume()
     }
 
-    private func buildRequestBody(messages: [ChatMessage]) -> [String: Any] {
+    private func buildRequestBody(messages: [ChatMessage], maxTokensOverride: Int? = nil) -> [String: Any] {
         // Convert ChatMessages to OpenAI format
         let openAIMessages = messages.map { message in
             return [
@@ -175,7 +181,7 @@ class OpenAIProvider: LLMProvider {
             "model": config.model,
             "messages": openAIMessages,
             "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
+            "max_tokens": maxTokensOverride ?? config.maxTokens,
             "stream": true
         ]
     }

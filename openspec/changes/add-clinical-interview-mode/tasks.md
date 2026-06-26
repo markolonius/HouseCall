@@ -30,7 +30,7 @@ summary turn.
 
 ## Phase 3: Interview phase state
 
-### Task 3.1: Add interview phase to AIConversationService
+### Task 3.1: Add interview phase to AIConversationService  [x]
 Add a `gathering | summary` phase (default `gathering`), in-memory per
 conversation. Gathering turns use the interview prompt + small budget.
 

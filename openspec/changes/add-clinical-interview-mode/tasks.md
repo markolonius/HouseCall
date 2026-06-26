@@ -2,7 +2,7 @@
 
 ## Phase 1: Clinical system prompt
 
-### Task 1.1: Rewrite HealthcareSystemPrompt for interview mode
+### Task 1.1: Rewrite HealthcareSystemPrompt for interview mode  [x]
 Replace `HealthcareSystemPrompt.default` with a clinician history-taking prompt
 (persona, one-question-per-turn, brevity ≤2 sentences + single question, OPQRST
 HPI structure, open-then-focused questioning, red-flag override, professional-

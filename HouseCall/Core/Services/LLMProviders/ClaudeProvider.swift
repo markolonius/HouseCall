@@ -170,7 +170,7 @@ class ClaudeProvider: LLMProvider {
 
     private func buildRequestBody(messages: [ChatMessage]) -> [String: Any] {
         // Claude API requires separating system messages from conversation messages
-        var systemPrompt = HealthcareSystemPrompt.default
+        var systemPrompt = HealthcareSystemPrompt.interview
         var conversationMessages: [[String: String]] = []
 
         for message in messages {

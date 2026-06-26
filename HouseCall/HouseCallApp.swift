@@ -205,7 +205,7 @@ private struct AutoLaunchChatView: View {
             } else {
                 conversation = try conversationRepository.createConversation(
                     userId: userId,
-                    provider: .openai,
+                    provider: LLMProviderConfigManager.shared.getActiveProvider(),
                     title: nil
                 )
             }

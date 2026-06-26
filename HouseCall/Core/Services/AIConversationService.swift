@@ -261,7 +261,14 @@ class AIConversationService: ObservableObject {
         }
 
         // --- Legacy LLM streaming path (no coordinator injected) ---
-        let providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
+        // Resolve from the conversation's stored provider, but fall back to the
+        // active (build-config) provider when the stored one isn't configured.
+        // This rescues conversations created under an older default provider
+        // (e.g. "openai") once the app is pointed at a hardcoded provider.
+        var providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
+        if !providerConfigManager.isProviderConfigured(providerType) {
+            providerType = providerConfigManager.getActiveProvider()
+        }
         // In DEBUG builds use the test-injected provider when present;
         // otherwise (and always in Release) resolve via the config manager.
         let provider: LLMProvider

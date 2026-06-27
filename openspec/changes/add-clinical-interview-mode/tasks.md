@@ -45,7 +45,7 @@ transition (event name + identifiers only, no PHI).
 Forward to the service summary-turn method; guard against empty conversations
 and concurrent streaming.
 
-### Task 4.2: Add the summarize control to ChatView
+### Task 4.2: Add the summarize control to ChatView  [x]
 Add a "Summarize" control (disabled while streaming or with no user messages)
 with an accessibility identifier, wired to `requestSummary()`.
 

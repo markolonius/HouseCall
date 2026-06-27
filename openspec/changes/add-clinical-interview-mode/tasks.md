@@ -41,7 +41,7 @@ transition (event name + identifiers only, no PHI).
 
 ## Phase 4: Summarize-now UI
 
-### Task 4.1: Expose requestSummary() on ConversationViewModel
+### Task 4.1: Expose requestSummary() on ConversationViewModel  [x]
 Forward to the service summary-turn method; guard against empty conversations
 and concurrent streaming.
 

@@ -333,17 +333,10 @@ class AIConversationService: ObservableObject {
             throw ConversationRepositoryError.conversationNotFound
         }
 
-        // Log the summary-turn transition — event name + identifiers only, no PHI.
-        try? auditLogger.log(
-            event: .aiStreamingStarted,
-            userId: userId,
-            details: AuditEventDetails(
-                additionalInfo: [
-                    "conversationId": conversationId.uuidString,
-                    "summaryTransition": "true"
-                ]
-            )
-        )
+        // The summary-turn transition is recorded by the single
+        // `.aiStreamingStarted` audit event emitted in `streamAssistantTurn`
+        // (it carries `summaryTransition` when this turn is a summary), so no
+        // separate event is logged here — keeps one start-event per turn.
 
         // Flip to summary phase.  On a synchronous setup error the catch block
         // below resets immediately; on an asynchronous stream outcome
@@ -464,15 +457,17 @@ class AIConversationService: ObservableObject {
             : AIConversationService.gatheringMaxTokens
         let chatMessages = try buildChatContext(conversationId: conversationId, useSummaryPrompt: summaryTurn)
 
+        var streamingStartedInfo = [
+            "conversationId": conversationId.uuidString,
+            "provider": providerType.rawValue
+        ]
+        if summaryTurn {
+            streamingStartedInfo["summaryTransition"] = "true"
+        }
         try? auditLogger.log(
             event: .aiStreamingStarted,
             userId: userId,
-            details: AuditEventDetails(
-                additionalInfo: [
-                    "conversationId": conversationId.uuidString,
-                    "provider": providerType.rawValue
-                ]
-            )
+            details: AuditEventDetails(additionalInfo: streamingStartedInfo)
         )
 
         do {

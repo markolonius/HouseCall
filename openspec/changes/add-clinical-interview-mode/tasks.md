@@ -34,7 +34,7 @@ summary turn.
 Add a `gathering | summary` phase (default `gathering`), in-memory per
 conversation. Gathering turns use the interview prompt + small budget.
 
-### Task 3.2: Implement the summary turn transition
+### Task 3.2: Implement the summary turn transition  [x]
 Add a service method that sets phase to `summary`, runs one assistant turn with
 the summary prompt + larger budget, then returns phase to `gathering`. Log the
 transition (event name + identifiers only, no PHI).

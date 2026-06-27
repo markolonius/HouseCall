@@ -51,7 +51,7 @@ with an accessibility identifier, wired to `requestSummary()`.
 
 ## Phase 5: Tests and evaluation
 
-### Task 5.1: Prompt and parameter unit tests
+### Task 5.1: Prompt and parameter unit tests  [x]
 Assert the interview/summary prompt content invariants (one-question guidance,
 disclaimer present, red-flag language) and the per-phase token budgets.
 

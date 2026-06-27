@@ -51,15 +51,15 @@ with an accessibility identifier, wired to `requestSummary()`.
 
 ## Phase 5: Tests and evaluation
 
-### Task 5.1: Prompt and parameter unit tests
+### Task 5.1: Prompt and parameter unit tests  [x]
 Assert the interview/summary prompt content invariants (one-question guidance,
 disclaimer present, red-flag language) and the per-phase token budgets.
 
-### Task 5.2: Phase-state and summary-turn tests
+### Task 5.2: Phase-state and summary-turn tests  [x]
 Cover the `gathering → summary → gathering` transition and that the summary turn
 uses the summary prompt + larger budget (using the existing test provider
 override).
 
-### Task 5.3: Manual evaluation against local Ollama
+### Task 5.3: Manual evaluation against local Ollama  [ ] (manual — pending user validation)
 Verify with `medgemma:4b` that gathering turns are short single questions and
 the summarize action produces a coherent structured summary.

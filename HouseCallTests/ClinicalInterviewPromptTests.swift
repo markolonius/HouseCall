@@ -92,7 +92,7 @@ struct SummaryPromptTests {
     func historySummarySection() {
         let lower = prompt.lowercased()
         #expect(
-            lower.contains("history summary") || lower.contains("summary"),
+            lower.contains("history summary"),
             "Expected history summary instruction in summary prompt"
         )
     }

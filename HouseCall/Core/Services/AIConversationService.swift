@@ -72,8 +72,10 @@ class AIConversationService: ObservableObject {
     /// - `summaryMaxTokens` (~512): room for the structured closing summary.
     ///
     /// Phase 3 selects between them via the `summaryTurn` parameter on `sendMessage`.
-    private static let gatheringMaxTokens = 160
-    private static let summaryMaxTokens   = 512
+    /// Internal (not private) so that unit tests can assert their exact values
+    /// without hard-coding magic numbers.
+    static let gatheringMaxTokens = 160
+    static let summaryMaxTokens   = 512
 
     // MARK: - Dependencies
 

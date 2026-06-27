@@ -175,14 +175,31 @@ class ClaudeProvider: LLMProvider {
     }
 
     private func buildRequestBody(messages: [ChatMessage], maxTokensOverride: Int? = nil) -> [String: Any] {
-        // Claude API requires separating system messages from conversation messages
-        var systemPrompt = HealthcareSystemPrompt.interview
+        // Claude API requires the system prompt as a top-level field, separate
+        // from the conversation turn array.
+        //
+        // `buildChatContext` already injects the chosen prompt variant (interview
+        // or summary) as the first `.system` ChatMessage, so we use that as the
+        // Claude `system` field directly.  This avoids double-injection: the old
+        // code seeded `systemPrompt` with `HealthcareSystemPrompt.interview` and
+        // then appended every incoming `.system` message, so a summary turn would
+        // send `interview + summary` (undermining the no-further-questions
+        // constraint).  Now the `.system` message(s) from the array ARE the system
+        // prompt, and we fall back to the interview constant only when no `.system`
+        // message is present (e.g. legacy callers that build the array by hand).
+        var systemPrompt: String? = nil
         var conversationMessages: [[String: String]] = []
 
         for message in messages {
             if message.role == .system {
-                // Append to system prompt
-                systemPrompt += "\n\n" + message.content
+                // Use the first .system message as the Claude system field;
+                // concatenate any additional ones defensively (there should be
+                // exactly one from buildChatContext, but guard against edge cases).
+                if systemPrompt == nil {
+                    systemPrompt = message.content
+                } else {
+                    systemPrompt! += "\n\n" + message.content
+                }
             } else {
                 // Add to conversation messages
                 conversationMessages.append([
@@ -196,7 +213,7 @@ class ClaudeProvider: LLMProvider {
             "model": config.model,
             "max_tokens": maxTokensOverride ?? config.maxTokens,
             "temperature": config.temperature,
-            "system": systemPrompt,
+            "system": systemPrompt ?? HealthcareSystemPrompt.interview,
             "messages": conversationMessages,
             "stream": true
         ]

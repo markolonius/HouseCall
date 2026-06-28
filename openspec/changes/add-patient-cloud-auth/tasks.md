@@ -54,7 +54,7 @@ Add `CoreAPITenantID` build setting → Info.plist (alongside `CoreAPIBaseURL`),
 read in the auth/coordinator wiring. Empty → cloud auth disabled (pure local
 mode, no regression).
 
-### Task 5.2: Activate cloud sync when authenticated
+### Task 5.2: Activate cloud sync when authenticated  [x]
 With base URL + tenant + JWT present, the existing `CloudSyncCoordinator` gate
 activates after login. Verify a logged-in patient's messages route through Core
 API and agent interview questions arrive over WebSocket (resolves HouseCall-nre3).

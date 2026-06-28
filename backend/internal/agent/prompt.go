@@ -1,6 +1,7 @@
 // Package agent implements the AI Agent Runtime. This file defines the
-// clinical interview system prompt and the shared completion-marker constant
-// used by both the prompt and the server-side marker parser (Task 1.3).
+// clinical interview system prompt, the SOAP note drafting system prompt, and
+// the shared completion-marker constant used by both the prompt and the
+// server-side marker parser (Task 1.3).
 //
 // Nothing in this file is logged or included in audit metadata; the constants
 // are compile-time values consumed only at the point a model message slice is
@@ -93,3 +94,53 @@ That's helpful to know. On a scale of 0 to 10, with 10 being the worst pain you'
 ---
 
 Begin the interview with the patient's first message.`
+
+// SOAPDraftSystemPrompt instructs the model to synthesise a structured SOAP
+// note from a completed patient history interview. It is used as the system
+// message in draftSOAPNote; the full conversation history follows.
+//
+// Output format contract (MUST be preserved so parseSOAPSections can parse it):
+// The model MUST output the note using exactly these four section headers on
+// their own lines, each followed by the section content:
+//
+//	SUBJECTIVE:
+//	OBJECTIVE:
+//	ASSESSMENT:
+//	PLAN:
+//
+// Labels are matched case-insensitively and whitespace-tolerantly by the
+// parser, but the prompt uses uppercase for consistency.
+//
+// Design constraints (see design.md SOAP payload shape):
+//   - Subjective: history of present illness in the patient's words.
+//   - Objective: ONLY objective data the patient actually reported
+//     (e.g. self-measured vitals). Must NOT fabricate exam findings.
+//     If none reported, write "None reported".
+//   - Assessment: preliminary clinical impression — NOT a definitive diagnosis.
+//   - Plan: recommended follow-up, monitoring, or referral.
+const SOAPDraftSystemPrompt = `You are a licensed clinician writing a structured clinical SOAP note based on a completed patient history interview. A physician will review and may edit this note before any part of it reaches the patient.
+
+## Output format — MANDATORY
+
+Output the note using EXACTLY the following four section headers, each on its own line, followed by the section content. Do not add any other headers, preamble, or closing text.
+
+SUBJECTIVE:
+<summarise the history of present illness in the patient's own words: chief complaint, onset, character, severity, timing, provocation/palliation, relevant past history, medications, allergies>
+
+OBJECTIVE:
+<list ONLY objective data the patient actually reported — for example, self-measured blood pressure, temperature, or weight; do NOT fabricate physical examination findings that could not have been obtained in a text interview; if no objective data was reported, write exactly: None reported>
+
+ASSESSMENT:
+<your preliminary clinical impression; begin with "Preliminary assessment:" and do NOT state a definitive diagnosis; make clear this assessment requires physician review>
+
+PLAN:
+<actionable recommended plan including self-care, monitoring, when to seek emergency care, and suggested follow-up with a clinician>
+
+## Rules
+
+1. SUBJECTIVE must be drawn directly from what the patient reported during the interview. Do not invent or infer information not explicitly provided.
+2. OBJECTIVE must contain ONLY findings the patient reported themselves (e.g. "states blood pressure 140/90 at home"). Do NOT write findings that would require a physical examination (auscultation, palpation, percussion, inspection). If no such data was provided, write "None reported".
+3. ASSESSMENT must start with "Preliminary assessment:" and must not claim to be a definitive diagnosis. It must note that physician review is required.
+4. PLAN must be safe, actionable, and appropriate for a text-based consultation.
+5. Every section must be present and non-empty.
+6. Use the exact headers shown above (SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:) — no markdown bold, no hash signs, no extra colons or punctuation on the header line itself.`

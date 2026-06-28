@@ -106,6 +106,79 @@ func TestSOAPPayload_Validate(t *testing.T) {
 	}
 }
 
+// TestSOAPPayload_Validate_WhitespaceOnly verifies that sections containing
+// only whitespace (spaces, tabs, newlines) are rejected as empty by the
+// validator tightened in task 2.2.
+func TestSOAPPayload_Validate_WhitespaceOnly(t *testing.T) {
+	cases := []struct {
+		name        string
+		payload     domain.SOAPPayload
+		wantMissing string
+	}{
+		{
+			name: "subjective whitespace only",
+			payload: domain.SOAPPayload{
+				Subjective: "   ",
+				Objective:  "o",
+				Assessment: "a",
+				Plan:       "p",
+			},
+			wantMissing: "subjective",
+		},
+		{
+			name: "objective tab only",
+			payload: domain.SOAPPayload{
+				Subjective: "s",
+				Objective:  "\t",
+				Assessment: "a",
+				Plan:       "p",
+			},
+			wantMissing: "objective",
+		},
+		{
+			name: "assessment newline only",
+			payload: domain.SOAPPayload{
+				Subjective: "s",
+				Objective:  "o",
+				Assessment: "\n",
+				Plan:       "p",
+			},
+			wantMissing: "assessment",
+		},
+		{
+			name: "plan spaces and newlines",
+			payload: domain.SOAPPayload{
+				Subjective: "s",
+				Objective:  "o",
+				Assessment: "a",
+				Plan:       "  \n  ",
+			},
+			wantMissing: "plan",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.payload.Validate()
+			if err == nil {
+				t.Fatalf("expected validation error for whitespace-only %q section, got nil", tc.wantMissing)
+			}
+			if !strings.Contains(err.Error(), tc.wantMissing) {
+				t.Errorf("error %q does not mention section %q", err.Error(), tc.wantMissing)
+			}
+		})
+	}
+}
+
+// TestValidateSOAPPayload_WhitespaceOnly verifies the JSON entry point also
+// rejects whitespace-only section values.
+func TestValidateSOAPPayload_WhitespaceOnly(t *testing.T) {
+	payload := []byte(`{"subjective":"   ","objective":"o","assessment":"a","plan":"p"}`)
+	if err := domain.ValidateSOAPPayload(payload); err == nil {
+		t.Fatal("expected error for whitespace-only subjective, got nil")
+	}
+}
+
 // TestPayloadTypeSOAPNote_Constant ensures the constant value matches the
 // database-level payload_type string so prompt + parser + constraint stay
 // in sync.

@@ -70,6 +70,9 @@ func TestCreateRecommendation_SOAPNote(t *testing.T) {
 	if roundTripped.Subjective != soapPayload.Subjective {
 		t.Errorf("Subjective mismatch: got %q, want %q", roundTripped.Subjective, soapPayload.Subjective)
 	}
+	if roundTripped.Objective != soapPayload.Objective {
+		t.Errorf("Objective mismatch: got %q, want %q", roundTripped.Objective, soapPayload.Objective)
+	}
 	if roundTripped.Assessment != soapPayload.Assessment {
 		t.Errorf("Assessment mismatch: got %q, want %q", roundTripped.Assessment, soapPayload.Assessment)
 	}

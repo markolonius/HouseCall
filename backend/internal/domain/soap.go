@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // PayloadTypeSOAPNote is the payload_type value for a structured
@@ -35,21 +36,21 @@ type SOAPPayload struct {
 	Plan       string `json:"plan"`
 }
 
-// Validate returns an error if any of the four required sections is absent or
-// empty.  Call this before persisting a soap_note recommendation to ensure the
-// payload is structurally complete.
+// Validate returns an error if any of the four required sections is absent,
+// empty, or contains only whitespace.  Call this before persisting a soap_note
+// recommendation to ensure the payload is structurally complete.
 func (s SOAPPayload) Validate() error {
 	var missing []string
-	if s.Subjective == "" {
+	if strings.TrimSpace(s.Subjective) == "" {
 		missing = append(missing, SOAPKeySubjective)
 	}
-	if s.Objective == "" {
+	if strings.TrimSpace(s.Objective) == "" {
 		missing = append(missing, SOAPKeyObjective)
 	}
-	if s.Assessment == "" {
+	if strings.TrimSpace(s.Assessment) == "" {
 		missing = append(missing, SOAPKeyAssessment)
 	}
-	if s.Plan == "" {
+	if strings.TrimSpace(s.Plan) == "" {
 		missing = append(missing, SOAPKeyPlan)
 	}
 	if len(missing) > 0 {

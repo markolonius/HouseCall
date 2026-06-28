@@ -59,7 +59,7 @@ lifecycle states.
 
 ## Phase 5: iOS thin client
 
-### Task 5.1: Remove the Summarize control + client summary path
+### Task 5.1: Remove the Summarize control + client summary path  [x]
 Remove the ChatView "Summarize" toolbar button and the `requestSummary()`
 client path for the cloud flow (retire client-side interview prompt/budget/phase
 usage on the cloud path).

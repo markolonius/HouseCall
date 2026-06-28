@@ -2,19 +2,19 @@
 
 ## Phase 1: Server-side interview engine (backend)
 
-### Task 1.1: Add the clinical interview system prompt server-side
+### Task 1.1: Add the clinical interview system prompt server-side  [x]
 Add the clinician history-taking prompt to the agent runtime (one question per
 turn, OPQRST, red-flag override, safety constraints, no-diagnosis) including the
 no-repeat / no-re-ask-answered instructions and a few-shot exemplar that skips an
 already-answered dimension. Define the completion marker constant
 (`<READY_FOR_NOTE>`) shared by prompt and parser.
 
-### Task 1.2: Generate an interview turn per patient message
+### Task 1.2: Generate an interview turn per patient message  [x]
 Replace the single-shot guidance draft with an interview step: assemble the
 tenant-scoped conversation, call the model, and produce the next turn. Add a
 configurable max-interview-turn safety cap that forces note drafting if exceeded.
 
-### Task 1.3: Detect the completion marker
+### Task 1.3: Detect the completion marker  [x]
 Parse the model output for the marker: if present, strip it (and any trailing
 text) and branch to note drafting; otherwise treat the output as an interview
 question. Marker handling is server-side only and never patient-visible.

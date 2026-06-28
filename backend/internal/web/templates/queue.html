@@ -79,11 +79,14 @@
             <form method="POST" action="/web/recommendations/{{.ID}}/review">
               <input type="hidden" name="action" value="modify">
               <label style="display:block;font-size:.85rem;margin-bottom:.35rem;">
-                Edited content (required):
+                {{if .SOAP}}Edit Assessment &amp; Plan — confirm or modify the full note (required):{{else}}Edited content (required):{{end}}
               </label>
-              <textarea name="final_content" rows="3"
+              {{/* For soap_note rows, pre-populate with DraftContent so the physician
+                   can review and edit the full note before delivering. DraftContent is
+                   auto-escaped by html/template — template.HTML is never used here. */}}
+              <textarea name="final_content" rows="{{if .SOAP}}8{{else}}3{{end}}"
                 style="width:100%;padding:.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:.85rem;resize:vertical;"
-                placeholder="Enter edited recommendation text…"></textarea>
+                placeholder="Enter edited recommendation text…">{{if .SOAP}}{{.DraftContent}}{{end}}</textarea>
               <button type="submit"
                 style="margin-top:.5rem;background:#1d3557;color:#fff;border:none;padding:.35rem .75rem;border-radius:4px;cursor:pointer;font-size:.85rem;">
                 Deliver Modified

@@ -1233,10 +1233,12 @@ func TestQueue_SOAPNoteRendersSections(t *testing.T) {
 		}
 	}
 
-	// The DraftContent fallback text must NOT appear when SOAP sections are rendered.
-	if strings.Contains(body, "SOAP note draft (fallback)") {
-		t.Error("soap_note queue: DraftContent fallback must not appear when SOAP sections are rendered")
-	}
+	// NOTE (task 4.2): DraftContent now intentionally appears inside the
+	// "Modify & Deliver" textarea so the physician can edit the full note before
+	// delivering.  The draft-display column still shows the structured SOAP
+	// sections (verified above), so the fallback path is not taken.  We no
+	// longer assert DraftContent is absent from the full page body, only that
+	// the four SOAP section labels and their content are present.
 
 	// Review action forms must still be present.
 	if !strings.Contains(body, `value="approve"`) {
@@ -1413,6 +1415,208 @@ func TestReview_ExactlyOneAuditEvent(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected exactly 1 recommendation.reviewed audit event, got %d (events: %v)",
 			count, auditEventSummary(fs))
+	}
+}
+
+// ---- SOAP note review action tests (task 4.2) -----------------------------------
+
+// testSOAPDraftContent is the human-readable SOAP note pre-filled in the
+// modify textarea; it represents all four sections as plain text.
+const testSOAPDraftContent = "Subjective: Patient reports headache for 3 days\nObjective: No objective findings reported\nAssessment: Likely tension headache\nPlan: Rest, hydrate, OTC analgesic prn"
+
+// newFakeStoreForSOAPReview returns a fakeStore with a soap_note recommendation
+// in PENDING_REVIEW, structured payload, and human-readable DraftContent, for
+// a physician with the given licensed states and a patient in patientState.
+func newFakeStoreForSOAPReview(physStates []string, patientState string) *fakeStore {
+	soapPayload, _ := json.Marshal(map[string]string{
+		"subjective": "Patient reports headache for 3 days",
+		"objective":  "No objective findings reported",
+		"assessment": "Likely tension headache",
+		"plan":       "Rest, hydrate, OTC analgesic prn",
+	})
+	phys := store.Physician{
+		ID:             testPhysID,
+		TenantID:       testTenantID,
+		Email:          "doc@clinic.example",
+		StatesLicensed: physStates,
+	}
+	patient := store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenantID,
+		State:    patientState,
+	}
+	rec := store.Recommendation{
+		ID:           testRecID,
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        domain.StatePendingReview,
+		PayloadType:  domain.PayloadTypeSOAPNote,
+		Payload:      soapPayload,
+		DraftContent: testSOAPDraftContent,
+	}
+	return &fakeStore{
+		physicians:   map[string]store.Physician{"doc@clinic.example": phys},
+		physByID:     map[uuid.UUID]store.Physician{testPhysID: phys},
+		patientsByID: map[uuid.UUID]store.Patient{testPatientID: patient},
+		recsByID:     map[uuid.UUID]store.Recommendation{testRecID: rec},
+		recsByPhys: map[string][]store.Recommendation{
+			testPhysID.String(): {rec},
+		},
+		updatedStates: make(map[uuid.UUID]string),
+	}
+}
+
+// TestReview_SOAPNote_Approve verifies that a licensed physician can approve a
+// soap_note recommendation: the handler calls review.Execute, the state
+// transitions to DELIVERED, and the queue redirects (303).
+func TestReview_SOAPNote_Approve(t *testing.T) {
+	fs := newFakeStoreForSOAPReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionApprove, "")
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("soap approve: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/web/queue" {
+		t.Fatalf("soap approve: want redirect to /web/queue, got %q", loc)
+	}
+	if got := fs.updatedStates[testRecID]; got != domain.StateDelivered {
+		t.Fatalf("soap approve: want state DELIVERED, got %q", got)
+	}
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionApprove, domain.StateDelivered)
+}
+
+// TestReview_SOAPNote_Modify verifies that a licensed physician can submit a
+// modified Assessment & Plan for a soap_note: the handler passes the edited
+// content through, the state transitions to DELIVERED, and final_content is set.
+func TestReview_SOAPNote_Modify(t *testing.T) {
+	fs := newFakeStoreForSOAPReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+	editedNote := testSOAPDraftContent + "\n[Physician addendum: follow up in 48h if symptoms persist]"
+
+	rec := postReview(t, h, testRecID, domain.ActionModify, editedNote)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("soap modify: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := fs.updatedStates[testRecID]; got != domain.StateDelivered {
+		t.Fatalf("soap modify: want state DELIVERED, got %q", got)
+	}
+	r := fs.recsByID[testRecID]
+	if r.FinalContent == nil {
+		t.Fatal("soap modify: final_content must be set after delivery")
+	}
+	if *r.FinalContent != editedNote {
+		t.Fatalf("soap modify: final_content = %q, want %q", *r.FinalContent, editedNote)
+	}
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionModify, domain.StateDelivered)
+}
+
+// TestReview_SOAPNote_Reject verifies that a licensed physician can reject a
+// soap_note recommendation: state transitions to REJECTED, final_content
+// remains nil, and the queue redirects.
+func TestReview_SOAPNote_Reject(t *testing.T) {
+	fs := newFakeStoreForSOAPReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionReject, "")
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("soap reject: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := fs.updatedStates[testRecID]; got != domain.StateRejected {
+		t.Fatalf("soap reject: want state REJECTED, got %q", got)
+	}
+	if r, ok := fs.recsByID[testRecID]; ok && r.FinalContent != nil {
+		t.Error("soap reject: final_content must remain nil for REJECTED recommendations")
+	}
+	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionReject, domain.StateRejected)
+}
+
+// TestReview_SOAPNote_UnlicensedPhysician verifies that a physician not
+// licensed in the patient's state receives a 403 with the queue re-rendered
+// showing the error flash, and state is NOT mutated.
+func TestReview_SOAPNote_UnlicensedPhysician(t *testing.T) {
+	// Physician licensed in NY; patient is in CA.
+	fs := newFakeStoreForSOAPReview([]string{"NY"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionApprove, "")
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("soap unlicensed: want 403, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	// State must NOT have been mutated.
+	if _, changed := fs.updatedStates[testRecID]; changed {
+		t.Error("soap unlicensed: state must not be mutated when physician is unlicensed")
+	}
+	// Queue must re-render with the physician-facing error banner.
+	body := rec.Body.String()
+	if !strings.Contains(body, "not licensed in the patient") {
+		t.Error("soap unlicensed: response body must contain physician-facing error message")
+	}
+	// A review_rejected audit event with reason=unlicensed_state must be written.
+	found := false
+	for _, e := range fs.auditEvents {
+		if e.EventType == "recommendation.review_rejected" {
+			var meta map[string]any
+			if err := json.Unmarshal(e.Metadata, &meta); err == nil {
+				if meta["reason"] == "unlicensed_state" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("soap unlicensed: expected recommendation.review_rejected audit event with reason=unlicensed_state")
+	}
+}
+
+// TestQueue_SOAPNote_ModifyTextareaPreFilled verifies that the queue page
+// pre-populates the Modify & Deliver textarea with the SOAP note's DraftContent
+// so the physician can review and edit the full note before delivering.
+func TestQueue_SOAPNote_ModifyTextareaPreFilled(t *testing.T) {
+	soapPayload, _ := json.Marshal(map[string]string{
+		"subjective": "Patient reports headache for 3 days",
+		"objective":  "No objective findings reported",
+		"assessment": "Likely tension headache",
+		"plan":       "Rest, hydrate, OTC analgesic prn",
+	})
+	queueRec := store.Recommendation{
+		ID:           testRecID,
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        domain.StatePendingReview,
+		PayloadType:  domain.PayloadTypeSOAPNote,
+		Payload:      soapPayload,
+		DraftContent: testSOAPDraftContent,
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{queueRec},
+	}
+	h := buildHandler(t, fs)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("soap textarea prefill: want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+
+	// The textarea must contain the DraftContent (auto-escaped; no special chars
+	// in testSOAPDraftContent that would change their HTML-escaped form).
+	if !strings.Contains(body, testSOAPDraftContent) {
+		t.Error("soap textarea prefill: DraftContent must appear inside the modify textarea for soap_note rows")
+	}
+
+	// The label must indicate Assessment & Plan editing (not the generic label).
+	if !strings.Contains(body, "Edit Assessment") {
+		t.Error("soap textarea prefill: label must indicate Assessment &amp; Plan editing for soap_note rows")
 	}
 }
 

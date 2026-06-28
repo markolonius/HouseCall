@@ -245,7 +245,20 @@ class AuthenticationService: ObservableObject {
 
     // MARK: - Login
 
-    /// Logs in a user with credentials
+    /// Logs in a user with credentials.
+    ///
+    /// **Cloud path** (when `coreAuthClient` and `coreAPITenantId` are both set):
+    /// 1. `POST /api/auth/login` → `{token, patientId}`.
+    /// 2. Ensure the local cache user for `patientId` exists; create one keyed by
+    ///    `patientId` if missing (first login on this device).
+    /// 3. Store the JWT via `storeCoreAPIJWT(_:)`.
+    /// 4. Start the session — encryption unlocks for `user.id == patientId`.
+    ///
+    /// Error mapping (cloud path only):
+    /// - 401 (unauthorized) → `loginFailed(...)`. Core API is authoritative; no fallback.
+    /// - Network unreachable → `loginFailed(...)` for now (task 4.1 will add offline fallback).
+    ///
+    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
     @MainActor
     func login(
         email: String,
@@ -253,7 +266,9 @@ class AuthenticationService: ObservableObject {
         authMethod: AuthMethod,
         useBiometric: Bool = false
     ) async throws -> User {
-        // If biometric auth is requested, perform it first
+        // Biometric pre-check (preserved from original behaviour).
+        // Runs regardless of cloud/local path: biometric gates device-local session
+        // access; it does not replace the Core API credential check.
         if useBiometric && authMethod == .biometric {
             let reason = BiometricAuthManager.createAuthenticationReason(for: "login")
             let result = await biometricAuthManager.authenticate(reason: reason)
@@ -264,6 +279,18 @@ class AuthenticationService: ObservableObject {
             }
         }
 
+        // Cloud-enabled path
+        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
+            return try await loginViaCloudAPI(
+                authClient: authClient,
+                tenantId: tenantId,
+                email: email,
+                credential: credential,
+                authMethod: authMethod
+            )
+        }
+
+        // Local-only path (unchanged)
         do {
             let user = try userRepository.authenticateUser(
                 email: email,
@@ -277,6 +304,79 @@ class AuthenticationService: ObservableObject {
         } catch {
             throw AuthenticationError.loginFailed(error.localizedDescription)
         }
+    }
+
+    /// Cloud login flow.  Separated from the public `login` method so the
+    /// control flow is easy to read and the local path has zero added indentation.
+    @MainActor
+    private func loginViaCloudAPI(
+        authClient: CoreAPIAuthClientProtocol,
+        tenantId: String,
+        email: String,
+        credential: String,
+        authMethod: AuthMethod
+    ) async throws -> User {
+        // Step 1: Authenticate against Core API (Core API is authoritative).
+        let authResult: CoreAPIAuthResult
+        do {
+            authResult = try await authClient.login(
+                tenantId: tenantId,
+                email: email,
+                password: credential
+            )
+        } catch let syncErr as SyncError {
+            switch syncErr {
+            case .unauthorized:
+                // Core API explicitly rejected the credentials — do NOT fall back
+                // to a local credential check; Core API is the single source of truth.
+                throw AuthenticationError.loginFailed("Invalid credentials")
+            case .offline:
+                // TODO: Task 4.1 — offline fallback: when Core API is unreachable,
+                // fall back to the cached local credential check so the patient can
+                // still open their encrypted local record.  For now fail fast.
+                throw AuthenticationError.loginFailed("Unable to reach the server. Please check your connection.")
+            default:
+                throw AuthenticationError.loginFailed(syncErr.localizedDescription ?? "Server error")
+            }
+        } catch {
+            throw AuthenticationError.loginFailed(error.localizedDescription)
+        }
+
+        // Step 2: Parse the server-canonical patient UUID.
+        guard let patientId = UUID(uuidString: authResult.patientId) else {
+            throw AuthenticationError.loginFailed("Invalid patient id from server")
+        }
+
+        // Step 3: Ensure the local cache user exists for the canonical patientId.
+        // On first login on this device the record may not exist yet (e.g., the
+        // patient registered on another device or the local store was cleared).
+        // Creating it here keyed by patientId keeps the HKDF salt stable and equal
+        // to the server-canonical identity — encryption-identity continuity.
+        let user: User
+        if let existingUser = userRepository.findUser(by: patientId) {
+            user = existingUser
+        } else {
+            do {
+                user = try userRepository.createUser(
+                    email: email,
+                    password: authMethod == .password ? credential : nil,
+                    passcode: authMethod == .passcode ? credential : nil,
+                    fullName: "",   // Full name unknown at login; will be populated by sync (task 5.2)
+                    authMethod: authMethod,
+                    id: patientId
+                )
+            } catch {
+                throw AuthenticationError.loginFailed(error.localizedDescription)
+            }
+        }
+
+        // Step 4: Persist the JWT for subsequent authenticated Core API calls.
+        try? storeCoreAPIJWT(authResult.token)
+
+        // Step 5: Start the local session (encryption unlocks via user.id == patientId).
+        try await createSession(for: user, authMethod: authMethod)
+
+        return user
     }
 
     /// Logs in with biometric authentication only

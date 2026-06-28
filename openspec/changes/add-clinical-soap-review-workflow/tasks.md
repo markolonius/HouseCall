@@ -69,7 +69,7 @@ For the SOAP flow, send patient messages via `CloudSyncCoordinator` and render
 agent interview questions arriving over message sync / WebSocket as assistant
 bubbles.
 
-### Task 5.3: Render the delivered approved note
+### Task 5.3: Render the delivered approved note  [x]
 Render a DELIVERED `soap_note` recommendation to the patient as a recommendation
 card (reuse `RecommendationCard`) showing the physician-approved plan.
 

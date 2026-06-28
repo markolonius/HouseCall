@@ -6,6 +6,10 @@
 	     Empty when CORE_API_BASE_URL is not set; coordinator is only activated when non-empty. -->
 	<key>CoreAPIBaseURL</key>
 	<string>$(CORE_API_BASE_URL)</string>
+	<!-- Tenant UUID for single-tenant MVP (substituted from xcconfig at build time).
+	     Empty when CORE_API_TENANT_ID is not set; cloud auth is disabled when absent. -->
+	<key>CoreAPITenantID</key>
+	<string>$(CORE_API_TENANT_ID)</string>
 	<!-- LLM provider defaults — values are substituted at build time from xcconfig. -->
 	<key>LLMDefaultProvider</key>
 	<string>$(LLM_DEFAULT_PROVIDER)</string>

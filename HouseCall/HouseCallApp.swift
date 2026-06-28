@@ -249,6 +249,36 @@ private struct AutoLaunchChatView: View {
     }
 }
 
+// MARK: - Build-time config helpers
+
+/// Returns the Core API base URL string from `Info.plist` when it is
+/// non-empty and was actually substituted by xcconfig at build time.
+/// Returns `nil` when the setting is absent, empty, or contains an
+/// unsubstituted placeholder such as `$(CORE_API_BASE_URL)`.
+private func coreAPIBaseURLString() -> String? {
+    guard
+        let value = Bundle.main.object(forInfoDictionaryKey: "CoreAPIBaseURL") as? String,
+        !value.isEmpty,
+        !value.hasPrefix("$(")
+    else { return nil }
+    return value
+}
+
+/// Returns the Core API tenant UUID string from `Info.plist` when it is
+/// non-empty and was actually substituted by xcconfig at build time
+/// (i.e. `CORE_API_TENANT_ID` was set in Secrets.xcconfig).
+/// Returns `nil` when the setting is absent, empty, or contains an
+/// unsubstituted placeholder such as `$(CORE_API_TENANT_ID)`.
+/// Cloud auth is disabled whenever this returns `nil`.
+private func coreAPITenantID() -> String? {
+    guard
+        let value = Bundle.main.object(forInfoDictionaryKey: "CoreAPITenantID") as? String,
+        !value.isEmpty,
+        !value.hasPrefix("$(")
+    else { return nil }
+    return value
+}
+
 // MARK: - Cloud sync coordinator factory
 
 /// Constructs a `SyncClient` + `CloudSyncCoordinator` for the production app
@@ -270,10 +300,7 @@ private func buildCloudSyncCoordinator(
 ) -> CloudSyncCoordinator? {
     // Gate 1: Core API base URL must be configured at build time.
     guard
-        let urlString = Bundle.main.object(forInfoDictionaryKey: "CoreAPIBaseURL") as? String,
-        !urlString.isEmpty,
-        // Reject unsubstituted xcconfig placeholders (e.g. "$(CORE_API_BASE_URL)").
-        !urlString.hasPrefix("$("),
+        let urlString = coreAPIBaseURLString(),
         let baseURL = URL(string: urlString)
     else { return nil }
 

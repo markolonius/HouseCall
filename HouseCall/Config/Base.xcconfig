@@ -34,6 +34,12 @@ LLM_CUSTOM_MODEL =
 // Example: http:$(SLASH)$(SLASH)localhost:8080  or  https:$(SLASH)$(SLASH)api.example.com
 CORE_API_BASE_URL =
 
+// Tenant UUID for the single-tenant MVP deployment.
+// Keep EMPTY here. Set the real value in the gitignored Secrets.xcconfig.
+// Must match a tenant row that exists in core-api (created via cmd/seed).
+// Cloud auth is disabled when this is empty.
+CORE_API_TENANT_ID =
+
 // Optional include of the gitignored secrets file.
 // Values in Secrets.xcconfig override the defaults above.
 #include? "Secrets.xcconfig"

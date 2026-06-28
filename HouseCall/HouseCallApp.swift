@@ -249,6 +249,11 @@ private struct AutoLaunchChatView: View {
     }
 }
 
+// MARK: - Build-time config helpers
+//
+// Delegated to CoreAPIConfig (Core/Services/Sync/CoreAPIConfig.swift) which is
+// the single source of truth used by both HouseCallApp and AuthenticationService.
+
 // MARK: - Cloud sync coordinator factory
 
 /// Constructs a `SyncClient` + `CloudSyncCoordinator` for the production app
@@ -260,9 +265,10 @@ private struct AutoLaunchChatView: View {
 /// Returns `nil` in all other cases so the caller falls back to the
 /// direct-LLM path with no behaviour change.
 ///
-/// NOTE: Patient login is currently local (Core Data); no login flow populates
-/// `coreAPIJWT` yet.  This gate therefore always returns `nil` in the default
-/// build until a server-side patient auth flow writes the JWT to the Keychain.
+/// NOTE: A successful cloud login/registration (when `CoreAPIBaseURL` +
+/// `CoreAPITenantID` are configured) stores the JWT under `Keys.coreAPIJWT`, so
+/// this gate activates for an authenticated patient. With no Core API config the
+/// JWT is never written and this returns `nil` (local-only default build).
 @MainActor
 private func buildCloudSyncCoordinator(
     conversationRepository: ConversationRepositoryProtocol,
@@ -270,10 +276,7 @@ private func buildCloudSyncCoordinator(
 ) -> CloudSyncCoordinator? {
     // Gate 1: Core API base URL must be configured at build time.
     guard
-        let urlString = Bundle.main.object(forInfoDictionaryKey: "CoreAPIBaseURL") as? String,
-        !urlString.isEmpty,
-        // Reject unsubstituted xcconfig placeholders (e.g. "$(CORE_API_BASE_URL)").
-        !urlString.hasPrefix("$("),
+        let urlString = CoreAPIConfig.baseURLString(),
         let baseURL = URL(string: urlString)
     else { return nil }
 

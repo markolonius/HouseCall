@@ -81,9 +81,12 @@ func (d *Drafter) WithOnComplete(fn func()) *Drafter {
 	return &cp
 }
 
-// DraftAsync spawns a goroutine that assembles the conversation context,
-// calls the model, and persists a PENDING_REVIEW recommendation. It is
-// fire-and-forget: errors are logged but never returned to the caller.
+// DraftAsync spawns a goroutine that runs one step of the clinical interview
+// per patient message: either delivers the next interview question directly to
+// the patient, or — when the interview is judged complete — drafts a soap_note
+// recommendation into PENDING_REVIEW for physician review. It is fire-and-
+// forget: errors are logged but never returned to the caller.
+//
 // The caller must not pass a request-scoped context — use context.Background()
 // or a long-lived server context so the goroutine is not cancelled when the
 // HTTP handler returns.
@@ -96,10 +99,10 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 			defer d.onComplete()
 		}
 
-		// Recover from any panic inside draft() (nil-deref, driver bug, etc.)
-		// so a single drafting failure cannot crash the server process.
-		// middleware.Recoverer only protects HTTP handler goroutines; fire-and-
-		// forget goroutines must manage their own recovery.
+		// Recover from any panic inside runInterviewTurn (nil-deref, driver
+		// bug, etc.) so a single drafting failure cannot crash the server
+		// process. middleware.Recoverer only protects HTTP handler goroutines;
+		// fire-and-forget goroutines must manage their own recovery.
 		// Log type only — never the recovered value itself, which may echo
 		// request content or PHI.
 		defer func() {
@@ -109,7 +112,7 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 		}()
 
 		ctx := context.Background()
-		if err := d.draft(ctx, tenantID, conv, patient); err != nil {
+		if err := d.runInterviewTurn(ctx, tenantID, conv, patient); err != nil {
 			// Log type only — never the error message or body, which may echo
 			// request content or PHI (see ModelError.Body HIPAA note in
 			// client.go).
@@ -138,108 +141,58 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 	}()
 }
 
-// draft is the synchronous drafting logic, separated for testability.
-func (d *Drafter) draft(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
-	// Assemble tenant-scoped conversation context. The query includes
-	// tenant_id in the WHERE clause so messages from other tenants are
-	// never mixed in, even if two tenants share a conversation UUID by
-	// some extreme coincidence.
-	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+// runInterviewTurn is the synchronous orchestration logic called by DraftAsync
+// per patient message. It runs one step of the clinical interview:
+//
+//   - Generates the next turn from the tenant-scoped conversation history using
+//     the clinical interview system prompt.
+//   - Loads the prior messages (tenant-scoped) to check the turn cap.
+//   - Decides whether the interview is complete (marker detected or cap reached).
+//   - If complete: drafts a soap_note recommendation → PENDING_REVIEW and emits
+//     queue.updated to the physician. The patient is NOT notified here — clinical
+//     Assessment & Plan require physician review before reaching the patient.
+//   - If continuing: delivers the interview question to the patient as an
+//     assistant message (persisted + WebSocket notification). No recommendation
+//     is created for interview questions (non-clinical data collection only).
+//
+// Delivery carve-out guarantee: interview questions (non-clinical) are the ONLY
+// agent output delivered directly to the patient. The soap_note (clinical A/P)
+// never reaches the patient without a physician lifecycle transition — enforced
+// by this branching logic. There is no code path in this function (or in
+// deliverInterviewQuestion) that creates a recommendation or delivers clinical
+// content directly.
+func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	// Generate the next interview turn. The model is called with the clinical
+	// interview system prompt followed by the full tenant-scoped conversation
+	// history. Content never enters logs or audit (PHI constraint).
+	raw, err := d.generateInterviewTurn(ctx, tenantID, conv)
 	if err != nil {
 		return err
 	}
 
-	// Build the model message slice: a brief system prompt followed by the
-	// conversation history. Content goes into the model call only — it is
-	// never written to audit logs.
-	modelMsgs := make([]Message, 0, len(msgs)+1)
-	modelMsgs = append(modelMsgs, Message{
-		Role:    "system",
-		Content: "You are a medical assistant. Provide concise clinical guidance based on the conversation.",
-	})
-	for _, m := range msgs {
-		modelMsgs = append(modelMsgs, Message{
-			Role:    m.Role,
-			Content: m.Content,
-		})
-	}
-
-	text, err := d.client.Complete(ctx, modelMsgs)
-	if err != nil {
-		// Non-nil error means no valid model output — do NOT persist as
-		// clinical content (failure contract from client.go). Task 4.3
-		// handles this branch fully.
-		return err
-	}
-
-	// Build the guidance payload. Only the model text goes here — no
-	// audit metadata, no PHI from other sources.
-	payload, err := json.Marshal(map[string]string{"text": text})
+	// Load prior messages for the turn-cap check. Tenant-scoped query ensures
+	// cross-tenant bleed is impossible. These are the messages present before
+	// any assistant response is persisted — correct for decideInterviewAction's
+	// "priorMsgs" contract (assistant-role count before this turn).
+	priorMsgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
 	if err != nil {
 		return err
 	}
 
-	agentActor := domain.Actor{Type: domain.ActorAgent, ID: uuid.Nil}
+	outcome := decideInterviewAction(raw, priorMsgs, DefaultMaxInterviewTurns)
 
-	// Persist DRAFT → PENDING_REVIEW + audit event atomically. The
-	// two-step pattern (create DRAFT then transition to PENDING_REVIEW
-	// within the same Txn) mirrors the Phase 3 physician review pattern
-	// so there is never a DRAFT row visible outside the transaction.
-	var recID uuid.UUID
-	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
-		// Step 1: insert at DRAFT.
-		rec, err := tx.CreateRecommendation(ctx, tenantID, store.Recommendation{
-			ConversationID: conv.ID,
-			PatientID:      patient.ID,
-			State:          domain.StateDraft,
-			PayloadType:    "guidance",
-			Payload:        payload,
-			DraftContent:   text,
-		})
-		if err != nil {
-			return err
-		}
-		recID = rec.ID
-
-		// Step 2: pure state-machine transition DRAFT → PENDING_REVIEW.
-		// The agent actor has no path beyond this single transition.
-		nextState, err := domain.Transition(rec.State, domain.ActionSubmitForReview, agentActor, patient.State)
-		if err != nil {
-			return err
-		}
-
-		// Step 3: persist the new state within the same transaction.
-		if err := tx.UpdateRecommendationState(ctx, tenantID, rec.ID, nextState, nil, nil); err != nil {
-			return err
-		}
-
-		// Step 4: write the audit event. Metadata contains identifiers only
-		// — no PHI, no model output.
-		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
-			ActorType: string(domain.ActorAgent),
-			ActorID:   nil, // agent has no user UUID
-			EventType: "recommendation.submitted_for_review",
-			Metadata: mustMarshalJSON(map[string]any{
-				"recommendation_id": recID.String(),
-				"conversation_id":   conv.ID.String(),
-				"new_state":         nextState,
-			}),
-		})
-	}); err != nil {
-		return err
+	if outcome.ReadyForNote {
+		// Interview complete: draft the SOAP note through DRAFT→PENDING_REVIEW.
+		// Physicians receive a queue.updated event; the patient receives nothing
+		// from the agent at this point. Clinical content (Assessment & Plan) will
+		// reach the patient only after a physician transitions the recommendation
+		// to APPROVED/MODIFIED and it is delivered via the standard lifecycle.
+		return d.draftSOAPNote(ctx, tenantID, conv, patient)
 	}
 
-	// Emit queue.updated AFTER the successful commit so physicians only
-	// receive the event when the row is durably visible.
-	d.notifier.SendToPhysicians(tenantID.String(), mustMarshalJSON(map[string]any{
-		"type": "queue.updated",
-		"data": map[string]any{
-			"recommendation_id": recID.String(),
-			"conversation_id":   conv.ID.String(),
-		},
-	}))
-
-	return nil
+	// Interview continues: deliver the next question to the patient. No
+	// recommendation row is created; this is non-clinical data collection.
+	return d.deliverInterviewQuestion(ctx, tenantID, conv, patient, outcome.Question)
 }
 
 // generateInterviewTurn assembles the full tenant-scoped conversation history

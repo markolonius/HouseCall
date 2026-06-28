@@ -140,6 +140,36 @@ type stubPatientNotifier struct{}
 
 func (stubPatientNotifier) SendToPatient(_, _ string, _ []byte) {}
 
+// recordingPatientNotifier captures every SendToPatient call so tests can
+// assert the patient was (or was not) notified.
+type recordingPatientNotifier struct {
+	mu    sync.Mutex
+	calls [][]byte
+}
+
+func (n *recordingPatientNotifier) SendToPatient(_, _ string, event []byte) {
+	cp := make([]byte, len(event))
+	copy(cp, event)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, cp)
+}
+
+func (n *recordingPatientNotifier) count() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.calls)
+}
+
+func (n *recordingPatientNotifier) last() []byte {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.calls) == 0 {
+		return nil
+	}
+	return n.calls[len(n.calls)-1]
+}
+
 // ---------------------------------------------------------------------------
 // setupDrafterFixture creates one tenant, patient, physician, care relationship,
 // conversation, and one user message, then returns everything needed to test the
@@ -207,89 +237,98 @@ func setupDrafterFixture(t *testing.T, s *store.Store) drafterFixture {
 // Tests
 // ---------------------------------------------------------------------------
 
-// TestDraft_HappyPath verifies that a patient message produces exactly one
-// PENDING_REVIEW recommendation with payload_type='guidance', an audit event,
-// and a queue.updated notification to physicians.
+// TestDraft_HappyPath verifies that a patient message during an ongoing
+// interview produces an assistant interview question: exactly one assistant-role
+// message persisted, one patient notification (message.created), one
+// agent.interview_question audit event, and NO recommendation row and NO
+// queue.updated event sent to physicians.
+//
+// The stub client returns plain text without ReadyForNoteMarker, so
+// decideInterviewAction classifies the turn as a continuing interview question.
 func TestDraft_HappyPath(t *testing.T) {
 	pool := testPool(t)
 	s := store.New(pool)
 	f := setupDrafterFixture(t, s)
 	ctx := context.Background()
 
-	const wantText = "Take ibuprofen and rest. Consult a physician if symptoms worsen."
+	// A normal interview question — no ReadyForNoteMarker present.
+	const wantText = "Can you describe where the pain is located?"
 
-	notifier := &stubNotifier{}
+	physNotifier := &stubNotifier{}
+	patNotifier := &recordingPatientNotifier{}
 	// newDrafterWithWait registers a t.Cleanup that blocks until the goroutine
 	// has exited, preventing races with shared-DB teardown across tests.
-	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier, stubPatientNotifier{})
+	d, wg := newDrafterWithWait(t, &stubClient{text: wantText}, s, physNotifier, patNotifier)
 
-	// DraftAsync is fire-and-forget; we detect completion via the
-	// queue.updated notification (which fires only after a successful commit).
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
-	// Poll until the notifier receives the event (max 5 s — the stub client
-	// returns instantly so this should be near-zero in practice).
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && notifier.count() == 0 {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if notifier.count() == 0 {
-		t.Fatal("queue.updated event never received — drafting may have failed")
-	}
+	// Block until the goroutine has fully exited (onComplete hook fires on
+	// success, failure, or panic so this is always safe).
+	wg.Wait()
 
-	// --- Assert exactly one PENDING_REVIEW recommendation ---
+	// --- Assert NO recommendation was created (interview question, not note) ---
 	recs, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StatePendingReview)
 	if err != nil {
-		t.Fatalf("list recommendations: %v", err)
+		t.Fatalf("list PENDING_REVIEW recs: %v", err)
 	}
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 PENDING_REVIEW recommendation, got %d", len(recs))
+	for _, r := range recs {
+		if r.ConversationID == f.Conv.ID {
+			t.Errorf("unexpected PENDING_REVIEW recommendation for conversation %s — interview questions must not create recommendations", f.Conv.ID)
+		}
 	}
-	rec := recs[0]
-
-	if rec.PayloadType != "guidance" {
-		t.Errorf("payload_type = %q, want %q", rec.PayloadType, "guidance")
-	}
-	if rec.ConversationID != f.Conv.ID {
-		t.Errorf("conversation_id mismatch")
-	}
-	if rec.PatientID != f.Patient.ID {
-		t.Errorf("patient_id mismatch")
-	}
-
-	// Verify payload contains the model output text.
-	var payload map[string]string
-	if err := json.Unmarshal(rec.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload["text"] != wantText {
-		t.Errorf("payload[text] = %q, want %q", payload["text"], wantText)
-	}
-
-	// draft_content should also carry the model text.
-	if rec.DraftContent != wantText {
-		t.Errorf("draft_content = %q, want %q", rec.DraftContent, wantText)
-	}
-
-	// --- Assert no DRAFT rows remain (the DRAFT → PENDING_REVIEW transition
-	// was atomic: the DRAFT state should never be observable outside the Txn) ---
 	drafts, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StateDraft)
 	if err != nil {
-		t.Fatalf("list draft recommendations: %v", err)
+		t.Fatalf("list DRAFT recs: %v", err)
 	}
-	if len(drafts) != 0 {
-		t.Errorf("expected 0 DRAFT recommendations, got %d", len(drafts))
+	for _, r := range drafts {
+		if r.ConversationID == f.Conv.ID {
+			t.Errorf("unexpected DRAFT recommendation for conversation %s", f.Conv.ID)
+		}
 	}
 
-	// --- Assert audit event exists ---
-	// We query audit_events directly because the store's read path is
-	// tenant-scoped; the event_type must not contain PHI.
-	pool2 := pool // same pool, we re-use it
-	rows, err := pool2.Query(ctx,
-		`SELECT event_type, metadata
+	// --- Assert the interview question was persisted as an assistant message ---
+	msgs, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var assistantMsgs []store.Message
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			assistantMsgs = append(assistantMsgs, m)
+		}
+	}
+	if len(assistantMsgs) != 1 {
+		t.Fatalf("expected 1 assistant message, got %d", len(assistantMsgs))
+	}
+	if assistantMsgs[0].Content != wantText {
+		t.Errorf("assistant message content = %q, want %q", assistantMsgs[0].Content, wantText)
+	}
+
+	// --- Assert patient was notified (message.created event with IDs only) ---
+	if patNotifier.count() != 1 {
+		t.Fatalf("expected 1 patient notification, got %d", patNotifier.count())
+	}
+	var patEvt map[string]any
+	if err := json.Unmarshal(patNotifier.last(), &patEvt); err != nil {
+		t.Fatalf("unmarshal patient event: %v", err)
+	}
+	if patEvt["type"] != "message.created" {
+		t.Errorf("patient event type = %q, want %q", patEvt["type"], "message.created")
+	}
+
+	// --- Assert NO queue.updated event was emitted to physicians ---
+	if physNotifier.count() != 0 {
+		t.Errorf("expected 0 physician queue.updated events for an interview question turn, got %d", physNotifier.count())
+	}
+
+	// --- Assert audit event exists with identifiers only (no PHI) ---
+	rows, err := pool.Query(ctx,
+		`SELECT metadata
 		   FROM audit_events
-		  WHERE tenant_id = $1 AND event_type = 'recommendation.submitted_for_review'`,
+		  WHERE tenant_id = $1 AND event_type = 'agent.interview_question'
+		    AND metadata->>'conversation_id' = $2`,
 		f.TenantID.UUID(),
+		f.Conv.ID.String(),
 	)
 	if err != nil {
 		t.Fatalf("query audit events: %v", err)
@@ -298,30 +337,24 @@ func TestDraft_HappyPath(t *testing.T) {
 
 	var auditCount int
 	for rows.Next() {
-		var eventType string
 		var meta []byte
-		if err := rows.Scan(&eventType, &meta); err != nil {
+		if err := rows.Scan(&meta); err != nil {
 			t.Fatalf("scan audit row: %v", err)
 		}
-		// Metadata must contain recommendation_id and conversation_id but NOT
-		// the model text or any PHI.
 		var m map[string]any
 		if err := json.Unmarshal(meta, &m); err != nil {
 			t.Fatalf("unmarshal audit metadata: %v", err)
 		}
-		if _, ok := m["recommendation_id"]; !ok {
-			t.Errorf("audit metadata missing recommendation_id")
-		}
 		if _, ok := m["conversation_id"]; !ok {
 			t.Errorf("audit metadata missing conversation_id")
 		}
-		// Model output must NOT appear in audit metadata.
-		raw := string(meta)
-		if raw == wantText || (len(wantText) > 10 && len(raw) > 10) {
-			// Check by looking for the model text literally.
-			if json.Valid([]byte(wantText)) {
-				// model text happens to be JSON — unlikely in practice but skip
-				// this assertion to avoid false positives.
+		if _, ok := m["message_id"]; !ok {
+			t.Errorf("audit metadata missing message_id")
+		}
+		// Question content must NOT appear in audit metadata (PHI constraint).
+		for _, field := range []string{"content", "text", "question"} {
+			if v, ok := m[field]; ok {
+				t.Errorf("audit metadata must not contain field %q (PHI leak): value = %v", field, v)
 			}
 		}
 		auditCount++
@@ -330,26 +363,14 @@ func TestDraft_HappyPath(t *testing.T) {
 		t.Fatalf("rows error: %v", err)
 	}
 	if auditCount != 1 {
-		t.Errorf("expected 1 audit event for recommendation.submitted_for_review, got %d", auditCount)
-	}
-
-	// --- Assert queue.updated event was emitted ---
-	lastEvent := notifier.last()
-	if lastEvent == nil {
-		t.Fatal("no queue.updated event emitted")
-	}
-	var evt map[string]any
-	if err := json.Unmarshal(lastEvent, &evt); err != nil {
-		t.Fatalf("unmarshal queue.updated event: %v", err)
-	}
-	if evt["type"] != "queue.updated" {
-		t.Errorf("event type = %q, want %q", evt["type"], "queue.updated")
+		t.Errorf("expected 1 audit event for agent.interview_question, got %d", auditCount)
 	}
 }
 
-// TestDraft_TenantScoping verifies that the drafter only reads messages that
-// belong to the target conversation/tenant and never bleeds into another
-// tenant's data.
+// TestDraft_TenantScoping verifies that the drafter only reads and writes data
+// scoped to the target tenant and never bleeds into another tenant's data. Under
+// the interview flow, a normal question turn persists an assistant message in the
+// target tenant's conversation and must NOT touch any other tenant's data.
 func TestDraft_TenantScoping(t *testing.T) {
 	pool := testPool(t)
 	s := store.New(pool)
@@ -382,18 +403,18 @@ func TestDraft_TenantScoping(t *testing.T) {
 		t.Fatalf("create message B: %v", err)
 	}
 
-	// Run drafter for tenant A only.
-	const wantText = "Guidance for A only."
-	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier, stubPatientNotifier{})
+	// Run drafter for tenant A only. Stub returns a plain interview question
+	// (no marker), so the turn delivers a question and creates no recommendation.
+	const wantText = "Interview question for A only."
+	physNotifier := &stubNotifier{}
+	patNotifier := &recordingPatientNotifier{}
+	d, wg := newDrafterWithWait(t, &stubClient{text: wantText}, s, physNotifier, patNotifier)
 	d.DraftAsync(fA.TenantID, fA.Conv, fA.Patient)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && notifier.count() == 0 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Block until the goroutine exits before making DB assertions.
+	wg.Wait()
 
-	// Tenant B must have zero recommendations.
+	// --- Neither tenant must have any recommendation (interview question turn) ---
 	recsB, err := s.ListRecommendationsByState(ctx, tidB, domain.StatePendingReview)
 	if err != nil {
 		t.Fatalf("list B recs: %v", err)
@@ -401,14 +422,40 @@ func TestDraft_TenantScoping(t *testing.T) {
 	if len(recsB) != 0 {
 		t.Errorf("tenant B has %d recommendations after drafting for tenant A — tenant leak!", len(recsB))
 	}
-
-	// Tenant A must have exactly one.
 	recsA, err := s.ListRecommendationsByState(ctx, fA.TenantID, domain.StatePendingReview)
 	if err != nil {
 		t.Fatalf("list A recs: %v", err)
 	}
-	if len(recsA) != 1 {
-		t.Errorf("tenant A has %d PENDING_REVIEW recommendations, want 1", len(recsA))
+	if len(recsA) != 0 {
+		t.Errorf("tenant A has %d PENDING_REVIEW recommendations for an interview-question turn, want 0", len(recsA))
+	}
+
+	// --- Tenant A's conversation must have the interview question as an assistant
+	// message; tenant B's conversation must have only its original user message. ---
+	msgsA, err := s.ListMessagesByConversation(ctx, fA.TenantID, fA.Conv.ID)
+	if err != nil {
+		t.Fatalf("list tenant A messages: %v", err)
+	}
+	var assistantA []store.Message
+	for _, m := range msgsA {
+		if m.Role == "assistant" {
+			assistantA = append(assistantA, m)
+		}
+	}
+	if len(assistantA) != 1 {
+		t.Errorf("tenant A: expected 1 assistant message (interview question), got %d", len(assistantA))
+	} else if assistantA[0].Content != wantText {
+		t.Errorf("tenant A assistant message content = %q, want %q", assistantA[0].Content, wantText)
+	}
+
+	msgsB, err := s.ListMessagesByConversation(ctx, tidB, convB.ID)
+	if err != nil {
+		t.Fatalf("list tenant B messages: %v", err)
+	}
+	for _, m := range msgsB {
+		if m.Role == "assistant" {
+			t.Errorf("tenant B has unexpected assistant message — cross-tenant bleed: content=%q", m.Content)
+		}
 	}
 }
 

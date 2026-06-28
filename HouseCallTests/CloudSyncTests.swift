@@ -1517,6 +1517,9 @@ struct CloudSyncTests {
         // A subsequent send must not loop or reset the flag.
         try await service.sendMessage(conversationId: convLocalId, content: "again")
         #expect(coordinator.requiresReauth == true, "requiresReauth stays set (no reset)")
+
+        // Exactly one POST per send attempt — no internal retry loop on 401.
+        #expect(callCount.count == 2, "each send makes one POST attempt; 401 must not retry")
     }
 }
 

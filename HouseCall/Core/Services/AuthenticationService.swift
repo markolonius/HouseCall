@@ -331,10 +331,33 @@ class AuthenticationService: ObservableObject {
                 // to a local credential check; Core API is the single source of truth.
                 throw AuthenticationError.loginFailed("Invalid credentials")
             case .offline:
-                // TODO: Task 4.1 — offline fallback: when Core API is unreachable,
-                // fall back to the cached local credential check so the patient can
-                // still open their encrypted local record.  For now fail fast.
-                throw AuthenticationError.loginFailed("Unable to reach the server. Please check your connection.")
+                // Core API is unreachable (network failure / timeout) — attempt the
+                // cached local-credential check so a previously-authenticated patient
+                // can open their encrypted local record for offline use.
+                //
+                // IMPORTANT: this fallback applies ONLY to .offline (transport
+                // unreachable).  .unauthorized (server rejected the credentials)
+                // stays above and NEVER reaches this branch — Core API is the
+                // single source of truth for credential validity.
+                //
+                // No JWT is obtained; cloud sync stays inactive until a subsequent
+                // online login succeeds and a fresh token is stored.
+                do {
+                    let localUser = try userRepository.authenticateUser(
+                        email: email,
+                        credential: credential,
+                        authMethod: authMethod
+                    )
+                    // Local check succeeded: start a session from the cached record.
+                    try await createSession(for: localUser, authMethod: authMethod)
+                    return localUser
+                } catch {
+                    // No cached user for this email, or credential mismatch —
+                    // offline access cannot be granted without a valid local record.
+                    throw AuthenticationError.loginFailed(
+                        "Unable to reach the server. Please check your connection."
+                    )
+                }
             default:
                 throw AuthenticationError.loginFailed(syncErr.localizedDescription ?? "Server error")
             }

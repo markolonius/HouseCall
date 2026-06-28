@@ -24,7 +24,7 @@ password. Unit tests with a stubbed URLSession (success, 401, 409, unreachable).
 
 ## Phase 3: Make Core API authoritative in AuthenticationService
 
-### Task 3.1: Registration flow through Core API
+### Task 3.1: Registration flow through Core API  [x]
 `AuthenticationService.register` calls the Core API register client, then creates
 the local cache user keyed by the returned `patientId`, sets up the device master
 key + derived key (encryption identity = `patientId`), and stores the JWT.

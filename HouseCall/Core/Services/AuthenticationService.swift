@@ -101,8 +101,9 @@ class AuthenticationService: ObservableObject {
     ///   - urlString: The raw base URL string (mirrors `CoreAPIConfig.baseURLString()`).
     ///   - tenantId:  The tenant ID string (mirrors `CoreAPIConfig.tenantID()`).
     ///
-    /// This method is intentionally `internal` so only the test target can call
-    /// it.  It is NOT part of the public API.
+    /// This method is intentionally test-only (DEBUG) so it cannot be reached
+    /// from production code or a Release binary.  It is NOT part of the public API.
+    #if DEBUG
     static func _testMakeInstance(
         coreAPIBaseURLString urlString: String?,
         tenantId: String?
@@ -120,6 +121,7 @@ class AuthenticationService: ObservableObject {
             coreAPITenantId: tenantId
         )
     }
+    #endif
 
     @Published var currentSession: UserSession?
     @Published var isAuthenticated: Bool = false
@@ -446,7 +448,7 @@ class AuthenticationService: ObservableObject {
                     email: email,
                     password: authMethod == .password ? credential : nil,
                     passcode: authMethod == .passcode ? credential : nil,
-                    fullName: "",   // Full name unknown at login; will be populated by sync (task 5.2)
+                    fullName: "",   // Not known at login; profile sync is future work (not in this change)
                     authMethod: authMethod,
                     id: patientId
                 )
@@ -769,7 +771,9 @@ class AuthenticationService: ObservableObject {
     ///
     /// For unit-test use only — confirms config-gating logic in
     /// `_testMakeInstance(coreAPIBaseURLString:tenantId:)`.
+    #if DEBUG
     var _testIsCloudEnabled: Bool {
         coreAuthClient != nil && coreAPITenantId != nil
     }
+    #endif
 }

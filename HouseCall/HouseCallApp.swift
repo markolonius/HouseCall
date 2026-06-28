@@ -265,9 +265,10 @@ private struct AutoLaunchChatView: View {
 /// Returns `nil` in all other cases so the caller falls back to the
 /// direct-LLM path with no behaviour change.
 ///
-/// NOTE: Patient login is currently local (Core Data); no login flow populates
-/// `coreAPIJWT` yet.  This gate therefore always returns `nil` in the default
-/// build until a server-side patient auth flow writes the JWT to the Keychain.
+/// NOTE: A successful cloud login/registration (when `CoreAPIBaseURL` +
+/// `CoreAPITenantID` are configured) stores the JWT under `Keys.coreAPIJWT`, so
+/// this gate activates for an authenticated patient. With no Core API config the
+/// JWT is never written and this returns `nil` (local-only default build).
 @MainActor
 private func buildCloudSyncCoordinator(
     conversationRepository: ConversationRepositoryProtocol,

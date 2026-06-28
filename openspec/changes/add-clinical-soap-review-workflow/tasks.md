@@ -26,7 +26,7 @@ Add `soap_note` as a valid recommendation payload type in the domain layer with
 validation that Subjective/Objective/Assessment/Plan are present; extend the
 migration payload-type constraint if one exists. Lifecycle transitions unchanged.
 
-### Task 2.2: Draft the SOAP note into PENDING_REVIEW
+### Task 2.2: Draft the SOAP note into PENDING_REVIEW  [x]
 On marker detection, draft a `soap_note` recommendation (structured S/O/A/P
 payload + human-readable `draft_content`) using the existing DRAFT→PENDING_REVIEW
 transaction + audit + `queue.updated` pattern. Instruct the model not to

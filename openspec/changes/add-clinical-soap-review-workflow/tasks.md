@@ -34,7 +34,7 @@ fabricate objective exam findings.
 
 ## Phase 3: Direct agent→patient interview channel (core-api + delivery)
 
-### Task 3.1: Add a patient notifier + persist agent questions
+### Task 3.1: Add a patient notifier + persist agent questions  [x]
 Add a patient WebSocket notifier (analogue of PhysicianNotifier); persist each
 agent interview question as an assistant message on the conversation and push it
 to the patient's live socket. Audit with identifiers + event type only.

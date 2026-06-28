@@ -2,7 +2,7 @@
 
 ## Phase 1: Server-side interview engine (backend)
 
-### Task 1.1: Add the clinical interview system prompt server-side
+### Task 1.1: Add the clinical interview system prompt server-side  [x]
 Add the clinician history-taking prompt to the agent runtime (one question per
 turn, OPQRST, red-flag override, safety constraints, no-diagnosis) including the
 no-repeat / no-re-ask-answered instructions and a few-shot exemplar that skips an

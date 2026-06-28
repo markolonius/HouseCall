@@ -77,18 +77,6 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    Task {
-                        await viewModel.requestSummary()
-                    }
-                }) {
-                    Image(systemName: "list.clipboard")
-                        .accessibilityLabel("Summarize conversation")
-                }
-                .disabled(!viewModel.canSummarize)
-                .accessibilityIdentifier("summarizeButton")
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
                     showProfile = true
                 }) {
                     Image(systemName: "person.circle")

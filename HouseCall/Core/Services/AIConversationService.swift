@@ -18,21 +18,6 @@ import Foundation
 import Combine
 import CoreData
 
-/// Tracks which phase of the clinical interview is active for the current conversation.
-///
-/// Phase is held in-memory only (no Core Data persistence). A conversation
-/// reopened later always starts back in `.gathering`.
-///
-/// - `gathering`: normal history-taking turns — uses the interview prompt and
-///   the small per-turn token budget.
-/// - `summary`: the closing turn — uses the summary prompt and the larger
-///   token budget. Phase 3.2 flips to this state and returns to `.gathering`
-///   after the summary turn completes.
-enum InterviewPhase {
-    case gathering
-    case summary
-}
-
 /// Service for managing AI conversations with streaming support
 @MainActor
 class AIConversationService: ObservableObject {
@@ -56,26 +41,16 @@ class AIConversationService: ObservableObject {
     /// ID of the message currently being streamed
     @Published private(set) var streamingMessageId: UUID?
 
-    /// Current interview phase for this conversation (in-memory only; resets to
-    /// `.gathering` when the conversation is closed or the app restarts).
-    /// Observe this from the view model to enable/disable phase-specific controls.
-    @Published private(set) var interviewPhase: InterviewPhase = .gathering
+    // MARK: - Turn Token Budget
 
-    // MARK: - Interview Turn Budgets
-
-    /// Per-phase token budgets for clinical interview turns.
+    /// Per-turn token budget for clinical interview turns.
     ///
     /// A small budget physically caps turn length, preventing essay-length replies
     /// even when the model ignores the brevity instruction in the system prompt.
-    ///
-    /// - `gatheringMaxTokens` (~160): one short question per gathering turn.
-    /// - `summaryMaxTokens` (~512): room for the structured closing summary.
-    ///
-    /// Phase 3 selects between them via the `summaryTurn` parameter on `sendMessage`.
-    /// Internal (not private) so that unit tests can assert their exact values
+    /// One short question per gathering turn (~160 tokens).
+    /// Internal (not private) so that unit tests can assert its exact value
     /// without hard-coding magic numbers.
     static let gatheringMaxTokens = 160
-    static let summaryMaxTokens   = 512
 
     // MARK: - Dependencies
 
@@ -229,7 +204,7 @@ class AIConversationService: ObservableObject {
     ///   - conversationId: UUID of the conversation
     ///   - content: User's message content
     /// - Throws: Various errors from repositories and LLM providers
-    func sendMessage(conversationId: UUID, content: String, summaryTurn: Bool = false) async throws {
+    func sendMessage(conversationId: UUID, content: String) async throws {
         // Clear any previous errors
         errorMessage = nil
 
@@ -302,65 +277,8 @@ class AIConversationService: ObservableObject {
         try await streamAssistantTurn(
             conversationId: conversationId,
             provider: provider,
-            providerType: providerType,
-            summaryTurn: summaryTurn
+            providerType: providerType
         )
-    }
-
-    /// Transitions the current interview to its summary turn.
-    ///
-    /// Sets `interviewPhase` to `.summary`, runs a single assistant turn using
-    /// the summary prompt and the larger token budget, then resets the phase to
-    /// `.gathering` so the patient can continue the conversation.  No user
-    /// message is persisted — the model is asked to synthesise the history
-    /// gathered so far.
-    ///
-    /// Phase reset is guaranteed:
-    /// - On a synchronous setup error the `catch` block below resets immediately.
-    /// - On an asynchronous stream outcome `handleStreamComplete` resets at the
-    ///   end of the turn.
-    ///
-    /// - Parameter conversationId: UUID of the conversation to summarise.
-    /// - Throws: `ConversationRepositoryError.conversationNotFound` if the
-    ///   conversation does not exist or belongs to a different user;
-    ///   `LLMError.notConfigured` if no LLM provider is available;
-    ///   `MessageRepositoryError` on persistence failure.
-    func requestSummary(conversationId: UUID) async throws {
-        errorMessage = nil
-
-        guard let conversation = try conversationRepository.fetchConversation(id: conversationId) else {
-            throw ConversationRepositoryError.conversationNotFound
-        }
-        guard conversation.userId == userId else {
-            throw ConversationRepositoryError.conversationNotFound
-        }
-
-        // The summary-turn transition is recorded by the single
-        // `.aiStreamingStarted` audit event emitted in `streamAssistantTurn`
-        // (it carries `summaryTransition` when this turn is a summary), so no
-        // separate event is logged here — keeps one start-event per turn.
-
-        // Flip to summary phase.  On a synchronous setup error the catch block
-        // below resets immediately; on an asynchronous stream outcome
-        // handleStreamComplete resets at the end of the turn.
-        interviewPhase = .summary
-
-        do {
-            let (provider, providerType) = try resolveProvider(for: conversation)
-            self.currentProvider = provider
-            // Run one assistant turn with the summary prompt — no user message is created.
-            try await streamAssistantTurn(
-                conversationId: conversationId,
-                provider: provider,
-                providerType: providerType,
-                summaryTurn: true
-            )
-        } catch {
-            // Synchronous setup failed — reset phase immediately so the service
-            // is not stuck in .summary.
-            interviewPhase = .gathering
-            throw error
-        }
     }
 
     /// Cancels the current streaming request
@@ -428,15 +346,12 @@ class AIConversationService: ObservableObject {
     ///   - conversationId: UUID of the conversation receiving the turn.
     ///   - provider:       Resolved `LLMProvider` instance.
     ///   - providerType:   Provider type used for audit logging.
-    ///   - summaryTurn:    When `true`, selects the summary prompt and the larger
-    ///                     token budget; `false` selects the gathering prompt.
     /// - Throws: `MessageRepositoryError`, `LLMError`, or any error thrown by
     ///   the provider's `streamCompletion` during request setup.
     private func streamAssistantTurn(
         conversationId: UUID,
         provider: LLMProvider,
-        providerType: LLMProviderType,
-        summaryTurn: Bool
+        providerType: LLMProviderType
     ) async throws {
         // Create placeholder AI message
         let aiMessage = try messageRepository.createMessage(
@@ -451,25 +366,16 @@ class AIConversationService: ObservableObject {
         streamingText = ""
         isStreaming = true
 
-        // Choose the per-phase token budget and prompt variant.  Summary budget
-        // and prompt always travel together so the model receives consistent
-        // instructions for each phase.
-        let maxTokens = summaryTurn
-            ? AIConversationService.summaryMaxTokens
-            : AIConversationService.gatheringMaxTokens
-        let chatMessages = try buildChatContext(conversationId: conversationId, useSummaryPrompt: summaryTurn)
+        let maxTokens = AIConversationService.gatheringMaxTokens
+        let chatMessages = try buildChatContext(conversationId: conversationId)
 
-        var streamingStartedInfo = [
-            "conversationId": conversationId.uuidString,
-            "provider": providerType.rawValue
-        ]
-        if summaryTurn {
-            streamingStartedInfo["summaryTransition"] = "true"
-        }
         try? auditLogger.log(
             event: .aiStreamingStarted,
             userId: userId,
-            details: AuditEventDetails(additionalInfo: streamingStartedInfo)
+            details: AuditEventDetails(additionalInfo: [
+                "conversationId": conversationId.uuidString,
+                "provider": providerType.rawValue
+            ])
         )
 
         do {
@@ -535,10 +441,6 @@ class AIConversationService: ObservableObject {
         conversationId: UUID,
         providerType: LLMProviderType
     ) async {
-        // Capture before modifying state so the reset at the end of this method
-        // is reliable regardless of what the success/failure branches do.
-        let wasSummaryTurn = (interviewPhase == .summary)
-
         // INVARIANT: keep isStreaming = false, streamingMessageId = nil, and
         // messages[index] = updatedMessage free of any `await` between them so
         // SwiftUI coalesces all three into a single render pass and avoids a
@@ -637,36 +539,20 @@ class AIConversationService: ObservableObject {
                 )
             }
         }
-
-        // If this completed the summary turn, return the phase to .gathering so
-        // the patient can continue the interview after seeing the summary.
-        if wasSummaryTurn {
-            interviewPhase = .gathering
-        }
     }
 
     /// Builds chat context from conversation messages.
     /// - Parameters:
     ///   - conversationId: UUID of the conversation.
-    ///   - useSummaryPrompt: When `true`, injects `HealthcareSystemPrompt.summary`
-    ///     (closing-turn variant). Defaults to `false`, which uses the normal
-    ///     `HealthcareSystemPrompt.interview` gathering prompt. Phase 3 will pass
-    ///     `true` when the conversation is in the summary phase; all other callers
-    ///     use the default.
     /// - Returns: Array of ChatMessage for the LLM provider.
     /// - Throws: MessageRepositoryError
-    private func buildChatContext(conversationId: UUID, useSummaryPrompt: Bool = false) throws -> [ChatMessage] {
+    private func buildChatContext(conversationId: UUID) throws -> [ChatMessage] {
         var chatMessages: [ChatMessage] = []
-
-        // Select the prompt variant: summary for the closing turn, interview for all others.
-        let systemPrompt = useSummaryPrompt
-            ? HealthcareSystemPrompt.summary
-            : HealthcareSystemPrompt.interview
 
         // Add system prompt first
         chatMessages.append(ChatMessage(
             role: .system,
-            content: systemPrompt
+            content: HealthcareSystemPrompt.interview
         ))
 
         // Add all conversation messages (excluding the placeholder we just created)
@@ -698,11 +584,7 @@ class AIConversationService: ObservableObject {
         return chatMessages
     }
 
-    /// Clears the current conversation and messages.
-    ///
-    /// Resets all in-memory state including `interviewPhase` so that the next
-    /// conversation always starts in `.gathering` regardless of how the previous
-    /// one ended.
+    /// Clears the current conversation and messages, resetting all in-memory state.
     func clearCurrentConversation() {
         currentConversation = nil
         messages = []
@@ -711,7 +593,6 @@ class AIConversationService: ObservableObject {
         isStreaming = false
         errorMessage = nil
         currentProvider = nil
-        interviewPhase = .gathering
     }
 
     // MARK: - Sync state helpers

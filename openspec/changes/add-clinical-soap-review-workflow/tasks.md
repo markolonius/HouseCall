@@ -9,7 +9,7 @@ no-repeat / no-re-ask-answered instructions and a few-shot exemplar that skips a
 already-answered dimension. Define the completion marker constant
 (`<READY_FOR_NOTE>`) shared by prompt and parser.
 
-### Task 1.2: Generate an interview turn per patient message
+### Task 1.2: Generate an interview turn per patient message  [x]
 Replace the single-shot guidance draft with an interview step: assemble the
 tenant-scoped conversation, call the model, and produce the next turn. Add a
 configurable max-interview-turn safety cap that forces note drafting if exceeded.

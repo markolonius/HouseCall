@@ -124,10 +124,12 @@ func itSetupConversation(t *testing.T, s *store.Store, messages []struct{ Role, 
 	return itFixture{TenantID: tid, Conv: conv}
 }
 
-// stubNotifierNoop satisfies PhysicianNotifier for Drafter construction.
+// stubNotifierNoop satisfies PhysicianNotifier and PatientNotifier for Drafter
+// construction in tests that do not exercise notification paths.
 type stubNotifierNoop struct{}
 
 func (stubNotifierNoop) SendToPhysicians(_ string, _ []byte) {}
+func (stubNotifierNoop) SendToPatient(_, _ string, _ []byte) {}
 
 // ---------------------------------------------------------------------------
 // Tests: generateInterviewTurn
@@ -146,7 +148,7 @@ func TestGenerateInterviewTurn_LeadingSystemPrompt(t *testing.T) {
 	f := itSetupConversation(t, s, msgs)
 
 	spy := &spyClient{text: "When did it start?"}
-	d := NewDrafter(spy, s, stubNotifierNoop{})
+	d := NewDrafter(spy, s, stubNotifierNoop{}, stubNotifierNoop{})
 
 	_, err := d.generateInterviewTurn(context.Background(), f.TenantID, f.Conv)
 	if err != nil {
@@ -185,7 +187,7 @@ func TestGenerateInterviewTurn_ConversationHistory(t *testing.T) {
 	f := itSetupConversation(t, s, seedMsgs)
 
 	spy := &spyClient{text: "How would you rate the pain on a scale of 0-10?"}
-	d := NewDrafter(spy, s, stubNotifierNoop{})
+	d := NewDrafter(spy, s, stubNotifierNoop{}, stubNotifierNoop{})
 
 	_, err := d.generateInterviewTurn(context.Background(), f.TenantID, f.Conv)
 	if err != nil {
@@ -232,7 +234,7 @@ func TestGenerateInterviewTurn_ReturnsModelText(t *testing.T) {
 
 	const wantText = "I'm sorry to hear that. Can you point to where the pain is located?"
 	spy := &spyClient{text: wantText}
-	d := NewDrafter(spy, s, stubNotifierNoop{})
+	d := NewDrafter(spy, s, stubNotifierNoop{}, stubNotifierNoop{})
 
 	got, err := d.generateInterviewTurn(context.Background(), f.TenantID, f.Conv)
 	if err != nil {
@@ -255,7 +257,7 @@ func TestGenerateInterviewTurn_PropagatesModelError(t *testing.T) {
 
 	wantErr := &ModelError{StatusCode: 503}
 	spy := &spyClient{err: wantErr}
-	d := NewDrafter(spy, s, stubNotifierNoop{})
+	d := NewDrafter(spy, s, stubNotifierNoop{}, stubNotifierNoop{})
 
 	text, err := d.generateInterviewTurn(context.Background(), f.TenantID, f.Conv)
 	if err == nil {

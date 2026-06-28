@@ -34,12 +34,12 @@ fabricate objective exam findings.
 
 ## Phase 3: Direct agent→patient interview channel (core-api + delivery)
 
-### Task 3.1: Add a patient notifier + persist agent questions
+### Task 3.1: Add a patient notifier + persist agent questions  [x]
 Add a patient WebSocket notifier (analogue of PhysicianNotifier); persist each
 agent interview question as an assistant message on the conversation and push it
 to the patient's live socket. Audit with identifiers + event type only.
 
-### Task 3.2: Enforce the delivery carve-out
+### Task 3.2: Enforce the delivery carve-out  [x]
 Ensure interview questions (non-clinical) are the ONLY agent output delivered
 directly; the SOAP note (clinical A/P) is never delivered by the agent — only via
 the physician lifecycle. Add a guard/test asserting the agent has no code path to

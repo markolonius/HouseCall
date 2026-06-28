@@ -38,6 +38,15 @@ func (rt *Router) SendToPhysicians(tenantID string, event []byte) {
 	rt.hub.SendToPhysicians(tenantID, event)
 }
 
+// SendToPatient delivers event to the patient identified by patientID in the
+// given tenant. It implements agent.PatientNotifier so the Router can be
+// passed directly to agent.NewDrafter in cmd/server. The caller is
+// responsible for ensuring the event payload contains only identifiers — never
+// message content or other PHI.
+func (rt *Router) SendToPatient(tenantID, patientID string, event []byte) {
+	rt.hub.SendToPatient(tenantID, patientID, event)
+}
+
 // SetDrafter wires the AI Agent Runtime drafter after construction. This
 // breaks the circular dependency between Router (which needs the Drafter) and
 // the Drafter (which needs the Router as a PhysicianNotifier): construct the

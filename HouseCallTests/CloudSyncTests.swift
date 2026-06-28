@@ -1450,4 +1450,83 @@ struct CloudSyncTests {
         #expect(assistantMessages.first?.serverId == serverMsgId,
                 "The single persisted message must carry the correct serverId")
     }
+
+    // MARK: - 401 deactivation (task 4.2)
+
+    @Test("A 401 from a sync POST deactivates cloud sync and requires re-auth, without looping")
+    func testUnauthorizedDeactivatesCloudSync() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+        let convServerId = conversation.serverId!
+
+        // Stub POST → 401 (cached token rejected). Count calls to prove no retry loop.
+        let callCount = Counter()
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            callCount.increment()
+            return ("{\"error\":\"unauthorized\"}".data(using: .utf8)!,
+                    makeHTTPResponse(url: req.url!, status: 401))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            auditLogger: AuditLogger(context: context),
+            syncCoordinator: coordinator
+        )
+
+        try await service.loadConversation(convLocalId)
+
+        #expect(coordinator.requiresReauth == false, "should start without re-auth required")
+
+        // First send hits a 401 → deactivate.
+        try await service.sendMessage(conversationId: convLocalId, content: "hi")
+        #expect(coordinator.requiresReauth == true, "401 must flip requiresReauth")
+
+        // A subsequent send must not loop or reset the flag.
+        try await service.sendMessage(conversationId: convLocalId, content: "again")
+        #expect(coordinator.requiresReauth == true, "requiresReauth stays set (no reset)")
+
+        // Exactly one POST per send attempt — no internal retry loop on 401.
+        #expect(callCount.count == 2, "each send makes one POST attempt; 401 must not retry")
+    }
+}
+
+/// Minimal thread-safe counter for asserting call counts in async stubs.
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func increment() { lock.lock(); value += 1; lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
 }

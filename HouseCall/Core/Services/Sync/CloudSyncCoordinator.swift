@@ -66,6 +66,11 @@ final class CloudSyncCoordinator: ObservableObject {
     /// Non-nil while a pending-message replay is in progress.
     @Published private(set) var isReplaying: Bool = false
 
+    /// Set when the Core API rejects the cached token (401). The app observes
+    /// this to require re-login. Cloud sync is deactivated when it flips true;
+    /// there is no automatic retry loop.
+    @Published private(set) var requiresReauth: Bool = false
+
     // MARK: - Dependencies
 
     private let syncClient: SyncClient
@@ -118,6 +123,18 @@ final class CloudSyncCoordinator: ObservableObject {
         wsSubscription = nil
         foregroundSubscription?.cancel()
         foregroundSubscription = nil
+    }
+
+    /// Deactivates cloud sync after the Core API rejects the cached token (401).
+    /// Stops the connection, clears the stale JWT so the activation gate will not
+    /// re-arm with a dead token, and flips `requiresReauth` so the app prompts a
+    /// fresh login. Idempotent and loop-free: once `requiresReauth` is set, no
+    /// further work is done, so repeated 401s do not retry or re-trigger.
+    private func handleUnauthorized() {
+        guard !requiresReauth else { return }
+        stop()
+        try? KeychainManager.shared.delete(key: KeychainManager.Keys.coreAPIJWT)
+        requiresReauth = true
     }
 
     // MARK: - Message send (called by AIConversationService)
@@ -179,6 +196,10 @@ final class CloudSyncCoordinator: ObservableObject {
                     "syncState": "synced"
                 ])
             )
+        } catch SyncError.unauthorized {
+            // Cached token rejected — deactivate cloud sync and require re-login.
+            // Leave the message pending; it replays after re-auth.
+            handleUnauthorized()
         } catch SyncError.offline {
             // Transient: leave message pending so replay picks it up.
             // No state change, no rethrow.
@@ -334,6 +355,9 @@ final class CloudSyncCoordinator: ObservableObject {
                     "recommendationId": dto.ID
                 ])
             )
+        } catch SyncError.unauthorized {
+            // Cached token rejected — deactivate cloud sync, require re-login.
+            handleUnauthorized()
         } catch SyncError.serverError(404) {
             // Recommendation not yet DELIVERED — server returned 404; ignore.
             return
@@ -421,6 +445,9 @@ final class CloudSyncCoordinator: ObservableObject {
                 syncedMessageCount += insertedCount
             }
 
+        } catch SyncError.unauthorized {
+            // Cached token rejected — deactivate cloud sync, require re-login.
+            handleUnauthorized()
         } catch SyncError.offline {
             // Transient; the event will be reprocessed on reconnect.
         } catch {

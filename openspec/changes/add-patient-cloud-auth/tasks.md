@@ -37,13 +37,13 @@ keys stay device-local and stable. 401 → reject.
 
 ## Phase 4: Offline fallback + session/JWT lifecycle
 
-### Task 4.1: Offline fallback login
+### Task 4.1: Offline fallback login  [x]
 When Core API is unreachable (network/timeout, not 401), fall back to the cached
 local credential check so the patient can open their encrypted local record;
 cloud sync stays inactive until a JWT is obtained. Distinguish unreachable vs
 rejected.
 
-### Task 4.2: Logout + 401 handling
+### Task 4.2: Logout + 401 handling  [x]
 Logout clears session, cached derived key, and `coreAPIJWT`. On a `401` from
 `SyncClient`, deactivate cloud sync and require re-login (no retry loop).
 

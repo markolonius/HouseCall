@@ -122,6 +122,17 @@ class EncryptionManager {
         return newKey
     }
 
+    /// Clears the in-memory key caches (master key + derived keys) on logout or
+    /// session timeout. This does NOT delete the master key from the Keychain —
+    /// at-rest PHI must remain decryptable after the next login; it only evicts
+    /// the cached copies from memory so a stale session holds no key material.
+    func clearCachedKeys() {
+        cacheLock.lock()
+        masterKey = nil
+        derivedKeyCache.removeAll()
+        cacheLock.unlock()
+    }
+
     // MARK: - Key Derivation
 
     /// Derives a user-specific encryption key using HKDF

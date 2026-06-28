@@ -52,13 +52,28 @@ private struct RegisterResponseDTO: Decodable {
     let patient_id: String
 }
 
+// MARK: - CoreAPIAuthClientProtocol
+
+/// Testable seam for the Core API auth client.
+///
+/// Inject a conforming stub in unit tests to avoid live network calls.
+/// `CoreAPIAuthClient` is the production conformer; tests use
+/// `StubCoreAPIAuthClient` (defined in HouseCallTests).
+protocol CoreAPIAuthClientProtocol {
+    /// Authenticate an existing patient account.
+    func login(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult
+
+    /// Register a new patient account.
+    func register(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult
+}
+
 // MARK: - CoreAPIAuthClient
 
 /// Dedicated pre-auth REST client.
 ///
 /// Inject a custom `URLSession` in tests to avoid live network calls
 /// (see `CoreAPIAuthClientTests`).
-final class CoreAPIAuthClient {
+final class CoreAPIAuthClient: CoreAPIAuthClientProtocol {
 
     // MARK: - Dependencies
 

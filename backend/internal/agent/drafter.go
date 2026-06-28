@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/markolonius/housecall/backend/internal/domain"
@@ -331,6 +332,202 @@ func draftFailureReason(err error) string {
 		return "model_unavailable"
 	}
 	return "internal_error"
+}
+
+// parseSOAPSections extracts the four required SOAP sections from raw model
+// output. Section headers SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, and PLAN: are
+// recognised case-insensitively with whitespace trimmed. Content may appear
+// inline on the header line (after the colon) or on the lines that follow.
+//
+// Returns a *ParseError if fewer than four distinct headers are found. The
+// caller must separately call domain.SOAPPayload.Validate() to check that no
+// extracted section is empty or whitespace-only (validator task 2.1).
+//
+// No content is logged (PHI constraint).
+func parseSOAPSections(raw string) (domain.SOAPPayload, error) {
+	const (
+		labelSubjective = "SUBJECTIVE"
+		labelObjective  = "OBJECTIVE"
+		labelAssessment = "ASSESSMENT"
+		labelPlan       = "PLAN"
+	)
+	orderedLabels := []string{labelSubjective, labelObjective, labelAssessment, labelPlan}
+
+	lines := strings.Split(raw, "\n")
+
+	type span struct {
+		label   string
+		lineIdx int
+	}
+	seen := map[string]bool{}
+	var spans []span
+
+	for i, line := range lines {
+		upper := strings.ToUpper(strings.TrimSpace(line))
+		for _, label := range orderedLabels {
+			if !seen[label] && (upper == label || upper == label+":" || strings.HasPrefix(upper, label+":")) {
+				seen[label] = true
+				spans = append(spans, span{label: label, lineIdx: i})
+				break
+			}
+		}
+	}
+
+	if len(spans) < 4 {
+		return domain.SOAPPayload{}, &ParseError{
+			Detail: "model output is missing one or more SOAP section headers (SUBJECTIVE, OBJECTIVE, ASSESSMENT, PLAN)",
+		}
+	}
+
+	// Extract content for each section: inline text after the first colon on the
+	// header line (if any), then all subsequent lines up to the next header.
+	sections := make(map[string]string, 4)
+	for i, sp := range spans {
+		endIdx := len(lines)
+		if i+1 < len(spans) {
+			endIdx = spans[i+1].lineIdx
+		}
+
+		var parts []string
+
+		// Inline content: text after the colon on the header line itself.
+		headerLine := lines[sp.lineIdx]
+		if colonPos := strings.Index(headerLine, ":"); colonPos >= 0 {
+			if inline := strings.TrimSpace(headerLine[colonPos+1:]); inline != "" {
+				parts = append(parts, inline)
+			}
+		}
+
+		// Body lines between this header and the next.
+		for j := sp.lineIdx + 1; j < endIdx; j++ {
+			parts = append(parts, lines[j])
+		}
+
+		sections[sp.label] = strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+
+	return domain.SOAPPayload{
+		Subjective: sections[labelSubjective],
+		Objective:  sections[labelObjective],
+		Assessment: sections[labelAssessment],
+		Plan:       sections[labelPlan],
+	}, nil
+}
+
+// draftSOAPNote assembles the conversation history, calls the model with
+// SOAPDraftSystemPrompt, parses the four SOAP sections, validates them, and
+// atomically persists a soap_note recommendation at PENDING_REVIEW — mirroring
+// the DRAFT→PENDING_REVIEW transaction pattern in draft().
+//
+// Error discipline is identical to draft(): a non-nil return means no
+// recommendation was persisted; the caller (DraftAsync or the phase-3 entry
+// point) is responsible for writing the ai_interaction_failed audit event.
+// No model output is logged (PHI constraint).
+func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	// Assemble tenant-scoped conversation context. The query includes tenant_id
+	// in the WHERE clause so cross-tenant bleed is impossible.
+	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return err
+	}
+
+	// Build the model message slice: SOAPDraftSystemPrompt as the sole system
+	// message, followed by the full conversation history so the model has
+	// the complete interview context to write from.
+	// Content goes to the model call only — never written to logs or audit.
+	modelMsgs := make([]Message, 0, len(msgs)+1)
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: SOAPDraftSystemPrompt,
+	})
+	for _, m := range msgs {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	text, err := d.client.Complete(ctx, modelMsgs)
+	if err != nil {
+		// Non-nil error means no valid model output — do NOT persist.
+		return err
+	}
+
+	// Parse the model output into the four SOAP sections.
+	soapPayload, err := parseSOAPSections(text)
+	if err != nil {
+		return err
+	}
+	// Domain validation: all four sections must be non-empty (whitespace-only
+	// content is treated as empty by the validator tightened in task 2.1).
+	if err := soapPayload.Validate(); err != nil {
+		return err
+	}
+
+	// Marshal the structured payload for storage.
+	payloadJSON, err := json.Marshal(soapPayload)
+	if err != nil {
+		return err
+	}
+
+	agentActor := domain.Actor{Type: domain.ActorAgent, ID: uuid.Nil}
+
+	// Persist DRAFT → PENDING_REVIEW + audit event atomically.
+	var recID uuid.UUID
+	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
+		// Step 1: insert at DRAFT.
+		rec, err := tx.CreateRecommendation(ctx, tenantID, store.Recommendation{
+			ConversationID: conv.ID,
+			PatientID:      patient.ID,
+			State:          domain.StateDraft,
+			PayloadType:    domain.PayloadTypeSOAPNote,
+			Payload:        payloadJSON,
+			DraftContent:   strings.TrimSpace(text),
+		})
+		if err != nil {
+			return err
+		}
+		recID = rec.ID
+
+		// Step 2: pure state-machine transition DRAFT → PENDING_REVIEW.
+		nextState, err := domain.Transition(rec.State, domain.ActionSubmitForReview, agentActor, patient.State)
+		if err != nil {
+			return err
+		}
+
+		// Step 3: persist the new state within the same transaction.
+		if err := tx.UpdateRecommendationState(ctx, tenantID, rec.ID, nextState, nil, nil); err != nil {
+			return err
+		}
+
+		// Step 4: write the audit event. Metadata contains identifiers +
+		// payload_type only — no PHI, no model output.
+		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+			ActorType: string(domain.ActorAgent),
+			ActorID:   nil, // agent has no user UUID
+			EventType: "recommendation.submitted_for_review",
+			Metadata: mustMarshalJSON(map[string]any{
+				"recommendation_id": recID.String(),
+				"conversation_id":   conv.ID.String(),
+				"new_state":         nextState,
+				"payload_type":      domain.PayloadTypeSOAPNote,
+			}),
+		})
+	}); err != nil {
+		return err
+	}
+
+	// Emit queue.updated AFTER the successful commit so physicians only
+	// receive the event when the row is durably visible.
+	d.notifier.SendToPhysicians(tenantID.String(), mustMarshalJSON(map[string]any{
+		"type": "queue.updated",
+		"data": map[string]any{
+			"recommendation_id": recID.String(),
+			"conversation_id":   conv.ID.String(),
+		},
+	}))
+
+	return nil
 }
 
 func mustMarshalJSON(v any) []byte {

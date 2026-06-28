@@ -48,7 +48,7 @@ type PatientNotifier interface {
 }
 
 // Drafter listens for persisted patient messages and drives the
-// DRAFT → PENDING_REVIEW lifecycle for guidance recommendations.
+// DRAFT → PENDING_REVIEW lifecycle for soap_note recommendations.
 //
 // Threading: DraftAsync dispatches the work to a goroutine so the patient's
 // HTTP response is returned immediately; the model call (which may take up to
@@ -200,7 +200,7 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 // message in the model call is always InterviewSystemPrompt (system role) so
 // the model stays in interview mode; the rest is the raw conversation history.
 //
-// Error discipline mirrors draft(): a non-nil error means no usable model
+// Error discipline mirrors runInterviewTurn's contract: a non-nil error means no usable model
 // output was obtained — the caller must not treat the returned string as
 // clinical content. Message content is never logged (PHI constraint). The
 // error type carries enough coarse information for draftFailureReason to
@@ -380,9 +380,9 @@ func parseSOAPSections(raw string) (domain.SOAPPayload, error) {
 // draftSOAPNote assembles the conversation history, calls the model with
 // SOAPDraftSystemPrompt, parses the four SOAP sections, validates them, and
 // atomically persists a soap_note recommendation at PENDING_REVIEW — mirroring
-// the DRAFT→PENDING_REVIEW transaction pattern in draft().
+// the DRAFT→PENDING_REVIEW transaction pattern used across the agent.
 //
-// Error discipline is identical to draft(): a non-nil return means no
+// Error discipline is identical to the rest of the agent: a non-nil return means no
 // recommendation was persisted; the caller (DraftAsync or the phase-3 entry
 // point) is responsible for writing the ai_interaction_failed audit event.
 // No model output is logged (PHI constraint).

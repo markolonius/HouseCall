@@ -1167,6 +1167,202 @@ struct CloudSyncTests {
                 "syncedMessageCount must be 1 after one new assistant message was inserted")
     }
 
+    // MARK: - Cloud path routing (thin-client behaviour) [task 6.2]
+
+    /// When a CloudSyncCoordinator is injected, `sendMessage` must take the
+    /// cloud POST path and must NOT start the legacy LLM streaming path.
+    ///
+    /// Assertion: `isStreaming` stays `false` throughout and after the call,
+    /// confirming that `streamAssistantTurn` (which sets `isStreaming = true`)
+    /// was never entered.
+    ///
+    /// An offline coordinator is used so the POST fails silently; the important
+    /// thing is that the code reaches `coordinator.postMessage` and returns
+    /// early — it never falls through to the legacy streaming branch.
+    @Test("sendMessage with coordinator does not start LLM streaming — cloud path is taken")
+    func testSendMessageWithCoordinatorUsesCloudPathNotStreaming() async throws {
+        let kc = makeKeychain()
+        let offlineSession = makeOfflineSession()
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: offlineSession,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        let service = AIConversationService(
+            userId: userId,
+            conversationRepository: conversationRepo,
+            messageRepository: messageRepo,
+            auditLogger: AuditLogger(context: context),
+            syncCoordinator: coordinator
+        )
+
+        // Pre-condition: isStreaming starts false.
+        #expect(service.isStreaming == false, "isStreaming must start false")
+
+        try await service.loadConversation(convLocalId)
+        try await service.sendMessage(conversationId: convLocalId, content: "cloud route check")
+
+        // isStreaming must still be false — the cloud path returns before
+        // `streamAssistantTurn` can set it to true.
+        #expect(service.isStreaming == false,
+                "isStreaming must remain false when the cloud coordinator path is taken")
+
+        // The user message must still be persisted (cloud path saves first, then POSTs).
+        let allMessages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let userMsg = allMessages.first(where: { $0.role == "user" })
+        #expect(userMsg != nil, "User message must be persisted even when the cloud path is taken")
+    }
+
+    // MARK: - soap_note recommendation.delivered coordinator path [task 6.2]
+
+    /// A `recommendation.delivered` WS event whose `PayloadType` is `"soap_note"`
+    /// must:
+    ///  1. Produce a `RecommendationCardModel` with `payloadType == "soap_note"` in
+    ///     `coordinator.deliveredCards` (exercising the soap_note dispatch path in
+    ///     `CloudSyncCoordinator`).
+    ///  2. Persist an encrypted assistant message in Core Data with
+    ///     `syncState == "synced"` and `serverId == recommendation server ID`.
+    ///
+    /// The phase-5 tests already cover the card-view smoke test for soap_note;
+    /// this test covers the *coordinator delivery path* for soap_note specifically.
+    @Test("recommendation.delivered with soap_note payloadType creates card model and persists encrypted assistant message")
+    func testRecommendationDeliveredSOAPNoteCreatesCardModel() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+        let convLocalIdString = convLocalId.uuidString
+
+        let recId = "soap-rec-\(UUID().uuidString)"
+        // Synthetic SOAP content — not real patient data.
+        let soapContent = "SUBJECTIVE: Two-day sore throat, mild.\\nOBJECTIVE: No exam findings available.\\nASSESSMENT: Probable viral pharyngitis.\\nPLAN: Rest, fluids, analgesics PRN."
+        // Plain Swift version (newlines restored) used for encrypt/decrypt checks.
+        let soapContentDecoded = soapContent.replacingOccurrences(of: "\\n", with: "\n")
+
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/recommendations/\(recId)"
+        ) { req in
+            let json = """
+            {
+              "ID": "\(recId)",
+              "TenantID": "t1",
+              "ConversationID": "\(convLocalIdString)",
+              "PatientID": "patient-soap-1",
+              "State": "DELIVERED",
+              "PayloadType": "soap_note",
+              "Payload": null,
+              "DraftContent": "draft soap",
+              "FinalContent": "\(soapContent)",
+              "ReviewedBy": "physician-soap-1",
+              "ReviewedAt": "2026-06-26T09:00:00Z",
+              "CreatedAt": "2026-06-26T08:00:00Z"
+            }
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        coordinator.start()
+
+        // Simulate a recommendation.delivered WS push for a soap_note payload.
+        let wsEvent = WSEvent(
+            type: "recommendation.delivered",
+            data: WSEventData(
+                recommendation_id: recId,
+                conversation_id: convLocalIdString
+            )
+        )
+        syncClient.eventPublisher.send(wsEvent)
+
+        // Give the async handler time to complete.
+        try await Task.sleep(nanoseconds: 200_000_000) // 200 ms
+
+        // 1. coordinator.deliveredCards must contain exactly one soap_note card.
+        let cards = coordinator.deliveredCards
+        #expect(cards.count == 1,
+                "Exactly one card must be published for the soap_note delivery")
+        let card = cards.first
+        #expect(card?.payloadType == "soap_note",
+                "Card payloadType must be soap_note, not guidance or any other type")
+        #expect(card?.id == recId,
+                "Card id must match the recommendation server ID")
+        #expect(card?.conversationLocalId == convLocalId,
+                "Card conversationLocalId must match the local conversation UUID")
+
+        // 2. An assistant message must be persisted in Core Data.
+        let messages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let assistantMsg = messages.first(where: { $0.role == "assistant" })
+        #expect(assistantMsg != nil,
+                "An assistant message must be persisted for the soap_note recommendation")
+        #expect(assistantMsg?.syncState == "synced",
+                "Persisted message must have syncState = synced")
+        #expect(assistantMsg?.serverId == recId,
+                "serverId must match the recommendation server ID")
+
+        // 3. Content must be encrypted at rest — raw bytes must not equal plain UTF-8.
+        if let msg = assistantMsg {
+            let rawContent = msg.encryptedContent
+            #expect(rawContent != nil, "encryptedContent must not be nil")
+            let plainData = soapContentDecoded.data(using: .utf8)!
+            #expect(rawContent != plainData,
+                    "SOAP note content must be AES-GCM encrypted, not stored as plaintext")
+
+            // Decrypting must recover the physician-approved SOAP text.
+            let decrypted = try messageRepo.decryptMessageContent(msg)
+            #expect(decrypted == soapContentDecoded,
+                    "Decrypted content must match the original SOAP note text exactly")
+        }
+    }
+
     /// A second `message.created` event for the same server message ID must NOT
     /// produce a duplicate Core Data row (de-duplication by serverId).
     @Test("message.created event is de-duplicated: repeat event for same server message ID inserts no extra row")

@@ -230,6 +230,23 @@ final class ChatInterfaceUITests: XCTestCase {
             "ProviderSettingsButton must not exist in the new UX")
     }
 
+    // MARK: - Removed Controls (task 6.2)
+
+    /// The "Summarize" control that existed before the clinical interview mode
+    /// was introduced must not appear anywhere in the reachable chat surface.
+    /// Probing by accessibility identifier is authoritative; a label predicate
+    /// provides a belt-and-suspenders check in case the identifier was renamed.
+    func testNoSummarizeControlInChat() throws {
+        loginTestUser()
+
+        XCTAssertFalse(
+            app.buttons["summarizeButton"].exists,
+            "summarizeButton must not exist — the Summarize control was removed in the clinical interview mode")
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'summarize'")).firstMatch.exists,
+            "No button labelled 'Summarize' (case-insensitive) must appear in the chat view")
+    }
+
     // MARK: - Input and Send Button Tests
 
     func testSendButtonDisabledWhenInputEmpty() throws {

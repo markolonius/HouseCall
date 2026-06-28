@@ -59,17 +59,17 @@ lifecycle states.
 
 ## Phase 5: iOS thin client
 
-### Task 5.1: Remove the Summarize control + client summary path
+### Task 5.1: Remove the Summarize control + client summary path  [x]
 Remove the ChatView "Summarize" toolbar button and the `requestSummary()`
 client path for the cloud flow (retire client-side interview prompt/budget/phase
 usage on the cloud path).
 
-### Task 5.2: Route patient chat through cloud sync
+### Task 5.2: Route patient chat through cloud sync  [x]
 For the SOAP flow, send patient messages via `CloudSyncCoordinator` and render
 agent interview questions arriving over message sync / WebSocket as assistant
 bubbles.
 
-### Task 5.3: Render the delivered approved note
+### Task 5.3: Render the delivered approved note  [x]
 Render a DELIVERED `soap_note` recommendation to the patient as a recommendation
 card (reuse `RecommendationCard`) showing the physician-approved plan.
 

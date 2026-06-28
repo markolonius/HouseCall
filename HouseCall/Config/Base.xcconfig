@@ -29,6 +29,11 @@ LLM_CUSTOM_BASE_URL =
 LLM_CUSTOM_ENDPOINT =
 LLM_CUSTOM_MODEL =
 
+// Core API base URL for the cloud sync coordinator (Phase 5 SOAP flow).
+// Keep EMPTY here. Set the real value in the gitignored Secrets.xcconfig.
+// Example: http:$(SLASH)$(SLASH)localhost:8080  or  https:$(SLASH)$(SLASH)api.example.com
+CORE_API_BASE_URL =
+
 // Optional include of the gitignored secrets file.
 // Values in Secrets.xcconfig override the defaults above.
 #include? "Secrets.xcconfig"

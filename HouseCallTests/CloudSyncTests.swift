@@ -869,6 +869,35 @@ struct CloudSyncTests {
         _ = card.body
     }
 
+    @Test("RecommendationCard renders soap_note payloadType without crashing (smoke test)")
+    @MainActor
+    func testRecommendationCardSOAPNotePayloadType() {
+        // Verify that a RecommendationCardModel with payloadType "soap_note"
+        // routes to SOAPNoteCardView and that the view body is accessible
+        // (i.e. the switch case is handled and does not fall through to the
+        // generic fallback).  Synthetic content — no real patient data.
+        let soapContent = """
+        SUBJECTIVE: Three-day headache, bifrontal, 7/10.
+        OBJECTIVE: Temperature 38.1 °C (self-reported). No exam findings.
+        ASSESSMENT: Probable viral illness. No red flags.
+        PLAN: Rest, fluids, acetaminophen PRN. Return if fever >39.5 °C.
+        """
+        let model = RecommendationCardModel(
+            id: "rc-soap-smoke",
+            conversationLocalId: UUID(),
+            payloadType: "soap_note",
+            finalContent: soapContent,
+            messageLocalId: UUID()
+        )
+        // payloadType must be preserved unchanged on the model.
+        #expect(model.payloadType == "soap_note",
+                "payloadType must be soap_note on the constructed model")
+        // Instantiating the card and accessing body must not crash — this
+        // exercises the switch dispatch path for the soap_note case.
+        let card = RecommendationCard(model: model)
+        _ = card.body
+    }
+
     // MARK: - Cohesive offline → replay → recommendation.delivered loop
 
     /// Validates the complete airplane-mode-replay-to-delivered-card loop in one
@@ -1029,5 +1058,200 @@ struct CloudSyncTests {
         let rawContent = assistantMsg?.encryptedContent
         let plainData = guidanceText.data(using: .utf8)!
         #expect(rawContent != plainData, "Step 3: content must be AES-GCM encrypted, not plaintext")
+    }
+
+    // MARK: - message.created → persisted assistant messages
+
+    /// A `message.created` WS event triggers a listMessages fetch and persists
+    /// new assistant messages as encrypted Core Data rows marked syncState=synced.
+    @Test("message.created event persists new assistant messages with serverId and syncState=synced")
+    func testMessageCreatedEventPersistsAssistantMessages() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+        let convServerId = conversation.serverId!
+
+        let serverMsgId = "agent-q-\(UUID().uuidString)"
+        let questionText = "How long have you had the headache?"
+
+        // Stub GET /api/conversations/{serverId}/messages
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            guard req.httpMethod == "GET" else {
+                return ("[]".data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+            }
+            let json = """
+            [
+              {
+                "ID": "\(serverMsgId)",
+                "TenantID": "t1",
+                "ConversationID": "\(convServerId)",
+                "Role": "assistant",
+                "Content": "\(questionText)",
+                "CreatedAt": "2026-06-26T10:00:00Z"
+              }
+            ]
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        coordinator.start()
+
+        // Fire a message.created WS event directly into the coordinator.
+        let wsEvent = WSEvent(
+            type: "message.created",
+            data: WSEventData(
+                recommendation_id: nil,
+                conversation_id: convLocalId.uuidString,
+                message_id: serverMsgId
+            )
+        )
+        syncClient.eventPublisher.send(wsEvent)
+
+        // Allow the async handler to complete.
+        try await Task.sleep(nanoseconds: 200_000_000) // 200 ms
+
+        // 1. An assistant message should be persisted in Core Data.
+        let messages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let assistantMsg = messages.first(where: { $0.role == "assistant" })
+        #expect(assistantMsg != nil, "An assistant message must be persisted after message.created")
+        #expect(assistantMsg?.syncState == "synced",
+                "Persisted message must have syncState = synced")
+        #expect(assistantMsg?.serverId == serverMsgId,
+                "serverId must match the server message ID")
+
+        // 2. Content is encrypted at rest (not stored as plaintext UTF-8).
+        if let msg = assistantMsg {
+            let rawContent = msg.encryptedContent
+            let plainData = questionText.data(using: .utf8)!
+            #expect(rawContent != plainData,
+                    "Content must be AES-GCM encrypted, not stored as plaintext")
+
+            // Decryption must recover the original text.
+            let decrypted = try messageRepo.decryptMessageContent(msg)
+            #expect(decrypted == questionText,
+                    "Decrypted content must match the server message text")
+        }
+
+        // 3. syncedMessageCount must have been incremented.
+        #expect(coordinator.syncedMessageCount == 1,
+                "syncedMessageCount must be 1 after one new assistant message was inserted")
+    }
+
+    /// A second `message.created` event for the same server message ID must NOT
+    /// produce a duplicate Core Data row (de-duplication by serverId).
+    @Test("message.created event is de-duplicated: repeat event for same server message ID inserts no extra row")
+    func testMessageCreatedEventDeDuplicatesOnRepeat() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId)
+        let convLocalId = conversation.id!
+        let convServerId = conversation.serverId!
+
+        let serverMsgId = "agent-dedup-\(UUID().uuidString)"
+
+        // Always returns the same single assistant message.
+        SyncMockURLProtocol.register(
+            sessionID: sid,
+            path: "/api/conversations/\(convServerId)/messages"
+        ) { req in
+            guard req.httpMethod == "GET" else {
+                return ("[]".data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+            }
+            let json = """
+            [
+              {
+                "ID": "\(serverMsgId)",
+                "TenantID": "t1",
+                "ConversationID": "\(convServerId)",
+                "Role": "assistant",
+                "Content": "Are the symptoms constant or intermittent?",
+                "CreatedAt": "2026-06-26T10:01:00Z"
+              }
+            ]
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 200))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: session,
+            keychainManager: kc
+        )
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        coordinator.start()
+
+        let wsEvent = WSEvent(
+            type: "message.created",
+            data: WSEventData(
+                recommendation_id: nil,
+                conversation_id: convLocalId.uuidString,
+                message_id: serverMsgId
+            )
+        )
+
+        // Fire the same event TWICE (simulates reconnect / replay).
+        syncClient.eventPublisher.send(wsEvent)
+        syncClient.eventPublisher.send(wsEvent)
+
+        // Allow both handlers to complete.
+        try await Task.sleep(nanoseconds: 300_000_000) // 300 ms
+
+        // Exactly ONE assistant message must be present — not two.
+        let messages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
+        let assistantMessages = messages.filter { $0.role == "assistant" }
+        #expect(assistantMessages.count == 1,
+                "De-duplication must prevent a second insert for the same server message ID")
+        #expect(assistantMessages.first?.serverId == serverMsgId,
+                "The single persisted message must carry the correct serverId")
     }
 }

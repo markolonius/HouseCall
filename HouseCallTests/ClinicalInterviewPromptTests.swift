@@ -3,9 +3,9 @@
 //  HouseCallTests
 //
 //  Unit tests for HealthcareSystemPrompt content invariants and
-//  per-phase token budget values.
+//  per-turn token budget value.
 //
-//  Spec: openspec/changes/add-clinical-interview-mode/tasks.md — Task 5.1
+//  Spec: openspec/changes/add-clinical-soap-review-workflow/tasks.md — Task 5.1
 //
 
 import Testing
@@ -79,96 +79,13 @@ struct InterviewPromptTests {
     }
 }
 
-// MARK: - HealthcareSystemPrompt — summary (closing) variant
+// MARK: - Per-turn token budget
 
-@Suite("HealthcareSystemPrompt.summary content invariants")
-struct SummaryPromptTests {
-
-    private let prompt = HealthcareSystemPrompt.summary
-
-    // MARK: History summary instruction
-
-    @Test("Summary prompt instructs a history summary section")
-    func historySummarySection() {
-        let lower = prompt.lowercased()
-        #expect(
-            lower.contains("history summary"),
-            "Expected history summary instruction in summary prompt"
-        )
-    }
-
-    // MARK: Preliminary non-diagnostic guidance
-
-    @Test("Summary prompt includes preliminary non-diagnostic guidance")
-    func preliminaryNonDiagnosticGuidance() {
-        let lower = prompt.lowercased()
-        let hasPreliminary = lower.contains("preliminary") || lower.contains("non-diagnostic")
-        #expect(
-            hasPreliminary,
-            "Expected 'preliminary' or 'non-diagnostic' guidance instruction in summary prompt"
-        )
-    }
-
-    @Test("Summary prompt prohibits stating a definitive diagnosis")
-    func noDefinitiveDiagnosis() {
-        let lower = prompt.lowercased()
-        #expect(
-            lower.contains("definitive diagnosis"),
-            "Expected 'definitive diagnosis' prohibition in summary prompt"
-        )
-    }
-
-    // MARK: Triage / red-flag advice
-
-    @Test("Summary prompt includes triage and red-flag advice")
-    func triageRedFlagAdvice() {
-        let lower = prompt.lowercased()
-        let hasTriage = lower.contains("triage") || lower.contains("red flag")
-        #expect(hasTriage, "Expected triage/red-flag section in summary prompt")
-    }
-
-    // MARK: Disclaimer
-
-    @Test("Summary prompt ends with professional-care disclaimer")
-    func professionalCareDisclaimer() {
-        let lower = prompt.lowercased()
-        #expect(
-            lower.contains("not a substitute"),
-            "Expected 'not a substitute' disclaimer in summary prompt"
-        )
-    }
-
-    // MARK: No further interview questions
-
-    @Test("Summary prompt explicitly instructs model NOT to ask further interview questions")
-    func noFurtherInterviewQuestions() {
-        let lower = prompt.lowercased()
-        // The prompt must contain a clear instruction to stop asking questions.
-        let hasForbidsQuestions = lower.contains("do not ask") || lower.contains("no further")
-        #expect(
-            hasForbidsQuestions,
-            "Expected instruction not to ask further questions in summary prompt"
-        )
-    }
-}
-
-// MARK: - Per-phase token budgets
-
-@Suite("AIConversationService per-phase token budgets")
+@Suite("AIConversationService per-turn token budget")
 struct InterviewTokenBudgetTests {
 
     @Test("Gathering budget is 160 tokens")
     func gatheringBudgetValue() {
         #expect(AIConversationService.gatheringMaxTokens == 160)
-    }
-
-    @Test("Summary budget is 512 tokens")
-    func summaryBudgetValue() {
-        #expect(AIConversationService.summaryMaxTokens == 512)
-    }
-
-    @Test("Gathering budget is smaller than summary budget")
-    func gatheringLessThanSummary() {
-        #expect(AIConversationService.gatheringMaxTokens < AIConversationService.summaryMaxTokens)
     }
 }

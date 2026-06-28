@@ -213,11 +213,28 @@ private struct AutoLaunchChatView: View {
                 launchState = .failed("Unable to open your conversation. Please try again.")
                 return
             }
+
+            // Build a cloud-sync coordinator only when the Core API base URL
+            // is configured AND a JWT is already present in the Keychain.
+            // Otherwise pass nil so the service uses the direct-LLM path.
+            let coordinator = buildCloudSyncCoordinator(
+                conversationRepository: conversationRepository,
+                messageRepository: messageRepository
+            )
+            let aiService = AIConversationService(
+                userId: userId,
+                conversationRepository: conversationRepository,
+                messageRepository: messageRepository,
+                syncCoordinator: coordinator
+            )
+            coordinator?.start()
+
             chatViewModel = ConversationViewModel(
                 userId: userId,
                 conversationId: conversationId,
                 conversationRepository: conversationRepository,
-                messageRepository: messageRepository
+                messageRepository: messageRepository,
+                aiService: aiService
             )
             launchState = .ready
         } catch {
@@ -230,6 +247,50 @@ private struct AutoLaunchChatView: View {
             launchState = .failed("Unable to open your conversation. Please try again.")
         }
     }
+}
+
+// MARK: - Cloud sync coordinator factory
+
+/// Constructs a `SyncClient` + `CloudSyncCoordinator` for the production app
+/// ONLY when both conditions are met:
+///   1. `CoreAPIBaseURL` in Info.plist (fed by the `CORE_API_BASE_URL` xcconfig
+///      setting) resolves to a non-empty, valid URL.
+///   2. A Core API JWT is present in the Keychain under `Keys.coreAPIJWT`.
+///
+/// Returns `nil` in all other cases so the caller falls back to the
+/// direct-LLM path with no behaviour change.
+///
+/// NOTE: Patient login is currently local (Core Data); no login flow populates
+/// `coreAPIJWT` yet.  This gate therefore always returns `nil` in the default
+/// build until a server-side patient auth flow writes the JWT to the Keychain.
+@MainActor
+private func buildCloudSyncCoordinator(
+    conversationRepository: ConversationRepositoryProtocol,
+    messageRepository: MessageRepositoryProtocol
+) -> CloudSyncCoordinator? {
+    // Gate 1: Core API base URL must be configured at build time.
+    guard
+        let urlString = Bundle.main.object(forInfoDictionaryKey: "CoreAPIBaseURL") as? String,
+        !urlString.isEmpty,
+        // Reject unsubstituted xcconfig placeholders (e.g. "$(CORE_API_BASE_URL)").
+        !urlString.hasPrefix("$("),
+        let baseURL = URL(string: urlString)
+    else { return nil }
+
+    // Gate 2: A JWT must already be present in the Keychain.
+    // `try?` on a throws-returning-Optional flattens to Optional<String> (SE-0230).
+    guard
+        let jwt = try? KeychainManager.shared.get(key: KeychainManager.Keys.coreAPIJWT),
+        !jwt.isEmpty
+    else { return nil }
+
+    // Both gates passed — build the coordinator.
+    guard let syncClient = try? SyncClient(baseURL: baseURL) else { return nil }
+    return CloudSyncCoordinator(
+        syncClient: syncClient,
+        messageRepository: messageRepository,
+        conversationRepository: conversationRepository
+    )
 }
 
 #if DEBUG

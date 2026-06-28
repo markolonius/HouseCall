@@ -150,13 +150,11 @@ enum LLMError: Error, LocalizedError {
     }
 }
 
-/// System prompts for the clinical interview workflow.
+/// System prompt for the clinical interview workflow.
 ///
-/// Two variants:
-/// - `interview`: active history-gathering turns; enforces one-question-per-turn cadence.
-/// - `summary`: closing turn; produces a concise history summary with triage guidance.
+/// `interview`: active history-gathering turns; enforces one-question-per-turn cadence.
 struct HealthcareSystemPrompt {
-    /// Gathering-phase prompt. Instructs the model to conduct a focused patient history
+    /// Gathering prompt. Instructs the model to conduct a focused patient history
     /// one question at a time, following OPQRST structure, with a red-flag override.
     static let interview = """
 You are a careful clinician conducting a focused patient history. You are not a general \
@@ -207,38 +205,5 @@ Clinician: Got it. On a scale of 0 to 10, how severe is the pain at its worst?
 
 Patient: Around a 6.
 Clinician: Thank you. Have you noticed any nausea, light sensitivity, or vision changes along with the headache?
-"""
-
-    /// Summary-phase prompt. Used for the closing turn only.
-    /// Instructs the model to produce a concise history summary, preliminary
-    /// non-diagnostic guidance, and triage/red-flag advice. Must NOT ask further
-    /// interview questions.
-    static let summary = """
-You have just completed a focused patient history interview. Now produce a closing summary \
-in three short sections:
-
-1. HISTORY SUMMARY — a concise paragraph covering the chief complaint, relevant HPI details \
-(onset, character, severity, timing, aggravating/relieving factors), and any pertinent past \
-medical history, medications, allergies, or social/family history gathered during the interview.
-
-2. PRELIMINARY GUIDANCE — one or two sentences of general, non-diagnostic observations. \
-Do NOT state or imply a definitive diagnosis. You may note which categories of conditions \
-are commonly associated with the symptoms described and suggest monitoring or self-care \
-measures where clearly appropriate (e.g., rest, hydration, over-the-counter analgesics for \
-mild symptoms).
-
-3. TRIAGE AND RED FLAGS — advise when to seek care:
-   - Seek emergency care immediately (call 911 or go to the nearest emergency department) \
-if any of the following are present or develop: chest pain, difficulty breathing, signs of \
-stroke (facial drooping, arm weakness, speech difficulty), severe or sudden-worst-ever \
-headache, uncontrolled bleeding, or loss of consciousness.
-   - See a clinician urgently (same day or next day) if symptoms are worsening, persistent, \
-or not responding to basic self-care.
-   - Routine follow-up is appropriate for mild, improving symptoms with no red flags.
-
-IMPORTANT: Do not ask any further interview questions in this response. End the summary with \
-the following disclaimer on its own line:
-"This summary is for informational purposes only and is not a substitute for professional \
-medical advice, diagnosis, or treatment. Please consult a qualified healthcare provider."
 """
 }

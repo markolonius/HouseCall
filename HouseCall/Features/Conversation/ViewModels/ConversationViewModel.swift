@@ -140,32 +140,6 @@ class ConversationViewModel: ObservableObject {
         errorMessage = nil
     }
 
-    /// Whether a summary request can be issued right now.
-    ///
-    /// Returns `false` while a streaming turn is in progress (to avoid
-    /// concurrent AI calls) and `false` when no user messages exist yet
-    /// (a summary requires gathered history to be meaningful).
-    var canSummarize: Bool {
-        guard !isStreaming else { return false }
-        return messages.contains { $0.role == "user" }
-    }
-
-    /// Request a clinical-interview summary turn for this conversation.
-    ///
-    /// Forwards to `AIConversationService.requestSummary(conversationId:)`.
-    /// Returns early without calling the service when `canSummarize` is
-    /// `false` — this is a defensive guard in addition to the View disabling
-    /// the control via the same property.
-    func requestSummary() async {
-        guard canSummarize else { return }
-
-        do {
-            try await aiService.requestSummary(conversationId: conversationId)
-        } catch {
-            handleError(error)
-        }
-    }
-
     // MARK: - Private Methods
 
     private func setupServiceObservers() {
@@ -234,6 +208,17 @@ class ConversationViewModel: ObservableObject {
                     if !self.recommendationCards.isEmpty {
                         self.loadMessages()
                     }
+                }
+                .store(in: &cancellables)
+
+            // Observe syncedMessageCount so agent interview questions that
+            // arrive via `message.created` (no card model) also trigger a
+            // message list refresh.
+            coordinator.$syncedMessageCount
+                .receive(on: DispatchQueue.main)
+                .dropFirst()  // skip initial 0 value on subscription
+                .sink { [weak self] _ in
+                    self?.loadMessages()
                 }
                 .store(in: &cancellables)
         }

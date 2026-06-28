@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Core API base URL for cloud sync coordinator (substituted from xcconfig at build time).
+	     Empty when CORE_API_BASE_URL is not set; coordinator is only activated when non-empty. -->
+	<key>CoreAPIBaseURL</key>
+	<string>$(CORE_API_BASE_URL)</string>
 	<!-- LLM provider defaults — values are substituted at build time from xcconfig. -->
 	<key>LLMDefaultProvider</key>
 	<string>$(LLM_DEFAULT_PROVIDER)</string>

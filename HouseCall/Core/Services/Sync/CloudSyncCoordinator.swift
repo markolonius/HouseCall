@@ -57,6 +57,12 @@ final class CloudSyncCoordinator: ObservableObject {
     /// ConversationViewModel observes this to inject cards into the message list.
     @Published private(set) var deliveredCards: [RecommendationCardModel] = []
 
+    /// Incremented each time a `message.created` WS event causes new assistant
+    /// messages to be persisted locally.  ConversationViewModel observes this to
+    /// trigger a `loadMessages()` refresh so agent interview questions appear in
+    /// the chat bubble list without requiring a manual pull-to-refresh.
+    @Published private(set) var syncedMessageCount: Int = 0
+
     /// Non-nil while a pending-message replay is in progress.
     @Published private(set) var isReplaying: Bool = false
 
@@ -256,6 +262,12 @@ final class CloudSyncCoordinator: ObservableObject {
             guard let recId = event.data.recommendation_id else { return }
             await handleRecommendationDelivered(recommendationId: recId,
                                                 conversationId: event.data.conversation_id)
+        case "message.created":
+            // The server persisted a new message (typically an agent interview
+            // question) on the conversation.  Fetch the full message list and
+            // upsert any assistant messages that are not yet present locally.
+            guard let cidString = event.data.conversation_id else { return }
+            await handleMessageCreated(conversationIdString: cidString)
         default:
             break
         }
@@ -338,6 +350,92 @@ final class CloudSyncCoordinator: ObservableObject {
         }
     }
 
+    /// Handles a `message.created` WebSocket push.
+    ///
+    /// Fetches all messages for the conversation from the server and persists
+    /// any assistant-role messages that are not yet present locally.
+    /// De-duplication is keyed on the server message ID stored in `serverId`,
+    /// so replaying the event on reconnect is safe (no double-inserts).
+    ///
+    /// Only non-PHI metadata (IDs, syncState, role) is used in audit entries.
+    private func handleMessageCreated(conversationIdString: String) async {
+        guard let convLocalId = UUID(uuidString: conversationIdString) else { return }
+
+        // Resolve the conversation's server ID — required to call listMessages.
+        guard
+            let conversation = try? conversationRepository.fetchConversation(id: convLocalId),
+            let conversationServerId = conversation.serverId,
+            !conversationServerId.isEmpty
+        else { return }
+
+        // Resolve the user ID for content encryption.
+        let userId: UUID
+        do {
+            userId = try messageRepository.getUserId(for: convLocalId)
+        } catch {
+            return
+        }
+
+        do {
+            let serverMessages = try await syncClient.listMessages(conversationID: conversationServerId)
+
+            // Build the set of server message IDs already present locally so we
+            // can skip messages that were already persisted (de-duplication for
+            // reconnect / replay scenarios).
+            let existingServerIds = fetchExistingServerIds(conversationId: convLocalId)
+
+            var insertedCount = 0
+            for dto in serverMessages {
+                // Only insert assistant-role messages not yet in Core Data.
+                guard dto.Role == "assistant",
+                      !existingServerIds.contains(dto.ID) else { continue }
+
+                let savedMessage = try messageRepository.createMessage(
+                    conversationId: convLocalId,
+                    role: .assistant,
+                    content: dto.Content,
+                    streamingComplete: true
+                )
+
+                // Mark synced with the server-assigned message ID.
+                updateSyncState(
+                    messageId: savedMessage.id!,
+                    syncState: "synced",
+                    serverId: dto.ID
+                )
+
+                insertedCount += 1
+
+                // Audit with identifiers only — no content/PHI.
+                try? auditLogger.log(
+                    event: .messageReceived,
+                    userId: userId,
+                    details: AuditEventDetails(additionalInfo: [
+                        "event": "message.created",
+                        "messageServerId": dto.ID
+                    ])
+                )
+            }
+
+            if insertedCount > 0 {
+                syncedMessageCount += insertedCount
+            }
+
+        } catch SyncError.offline {
+            // Transient; the event will be reprocessed on reconnect.
+        } catch {
+            // Log without PHI; do not crash.
+            try? auditLogger.log(
+                event: .aiInteractionFailed,
+                userId: nil,
+                details: AuditEventDetails(
+                    errorMessage: "message.created handling failed",
+                    additionalInfo: ["conversationId": conversationIdString]
+                )
+            )
+        }
+    }
+
     // MARK: - Foreground notification
 
     private func subscribeToForegroundNotification() {
@@ -352,6 +450,19 @@ final class CloudSyncCoordinator: ObservableObject {
     }
 
     // MARK: - Core Data helpers
+
+    /// Returns the set of server message IDs (`serverId`) already stored for
+    /// the given conversation.  Used by `handleMessageCreated` to skip messages
+    /// that were already persisted, preventing double-inserts on replay.
+    private func fetchExistingServerIds(conversationId: UUID) -> Set<String> {
+        let request: NSFetchRequest<Message> = Message.fetchRequest()
+        request.predicate = NSPredicate(
+            format: "conversationId == %@ AND serverId != nil",
+            conversationId as CVarArg
+        )
+        let existing = (try? context.fetch(request)) ?? []
+        return Set(existing.compactMap { $0.serverId })
+    }
 
     private func fetchPendingMessages() throws -> [Message] {
         let request: NSFetchRequest<Message> = Message.fetchRequest()

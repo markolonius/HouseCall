@@ -38,6 +38,10 @@ enum SyncError: LocalizedError, Equatable {
     case serverError(Int)
     /// A non-localhost base URL was provided without HTTPS.
     case insecureBaseURL
+    /// The server returned 409 — e.g. the email is already registered for
+    /// this tenant (distinct from a generic server error so callers can
+    /// surface a specific "account already exists" message).
+    case conflict
 
     var errorDescription: String? {
         switch self {
@@ -56,6 +60,8 @@ enum SyncError: LocalizedError, Equatable {
             return "Server error (\(code))."
         case .insecureBaseURL:
             return "Non-localhost base URLs must use https://."
+        case .conflict:
+            return "An account with that email already exists."
         }
     }
 
@@ -66,6 +72,7 @@ enum SyncError: LocalizedError, Equatable {
         case (.decodeFailed(let a), .decodeFailed(let b)): return a == b
         case (.serverError(let a), .serverError(let b)): return a == b
         case (.insecureBaseURL, .insecureBaseURL): return true
+        case (.conflict, .conflict): return true
         default: return false
         }
     }

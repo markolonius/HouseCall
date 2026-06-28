@@ -16,7 +16,7 @@ authenticates a subsequent `/api/*` request.
 
 ## Phase 2: iOS Core API auth client
 
-### Task 2.1: Core API login/register client
+### Task 2.1: Core API login/register client  [x]
 Add `login(tenantId:email:password:)` and `register(tenantId:email:password:)` to
 the Core API client surface (extend `SyncClient` or a small `CoreAPIAuthClient`
 sharing baseURL + URLSession), returning `{token, patientId}`. Never log the

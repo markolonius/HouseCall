@@ -50,6 +50,25 @@ struct EncryptionManagerTests {
         #expect(decrypted == originalString)
     }
 
+    @Test("clearCachedKeys evicts in-memory keys but preserves at-rest decryptability")
+    func testClearCachedKeysPreservesAtRestData() throws {
+        let manager = makeIsolatedManager()
+        let userId = UUID()
+        let originalString = "Patient Name: John Doe"
+
+        // Encrypt — this derives and caches the user's key.
+        let encrypted = try manager.encryptString(originalString, for: userId)
+
+        // Logout-style cache eviction: drops in-memory master + derived keys but
+        // must NOT delete the Keychain master key.
+        manager.clearCachedKeys()
+
+        // Decryption after eviction must still succeed (master key re-read from
+        // the Keychain, derived key recomputed) — at-rest PHI stays readable.
+        let decrypted = try manager.decryptString(encrypted, for: userId)
+        #expect(decrypted == originalString)
+    }
+
     @Test("Encrypted data is different each time (unique nonce)")
     func testUniqueNoncePerEncryption() throws {
         let manager = makeIsolatedManager()

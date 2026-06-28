@@ -452,6 +452,11 @@ class AuthenticationService: ObservableObject {
         try keychainManager.deleteSessionToken()
         clearCoreAPIJWT()
 
+        // Evict in-memory encryption keys so a logged-out session retains no
+        // key material. The Keychain master key is preserved so at-rest PHI
+        // remains decryptable after the next login.
+        EncryptionManager.shared.clearCachedKeys()
+
         // Stop cloud sync so the WebSocket subscription is cancelled and no
         // further PHI events can be delivered or persisted after logout.
         syncCoordinator?.stop()
@@ -615,6 +620,9 @@ class AuthenticationService: ObservableObject {
         try? invalidateSession()
         try? keychainManager.deleteSessionToken()
         clearCoreAPIJWT()
+
+        // Evict in-memory encryption keys (Keychain master key preserved).
+        EncryptionManager.shared.clearCachedKeys()
 
         // Stop cloud sync — cancel the WebSocket subscription and prevent any
         // in-flight recommendation.delivered events from persisting PHI.

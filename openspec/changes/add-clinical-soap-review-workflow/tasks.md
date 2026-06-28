@@ -21,7 +21,7 @@ question. Marker handling is server-side only and never patient-visible.
 
 ## Phase 2: SOAP note payload + drafting (backend)
 
-### Task 2.1: Register the soap_note payload type
+### Task 2.1: Register the soap_note payload type  [x]
 Add `soap_note` as a valid recommendation payload type in the domain layer with
 validation that Subjective/Objective/Assessment/Plan are present; extend the
 migration payload-type constraint if one exists. Lifecycle transitions unchanged.

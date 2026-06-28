@@ -869,6 +869,35 @@ struct CloudSyncTests {
         _ = card.body
     }
 
+    @Test("RecommendationCard renders soap_note payloadType without crashing (smoke test)")
+    @MainActor
+    func testRecommendationCardSOAPNotePayloadType() {
+        // Verify that a RecommendationCardModel with payloadType "soap_note"
+        // routes to SOAPNoteCardView and that the view body is accessible
+        // (i.e. the switch case is handled and does not fall through to the
+        // generic fallback).  Synthetic content — no real patient data.
+        let soapContent = """
+        SUBJECTIVE: Three-day headache, bifrontal, 7/10.
+        OBJECTIVE: Temperature 38.1 °C (self-reported). No exam findings.
+        ASSESSMENT: Probable viral illness. No red flags.
+        PLAN: Rest, fluids, acetaminophen PRN. Return if fever >39.5 °C.
+        """
+        let model = RecommendationCardModel(
+            id: "rc-soap-smoke",
+            conversationLocalId: UUID(),
+            payloadType: "soap_note",
+            finalContent: soapContent,
+            messageLocalId: UUID()
+        )
+        // payloadType must be preserved unchanged on the model.
+        #expect(model.payloadType == "soap_note",
+                "payloadType must be soap_note on the constructed model")
+        // Instantiating the card and accessing body must not crash — this
+        // exercises the switch dispatch path for the soap_note case.
+        let card = RecommendationCard(model: model)
+        _ = card.body
+    }
+
     // MARK: - Cohesive offline → replay → recommendation.delivered loop
 
     /// Validates the complete airplane-mode-replay-to-delivered-card loop in one

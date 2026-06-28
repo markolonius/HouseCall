@@ -64,7 +64,7 @@ Remove the ChatView "Summarize" toolbar button and the `requestSummary()`
 client path for the cloud flow (retire client-side interview prompt/budget/phase
 usage on the cloud path).
 
-### Task 5.2: Route patient chat through cloud sync
+### Task 5.2: Route patient chat through cloud sync  [x]
 For the SOAP flow, send patient messages via `CloudSyncCoordinator` and render
 agent interview questions arriving over message sync / WebSocket as assistant
 bubbles.

@@ -198,9 +198,11 @@ class AuthenticationService: ObservableObject {
                 throw AuthenticationError.registrationFailed("Email already registered")
             case .unauthorized:
                 throw AuthenticationError.registrationFailed("Registration unauthorised")
-            case .offline(let reason):
+            case .offline:
+                // Do not embed the raw offline reason — system error strings can
+                // carry sensitive context (matches SyncError.offline.errorDescription).
                 throw AuthenticationError.registrationFailed(
-                    "Registration requires network connectivity (\(reason))"
+                    "Registration requires network connectivity"
                 )
             default:
                 throw AuthenticationError.registrationFailed(syncErr.localizedDescription ?? "Server error")

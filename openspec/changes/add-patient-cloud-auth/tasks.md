@@ -61,12 +61,12 @@ API and agent interview questions arrive over WebSocket (resolves HouseCall-nre3
 
 ## Phase 6: Tests and end-to-end evaluation
 
-### Task 6.1: Backend + iOS auth tests
+### Task 6.1: Backend + iOS auth tests  [x]
 Backend: register endpoint tests (phase 1). iOS: AuthenticationService register/
 login through Core API, offline fallback, logout JWT clearing, encryption-
 identity continuity (same patientId → same derived key).
 
-### Task 6.2: Manual end-to-end evaluation
+### Task 6.2: Manual end-to-end evaluation  [ ] (manual — see HouseCall-vx57; prerequisite HouseCall-u9v0 patient state)
 With Postgres + core-api + agent (Ollama `medgemma:4b`) + physician web app
 running: register a patient in-app, conduct the interview, confirm the SOAP note
 reaches the physician queue, approve it, and confirm the approved plan is

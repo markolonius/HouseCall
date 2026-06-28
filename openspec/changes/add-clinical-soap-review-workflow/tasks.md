@@ -52,7 +52,7 @@ Extend the review template so a `soap_note` recommendation displays the four
 sections clearly, with Assessment and Plan presented as the physician's decision
 focus.
 
-### Task 4.2: Approve / modify / reject the Assessment & Plan
+### Task 4.2: Approve / modify / reject the Assessment & Plan  [x]
 Wire approve (`approve`), edit-then-save (`modify` of A/P), and reject
 (`reject`) using the existing review actions and state-licensing checks. No new
 lifecycle states.

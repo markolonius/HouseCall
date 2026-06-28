@@ -12,6 +12,18 @@ import (
 	"github.com/markolonius/housecall/backend/internal/store"
 )
 
+// DefaultMaxInterviewTurns is the maximum number of assistant-role turns the
+// interview is allowed to produce before the runtime must force a SOAP note
+// draft. If the model never emits ReadyForNoteMarker the safety cap prevents
+// an interview from running indefinitely.
+//
+// Callers that need a different limit can pass a custom value to
+// interviewTurnCapReached; this constant is the production default.
+// Enforcement (switching from interview to draft when the cap is reached) is
+// wired in Tasks 1.3 and 2.2; this task only defines the constant and the
+// pure helper function.
+const DefaultMaxInterviewTurns = 12
+
 // ModelClient is the narrow interface the Drafter needs from the model. Using
 // an interface rather than *Client directly lets tests inject a stub without
 // standing up a real model endpoint.
@@ -217,6 +229,69 @@ func (d *Drafter) draft(ctx context.Context, tenantID store.TenantID, conv store
 	}))
 
 	return nil
+}
+
+// generateInterviewTurn assembles the full tenant-scoped conversation history
+// and calls the model to produce the next interview question. The leading
+// message in the model call is always InterviewSystemPrompt (system role) so
+// the model stays in interview mode; the rest is the raw conversation history.
+//
+// Error discipline mirrors draft(): a non-nil error means no usable model
+// output was obtained — the caller must not treat the returned string as
+// clinical content. Message content is never logged (PHI constraint). The
+// error type carries enough coarse information for draftFailureReason to
+// classify it without inspecting the body.
+//
+// Task 1.3 is responsible for inspecting the returned text for
+// ReadyForNoteMarker and branching between delivering an interview question
+// and triggering SOAP note drafting. This method is intentionally output-
+// agnostic: it returns whatever the model produced.
+func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
+	// Fetch the full conversation history scoped to this tenant. The query
+	// includes tenant_id in the WHERE clause so cross-tenant bleed is
+	// impossible even when two tenants share a conversation UUID.
+	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
+	// Build the model message slice: the clinical interview system prompt as
+	// the sole system message, followed by every stored turn in order.
+	// Content goes to the model call only — never written to logs or audit.
+	modelMsgs := make([]Message, 0, len(msgs)+1)
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: InterviewSystemPrompt,
+	})
+	for _, m := range msgs {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	return d.client.Complete(ctx, modelMsgs)
+}
+
+// interviewTurnCapReached reports whether the number of assistant-role turns
+// already present in msgs has reached or exceeded max. When true, the agent
+// runtime should switch from interviewing to SOAP note drafting regardless of
+// whether ReadyForNoteMarker has been emitted, so an interview cannot run
+// unbounded.
+//
+// Only "assistant" role messages are counted — "user" messages (patient input)
+// and "system" messages do not count toward the cap.
+//
+// The function is pure and side-effect-free so it can be unit-tested in
+// isolation without a store or model client.
+func interviewTurnCapReached(msgs []store.Message, max int) bool {
+	count := 0
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			count++
+		}
+	}
+	return count >= max
 }
 
 // draftFailureReason maps a draft error to a coarse, safe string reason that

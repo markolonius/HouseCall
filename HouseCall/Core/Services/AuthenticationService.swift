@@ -57,7 +57,69 @@ struct UserSession {
 
 /// High-level authentication service
 class AuthenticationService: ObservableObject {
-    static let shared = AuthenticationService()
+
+    // `shared` reads Core API config at first access.  When both
+    // `CoreAPIBaseURL` and `CoreAPITenantID` are set in the xcconfig,
+    // the singleton is cloud-enabled; otherwise it is local-only.
+    // Tests that construct `AuthenticationService(...)` directly are
+    // unaffected — the memberwise init defaults remain `nil`.
+    static let shared: AuthenticationService = makeShared()
+
+    /// Production factory.  Reads build-time config via `CoreAPIConfig`
+    /// and returns a cloud-enabled instance when both the base URL and the
+    /// tenant ID are present, or a local-only instance when either is absent.
+    ///
+    /// Tests should NOT call this method; inject deps via the memberwise
+    /// `init(...)` instead to keep tests hermetic.
+    private static func makeShared() -> AuthenticationService {
+        guard
+            let urlString = CoreAPIConfig.baseURLString(),
+            let baseURL = URL(string: urlString),
+            let tenantId = CoreAPIConfig.tenantID(),
+            let client = try? CoreAPIAuthClient(baseURL: baseURL)
+        else {
+            // Config absent or URL invalid — local-only, zero behaviour change.
+            return AuthenticationService()
+        }
+        return AuthenticationService(
+            coreAuthClient: client,
+            coreAPITenantId: tenantId
+        )
+    }
+
+    // MARK: - Internal factory for test-time config-gating verification
+    //
+    // Allows tests to exercise the config-gating logic (non-nil client vs. nil)
+    // without touching the real singleton or `Bundle.main`.
+    // Production code MUST use `shared`; only HouseCallTests uses this entry point.
+
+    /// Returns an `AuthenticationService` wired with cloud deps when both
+    /// `urlString` and `tenantId` are non-nil and `urlString` is a valid,
+    /// TLS-compliant URL; returns a local-only instance otherwise.
+    ///
+    /// - Parameters:
+    ///   - urlString: The raw base URL string (mirrors `CoreAPIConfig.baseURLString()`).
+    ///   - tenantId:  The tenant ID string (mirrors `CoreAPIConfig.tenantID()`).
+    ///
+    /// This method is intentionally `internal` so only the test target can call
+    /// it.  It is NOT part of the public API.
+    static func _testMakeInstance(
+        coreAPIBaseURLString urlString: String?,
+        tenantId: String?
+    ) -> AuthenticationService {
+        guard
+            let urlString,
+            let baseURL = URL(string: urlString),
+            let tenantId,
+            let client = try? CoreAPIAuthClient(baseURL: baseURL)
+        else {
+            return AuthenticationService()
+        }
+        return AuthenticationService(
+            coreAuthClient: client,
+            coreAPITenantId: tenantId
+        )
+    }
 
     @Published var currentSession: UserSession?
     @Published var isAuthenticated: Bool = false
@@ -700,5 +762,14 @@ class AuthenticationService: ObservableObject {
     @MainActor
     func _testSimulateSessionTimeout() async {
         await handleSessionTimeout()
+    }
+
+    /// `true` when this instance was constructed with a non-nil
+    /// `coreAuthClient` AND a non-nil `coreAPITenantId`; `false` otherwise.
+    ///
+    /// For unit-test use only — confirms config-gating logic in
+    /// `_testMakeInstance(coreAPIBaseURLString:tenantId:)`.
+    var _testIsCloudEnabled: Bool {
+        coreAuthClient != nil && coreAPITenantId != nil
     }
 }

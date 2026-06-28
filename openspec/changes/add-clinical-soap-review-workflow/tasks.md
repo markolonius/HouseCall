@@ -14,7 +14,7 @@ Replace the single-shot guidance draft with an interview step: assemble the
 tenant-scoped conversation, call the model, and produce the next turn. Add a
 configurable max-interview-turn safety cap that forces note drafting if exceeded.
 
-### Task 1.3: Detect the completion marker
+### Task 1.3: Detect the completion marker  [x]
 Parse the model output for the marker: if present, strip it (and any trailing
 text) and branch to note drafting; otherwise treat the output as an interview
 question. Marker handling is server-side only and never patient-visible.

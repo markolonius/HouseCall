@@ -75,17 +75,17 @@ card (reuse `RecommendationCard`) showing the physician-approved plan.
 
 ## Phase 6: Tests and evaluation
 
-### Task 6.1: Backend unit/integration tests
+### Task 6.1: Backend unit/integration tests  [x]
 Cover: interview turn generation, marker detection + stripping, turn-cap forced
 draft, soap_note payload validation, DRAFT→PENDING_REVIEW drafting, the
 delivery carve-out (agent cannot deliver soap_note), and physician approve/modify/
 reject of a soap_note with state-licensing.
 
-### Task 6.2: iOS tests
+### Task 6.2: iOS tests  [x]
 Cover: Summarize control removed; cloud-sync send path; rendering of agent
 interview questions and of a delivered soap_note card.
 
-### Task 6.3: Manual end-to-end evaluation
+### Task 6.3: Manual end-to-end evaluation  [ ] (manual — BLOCKED on HouseCall-nre3 patient↔core-api auth)
 With Postgres + core-api + agent (Ollama `medgemma:4b`) + physician web app
 running: verify the interview does not repeat/re-ask, self-completes into a SOAP
 note, the physician can approve/modify/reject A/P, and the approved plan is

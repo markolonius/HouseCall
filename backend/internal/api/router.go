@@ -58,6 +58,7 @@ func (rt *Router) SetDrafter(d *agent.Drafter) { rt.drafter = d }
 func (rt *Router) Mount(r chi.Router) {
 	// Unauthenticated.
 	r.Post("/api/auth/login", rt.handleLogin)
+	r.Post("/api/auth/register", rt.handleRegister)
 
 	// WebSocket — JWT validated inside handleWS on the initial request.
 	r.Get("/ws", rt.handleWS)

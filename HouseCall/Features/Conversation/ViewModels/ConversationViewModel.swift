@@ -210,6 +210,17 @@ class ConversationViewModel: ObservableObject {
                     }
                 }
                 .store(in: &cancellables)
+
+            // Observe syncedMessageCount so agent interview questions that
+            // arrive via `message.created` (no card model) also trigger a
+            // message list refresh.
+            coordinator.$syncedMessageCount
+                .receive(on: DispatchQueue.main)
+                .dropFirst()  // skip initial 0 value on subscription
+                .sink { [weak self] _ in
+                    self?.loadMessages()
+                }
+                .store(in: &cancellables)
         }
     }
 

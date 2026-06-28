@@ -120,10 +120,15 @@ struct WSEvent: Codable {
     let data: WSEventData
 }
 
-/// Payload carried by `recommendation.delivered` and `queue.updated`.
+/// Payload carried by WebSocket push events.
+/// All fields are optional; a given event type populates only the relevant subset.
 struct WSEventData: Codable {
     let recommendation_id: String?
     let conversation_id: String?
+    /// Server message ID carried by `message.created` events.
+    /// Defaults to `nil` so existing callers that only supply the first two
+    /// fields continue to compile without changes.
+    var message_id: String? = nil
 }
 
 // MARK: - SyncClient

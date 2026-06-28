@@ -49,7 +49,7 @@ Logout clears session, cached derived key, and `coreAPIJWT`. On a `401` from
 
 ## Phase 5: Tenant config + cloud activation
 
-### Task 5.1: CoreAPITenantID config
+### Task 5.1: CoreAPITenantID config  [x]
 Add `CoreAPITenantID` build setting → Info.plist (alongside `CoreAPIBaseURL`),
 read in the auth/coordinator wiring. Empty → cloud auth disabled (pure local
 mode, no regression).

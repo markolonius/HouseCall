@@ -38,6 +38,15 @@ type PhysicianNotifier interface {
 	SendToPhysicians(tenantID string, event []byte)
 }
 
+// PatientNotifier is the narrow interface the Drafter needs to push
+// message.created events to the patient who owns the conversation. The
+// event payload carries identifiers only (conversation_id, message_id) —
+// never message content (PHI). The iOS client fetches content via its
+// authenticated REST channel after receiving the event.
+type PatientNotifier interface {
+	SendToPatient(tenantID, patientID string, event []byte)
+}
+
 // Drafter listens for persisted patient messages and drives the
 // DRAFT → PENDING_REVIEW lifecycle for guidance recommendations.
 //
@@ -47,15 +56,16 @@ type PhysicianNotifier interface {
 // request is NOT propagated — drafting must complete even if the patient
 // disconnects. The goroutine uses a background context derived from the store.
 type Drafter struct {
-	client     ModelClient
-	store      *store.Store
-	notifier   PhysicianNotifier
-	onComplete func() // optional; called (via defer) when the goroutine exits — tests use this for synchronisation
+	client          ModelClient
+	store           *store.Store
+	notifier        PhysicianNotifier
+	patientNotifier PatientNotifier
+	onComplete      func() // optional; called (via defer) when the goroutine exits — tests use this for synchronisation
 }
 
-// NewDrafter constructs a Drafter. All three arguments are required.
-func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier) *Drafter {
-	return &Drafter{client: client, store: s, notifier: notifier}
+// NewDrafter constructs a Drafter. All four arguments are required.
+func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier, patientNotifier PatientNotifier) *Drafter {
+	return &Drafter{client: client, store: s, notifier: notifier, patientNotifier: patientNotifier}
 }
 
 // WithOnComplete returns a shallow copy of d with the onComplete hook set.
@@ -524,6 +534,57 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 		"data": map[string]any{
 			"recommendation_id": recID.String(),
 			"conversation_id":   conv.ID.String(),
+		},
+	}))
+
+	return nil
+}
+
+// deliverInterviewQuestion persists an agent interview question as an
+// assistant-role message, writes an audit event with identifiers only (no
+// PHI), and emits a WebSocket event to the patient carrying only IDs so the
+// iOS client can fetch the content over its authenticated REST channel.
+//
+// Order guarantee: the message is committed and audited before the patient
+// notifier fires, so the client can never receive a reference to a message
+// that does not yet exist in the database.
+//
+// PHI discipline: question content is stored in the message row only. Audit
+// metadata and the patient WebSocket event contain conversation_id and
+// message_id exclusively — never the question text.
+func (d *Drafter) deliverInterviewQuestion(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient, question string) error {
+	// Step 1: persist the question as an assistant-role message so the iOS
+	// client can retrieve it via GET /api/conversations/{id}/messages.
+	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", question)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: write the audit event. Metadata contains identifiers only —
+	// no PHI, no message content.
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.interview_question",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		}),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the message from being
+		// delivered — log the error type only (never the value, which could
+		// echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit a WebSocket event to the patient. The payload is IDs only
+	// so no PHI crosses the notification channel. The client fetches message
+	// content via its authenticated REST endpoint after receiving the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
 		},
 	}))
 

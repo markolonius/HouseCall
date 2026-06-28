@@ -94,11 +94,11 @@ func (p *panicClient) Complete(_ context.Context, _ []agent.Message) (string, er
 // sync.WaitGroup when it exits (success, failure, or panic). Call wg.Wait()
 // (or register it in t.Cleanup) to ensure no goroutine outlives the test.
 // This is test-only; production callers use agent.NewDrafter directly.
-func newDrafterWithWait(t *testing.T, client agent.ModelClient, s *store.Store, notifier *stubNotifier) (*agent.Drafter, *sync.WaitGroup) {
+func newDrafterWithWait(t *testing.T, client agent.ModelClient, s *store.Store, notifier *stubNotifier, patientNotifier agent.PatientNotifier) (*agent.Drafter, *sync.WaitGroup) {
 	t.Helper()
 	var wg sync.WaitGroup
 	wg.Add(1)
-	d := agent.NewDrafter(client, s, notifier).WithOnComplete(wg.Done)
+	d := agent.NewDrafter(client, s, notifier, patientNotifier).WithOnComplete(wg.Done)
 	t.Cleanup(func() {
 		// Block until the goroutine has fully exited so no in-flight DB writes
 		// can race with test teardown or the store package's TRUNCATE.
@@ -133,6 +133,12 @@ func (n *stubNotifier) last() []byte {
 	}
 	return n.events[len(n.events)-1]
 }
+
+// stubPatientNotifier is a no-op agent.PatientNotifier for tests that only
+// exercise the physician-notification path.
+type stubPatientNotifier struct{}
+
+func (stubPatientNotifier) SendToPatient(_, _ string, _ []byte) {}
 
 // ---------------------------------------------------------------------------
 // setupDrafterFixture creates one tenant, patient, physician, care relationship,
@@ -215,7 +221,7 @@ func TestDraft_HappyPath(t *testing.T) {
 	notifier := &stubNotifier{}
 	// newDrafterWithWait registers a t.Cleanup that blocks until the goroutine
 	// has exited, preventing races with shared-DB teardown across tests.
-	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier, stubPatientNotifier{})
 
 	// DraftAsync is fire-and-forget; we detect completion via the
 	// queue.updated notification (which fires only after a successful commit).
@@ -379,7 +385,7 @@ func TestDraft_TenantScoping(t *testing.T) {
 	// Run drafter for tenant A only.
 	const wantText = "Guidance for A only."
 	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{text: wantText}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(fA.TenantID, fA.Conv, fA.Patient)
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -528,7 +534,7 @@ func TestDraft_FailurePath_TransportError(t *testing.T) {
 	// a connection-refused error.
 	transportErr := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{err: transportErr}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{err: transportErr}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
 	assertFailurePath(t, pool, s, f, notifier, "model_unavailable")
@@ -544,7 +550,7 @@ func TestDraft_FailurePath_ModelError(t *testing.T) {
 
 	modelErr := &agent.ModelError{StatusCode: 503}
 	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{err: modelErr}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{err: modelErr}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
 	assertFailurePath(t, pool, s, f, notifier, "model_error")
@@ -561,7 +567,7 @@ func TestDraft_FailurePath_ParseError(t *testing.T) {
 
 	parseErr := &agent.ParseError{Detail: "response contained no choices"}
 	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{err: parseErr}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{err: parseErr}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
 	assertFailurePath(t, pool, s, f, notifier, "parse_error")
@@ -576,7 +582,7 @@ func TestDraft_FailurePath_Timeout(t *testing.T) {
 	f := setupDrafterFixture(t, s)
 
 	notifier := &stubNotifier{}
-	d, _ := newDrafterWithWait(t, &stubClient{err: context.DeadlineExceeded}, s, notifier)
+	d, _ := newDrafterWithWait(t, &stubClient{err: context.DeadlineExceeded}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
 	assertFailurePath(t, pool, s, f, notifier, "timeout")
@@ -610,7 +616,7 @@ func TestDraft_ErrorPath_StructuredForTask43(t *testing.T) {
 
 	modelErr := &agent.ModelError{StatusCode: 503}
 	notifier := &stubNotifier{}
-	d, wg := newDrafterWithWait(t, &stubClient{err: modelErr}, s, notifier)
+	d, wg := newDrafterWithWait(t, &stubClient{err: modelErr}, s, notifier, stubPatientNotifier{})
 	d.DraftAsync(f.TenantID, f.Conv, f.Patient)
 
 	// Wait for the goroutine to finish before asserting; newDrafterWithWait
@@ -650,7 +656,7 @@ func TestDraft_PanicRecovery(t *testing.T) {
 	ctx := context.Background()
 
 	notifier := &stubNotifier{}
-	d, wg := newDrafterWithWait(t, &panicClient{}, s, notifier)
+	d, wg := newDrafterWithWait(t, &panicClient{}, s, notifier, stubPatientNotifier{})
 
 	// DraftAsync must return without panicking — if the goroutine's panic
 	// propagates the test binary itself will crash here.

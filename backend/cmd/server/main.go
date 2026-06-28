@@ -101,11 +101,12 @@ func runServe(dsn, addr string) error {
 	// 1. Build Router with no drafter yet.
 	rt := api.New(s, secret)
 
-	// 2. Build Drafter pointing at the Router (which satisfies
-	//    agent.PhysicianNotifier via rt.SendToPhysicians).
+	// 2. Build Drafter pointing at the Router, which satisfies both
+	//    agent.PhysicianNotifier (via rt.SendToPhysicians) and
+	//    agent.PatientNotifier (via rt.SendToPatient).
 	agentCfg := agent.ClientConfigFromEnv()
 	log.Printf("agent: model config %s", agentCfg)
-	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt)
+	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt, rt)
 
 	// 3. Wire the drafter into the Router before the server starts accepting
 	//    requests.

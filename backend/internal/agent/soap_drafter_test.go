@@ -82,7 +82,9 @@ func setupSOAPDrafterFixture(t *testing.T, s *store.Store) soapDrafterFixture {
 }
 
 // ---------------------------------------------------------------------------
-// captureNotifier satisfies PhysicianNotifier and records every event sent.
+// captureNotifier satisfies PhysicianNotifier and PatientNotifier, recording
+// every physician event sent. Patient events are discarded (not exercised in
+// SOAP drafter tests).
 // ---------------------------------------------------------------------------
 
 type captureNotifier struct {
@@ -97,6 +99,8 @@ func (n *captureNotifier) SendToPhysicians(_ string, event []byte) {
 	copy(cp, event)
 	n.events = append(n.events, cp)
 }
+
+func (n *captureNotifier) SendToPatient(_, _ string, _ []byte) {}
 
 func (n *captureNotifier) count() int {
 	n.mu.Lock()
@@ -268,7 +272,7 @@ func TestDraftSOAPNote_HappyPath(t *testing.T) {
 	notifier := &captureNotifier{}
 	// spyClient is defined in interview_turn_test.go (same package).
 	client := &spyClient{text: wellFormedSOAPText}
-	d := NewDrafter(client, s, notifier)
+	d := NewDrafter(client, s, notifier, notifier)
 
 	if err := d.draftSOAPNote(ctx, f.TenantID, f.Conv, f.Patient); err != nil {
 		t.Fatalf("draftSOAPNote: unexpected error: %v", err)
@@ -416,7 +420,7 @@ ASSESSMENT:
 Preliminary assessment: upper respiratory tract infection; physician review required.`
 
 	notifier := &captureNotifier{}
-	d := NewDrafter(&spyClient{text: malformedText}, s, notifier)
+	d := NewDrafter(&spyClient{text: malformedText}, s, notifier, notifier)
 
 	err := d.draftSOAPNote(ctx, f.TenantID, f.Conv, f.Patient)
 	if err == nil {

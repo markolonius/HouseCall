@@ -79,13 +79,19 @@ enum AuthMethod: String {
 
 /// Protocol defining user data access operations
 protocol UserRepositoryProtocol {
-    /// Creates a new user account
+    /// Creates a new user account.
+    ///
     /// - Parameters:
     ///   - email: User's email address
     ///   - password: User's password (optional, for password auth)
     ///   - passcode: User's passcode (optional, for passcode auth)
     ///   - fullName: User's full name
     ///   - authMethod: Authentication method (password, passcode, or biometric)
+    ///   - id: Optional caller-supplied UUID to use as the new user's identity.
+    ///     When `nil` the implementation generates a fresh UUID.
+    ///     Pass the Core API `patientId` here so the local user's `id` matches
+    ///     the server-canonical UUID, ensuring HKDF salt continuity for at-rest
+    ///     encryption (see design.md §"encryption-identity continuity").
     /// - Returns: Created User entity
     /// - Throws: UserRepositoryError
     func createUser(
@@ -93,7 +99,8 @@ protocol UserRepositoryProtocol {
         password: String?,
         passcode: String?,
         fullName: String,
-        authMethod: AuthMethod
+        authMethod: AuthMethod,
+        id: UUID?
     ) throws -> User
 
     /// Finds a user by email address
@@ -124,4 +131,25 @@ protocol UserRepositoryProtocol {
     /// - Parameter email: Email address to check
     /// - Returns: true if email exists, false otherwise
     func isEmailRegistered(_ email: String) -> Bool
+}
+
+extension UserRepositoryProtocol {
+    /// Backward-compatible convenience wrapper — passes `id: nil` so existing
+    /// call sites that do not supply an explicit UUID are unchanged.
+    func createUser(
+        email: String,
+        password: String?,
+        passcode: String?,
+        fullName: String,
+        authMethod: AuthMethod
+    ) throws -> User {
+        try createUser(
+            email: email,
+            password: password,
+            passcode: passcode,
+            fullName: fullName,
+            authMethod: authMethod,
+            id: nil
+        )
+    }
 }

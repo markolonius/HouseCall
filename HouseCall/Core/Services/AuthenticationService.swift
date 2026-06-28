@@ -67,6 +67,18 @@ class AuthenticationService: ObservableObject {
     private let biometricAuthManager: BiometricAuthManager
     private let auditLogger: AuditLogger
 
+    // MARK: - Cloud Auth (Task 3.1)
+
+    /// Optional Core API auth client.  When non-nil (together with
+    /// `coreAPITenantId`), registration and login route through Core API.
+    /// `nil` preserves the original local-only behaviour — no existing call
+    /// sites or tests are affected.  Production wiring is finalised in phase 5.
+    private let coreAuthClient: CoreAPIAuthClientProtocol?
+
+    /// Tenant identifier passed to Core API auth calls.  Must be non-nil
+    /// alongside `coreAuthClient` for cloud auth to activate.
+    private let coreAPITenantId: String?
+
     /// Injected after login so timeout and logout both stop the WebSocket
     /// subscription and prevent PHI from being delivered to an expired session.
     /// Set this to the active `CloudSyncCoordinator` once the coordinator is
@@ -80,12 +92,16 @@ class AuthenticationService: ObservableObject {
         userRepository: UserRepositoryProtocol = CoreDataUserRepository(),
         keychainManager: KeychainManager = .shared,
         biometricAuthManager: BiometricAuthManager = .shared,
-        auditLogger: AuditLogger = .shared
+        auditLogger: AuditLogger = .shared,
+        coreAuthClient: CoreAPIAuthClientProtocol? = nil,
+        coreAPITenantId: String? = nil
     ) {
         self.userRepository = userRepository
         self.keychainManager = keychainManager
         self.biometricAuthManager = biometricAuthManager
         self.auditLogger = auditLogger
+        self.coreAuthClient = coreAuthClient
+        self.coreAPITenantId = coreAPITenantId
 
         // Restore session on init
         restoreSession()
@@ -96,7 +112,21 @@ class AuthenticationService: ObservableObject {
 
     // MARK: - Registration
 
-    /// Registers a new user
+    /// Registers a new user.
+    ///
+    /// **Cloud path** (when `coreAuthClient` and `coreAPITenantId` are both set):
+    /// 1. `POST /api/auth/register` → `{token, patientId}`.
+    /// 2. Create the local cache user keyed by `patientId` so the HKDF salt
+    ///    equals the server-canonical identity (encryption-identity continuity).
+    /// 3. Store the JWT via `storeCoreAPIJWT(_:)`.
+    /// 4. Start the session as usual.
+    ///
+    /// Error mapping (cloud path only):
+    /// - 409 conflict → `registrationFailed("Email already registered")`
+    /// - Network unreachable → `registrationFailed("Registration requires…")`
+    /// - 401 → `registrationFailed("Registration unauthorised")`
+    ///
+    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
     @MainActor
     func register(
         email: String,
@@ -105,6 +135,20 @@ class AuthenticationService: ObservableObject {
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
+        // Cloud-enabled path
+        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
+            return try await registerViaCloudAPI(
+                authClient: authClient,
+                tenantId: tenantId,
+                email: email,
+                password: password,
+                passcode: passcode,
+                fullName: fullName,
+                authMethod: authMethod
+            )
+        }
+
+        // Local-only path (unchanged)
         do {
             let user = try userRepository.createUser(
                 email: email,
@@ -121,6 +165,80 @@ class AuthenticationService: ObservableObject {
         } catch {
             throw AuthenticationError.registrationFailed(error.localizedDescription)
         }
+    }
+
+    /// Cloud registration flow.  Separated from the public `register` method so
+    /// the control flow is easy to read and the local path has zero added
+    /// indentation.
+    @MainActor
+    private func registerViaCloudAPI(
+        authClient: CoreAPIAuthClientProtocol,
+        tenantId: String,
+        email: String,
+        password: String?,
+        passcode: String?,
+        fullName: String,
+        authMethod: AuthMethod
+    ) async throws -> User {
+        // Step 1: Obtain the server-canonical patient UUID and JWT.
+        // Registration requires connectivity — offline is a hard failure here.
+        // (Offline login fallback is handled in task 4.1.)
+        let authResult: CoreAPIAuthResult
+        do {
+            // Core API register requires a password credential.
+            let pw = password ?? ""
+            authResult = try await authClient.register(
+                tenantId: tenantId,
+                email: email,
+                password: pw
+            )
+        } catch let syncErr as SyncError {
+            switch syncErr {
+            case .conflict:
+                throw AuthenticationError.registrationFailed("Email already registered")
+            case .unauthorized:
+                throw AuthenticationError.registrationFailed("Registration unauthorised")
+            case .offline(let reason):
+                throw AuthenticationError.registrationFailed(
+                    "Registration requires network connectivity (\(reason))"
+                )
+            default:
+                throw AuthenticationError.registrationFailed(syncErr.localizedDescription ?? "Server error")
+            }
+        } catch {
+            throw AuthenticationError.registrationFailed(error.localizedDescription)
+        }
+
+        // Step 2: Parse the server-canonical patient UUID.
+        guard let patientId = UUID(uuidString: authResult.patientId) else {
+            throw AuthenticationError.registrationFailed("Invalid patient id from server")
+        }
+
+        // Step 3: Create the local cache user keyed by patientId so that
+        // EncryptionManager.getDerivedKey(for: user.id) uses the canonical salt.
+        let user: User
+        do {
+            user = try userRepository.createUser(
+                email: email,
+                password: password,
+                passcode: passcode,
+                fullName: fullName,
+                authMethod: authMethod,
+                id: patientId
+            )
+        } catch {
+            throw AuthenticationError.registrationFailed(error.localizedDescription)
+        }
+
+        // Step 4: Persist the JWT for subsequent authenticated Core API calls.
+        // Errors here are non-fatal for the registration itself but unusual —
+        // cloud sync will remain inactive until the next login refreshes the JWT.
+        try? storeCoreAPIJWT(authResult.token)
+
+        // Step 5: Start the local session (encryption unlocks via user.id == patientId).
+        try await createSession(for: user, authMethod: authMethod)
+
+        return user
     }
 
     // MARK: - Login

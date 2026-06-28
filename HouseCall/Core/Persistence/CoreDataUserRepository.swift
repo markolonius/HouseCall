@@ -36,14 +36,17 @@ class CoreDataUserRepository: UserRepositoryProtocol {
         password: String?,
         passcode: String?,
         fullName: String,
-        authMethod: AuthMethod
+        authMethod: AuthMethod,
+        id: UUID?
     ) throws -> User {
-        // Create user entity. Use a local `userId` for the derivation/encryption
-        // calls below rather than reading `user.id` back: a force-unwrap of the
-        // managed object's attribute crashes the process if the object's state
-        // is ever disturbed (e.g. a caller misusing the context from another
-        // thread), whereas the local value is always valid.
-        let userId = UUID()
+        // Use the caller-supplied id when provided (e.g. the Core API patient UUID
+        // for encryption-identity continuity) or generate a fresh one otherwise.
+        // Use a local `userId` for the derivation/encryption calls below rather
+        // than reading `user.id` back: a force-unwrap of the managed object's
+        // attribute crashes the process if the object's state is ever disturbed
+        // (e.g. a caller misusing the context from another thread), whereas the
+        // local value is always valid.
+        let userId = id ?? UUID()
         let user = User(context: context)
         user.id = userId
         user.email = email.lowercased()

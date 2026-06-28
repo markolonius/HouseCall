@@ -8,7 +8,7 @@ password required). Create a tenant-scoped patient with a bcrypt password hash,
 reject duplicate email within tenant (409), issue + return a JWT (same response
 shape as login). Wire the route in `router.go`.
 
-### Task 1.2: Audit + store wiring
+### Task 1.2: Audit + store wiring  [x]
 Write a `patient.registered` audit event (identifiers only — never password/PHI).
 Add/confirm the store patient-creation path used by registration is tenant-scoped.
 Tests: happy path, duplicate email, missing fields, and that the returned token

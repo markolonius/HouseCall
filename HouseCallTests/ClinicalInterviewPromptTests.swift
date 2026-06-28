@@ -3,9 +3,9 @@
 //  HouseCallTests
 //
 //  Unit tests for HealthcareSystemPrompt content invariants and
-//  per-phase token budget values.
+//  per-turn token budget value.
 //
-//  Spec: openspec/changes/add-clinical-interview-mode/tasks.md — Task 5.1
+//  Spec: openspec/changes/add-clinical-soap-review-workflow/tasks.md — Task 5.1
 //
 
 import Testing

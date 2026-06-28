@@ -43,7 +43,7 @@ local credential check so the patient can open their encrypted local record;
 cloud sync stays inactive until a JWT is obtained. Distinguish unreachable vs
 rejected.
 
-### Task 4.2: Logout + 401 handling
+### Task 4.2: Logout + 401 handling  [x]
 Logout clears session, cached derived key, and `coreAPIJWT`. On a `401` from
 `SyncClient`, deactivate cloud sync and require re-login (no retry loop).
 

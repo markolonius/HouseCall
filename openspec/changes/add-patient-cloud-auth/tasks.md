@@ -2,7 +2,7 @@
 
 ## Phase 1: Core API patient registration endpoint
 
-### Task 1.1: Add POST /api/auth/register
+### Task 1.1: Add POST /api/auth/register  [x]
 Add a registration handler mirroring `handleLogin` validation (tenant_id, email,
 password required). Create a tenant-scoped patient with a bcrypt password hash,
 reject duplicate email within tenant (409), issue + return a JWT (same response

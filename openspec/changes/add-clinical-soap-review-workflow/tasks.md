@@ -75,7 +75,7 @@ card (reuse `RecommendationCard`) showing the physician-approved plan.
 
 ## Phase 6: Tests and evaluation
 
-### Task 6.1: Backend unit/integration tests
+### Task 6.1: Backend unit/integration tests  [x]
 Cover: interview turn generation, marker detection + stripping, turn-cap forced
 draft, soap_note payload validation, DRAFT→PENDING_REVIEW drafting, the
 delivery carve-out (agent cannot deliver soap_note), and physician approve/modify/

@@ -30,7 +30,26 @@
     <tr style="border-top:1px solid #e5e7eb;">
       <td style="padding:.65rem 1rem;font-family:monospace;font-size:.8rem;">{{.ID}}</td>
       <td style="padding:.65rem 1rem;">{{.PayloadType}}</td>
-      <td style="padding:.65rem 1rem;">{{.DraftContent}}</td>
+      <td style="padding:.65rem 1rem;">
+        {{if .SOAP}}
+        {{/* SOAP note: render four sections; Assessment and Plan are
+             the physician's clinical decision focus and are visually
+             distinguished. All content is auto-escaped by html/template —
+             template.HTML is never used on patient or model text. */}}
+        <dl style="margin:0;font-size:.9rem;">
+          <dt style="font-weight:600;color:#374151;margin-top:.25rem;">Subjective</dt>
+          <dd style="margin:.2rem 0 .6rem 1rem;">{{.SOAP.Subjective}}</dd>
+          <dt style="font-weight:600;color:#374151;">Objective</dt>
+          <dd style="margin:.2rem 0 .6rem 1rem;">{{.SOAP.Objective}}</dd>
+          <dt style="font-weight:700;color:#1d3557;margin-top:.5rem;border-top:1px solid #e5e7eb;padding-top:.4rem;">Assessment &#x2605;</dt>
+          <dd style="margin:.2rem 0 .6rem 1rem;font-weight:500;">{{.SOAP.Assessment}}</dd>
+          <dt style="font-weight:700;color:#1d3557;">Plan &#x2605;</dt>
+          <dd style="margin:.2rem 0 0 1rem;font-weight:500;">{{.SOAP.Plan}}</dd>
+        </dl>
+        {{else}}
+        {{.DraftContent}}
+        {{end}}
+      </td>
       <td style="padding:.65rem 1rem;font-size:.85rem;color:#6b7280;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
       <td style="padding:.65rem 1rem;">
         {{/* Approve: no edit needed — physician confirms draft content */}}

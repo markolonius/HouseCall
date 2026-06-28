@@ -1173,6 +1173,150 @@ func TestReview_QueueShowsActionForms(t *testing.T) {
 	}
 }
 
+// ---- SOAP note rendering tests (task 4.1) ---------------------------------------
+
+// TestQueue_SOAPNoteRendersSections verifies that a soap_note recommendation in
+// the review queue renders the four SOAP section labels and their content, and
+// that Assessment and Plan are visually distinguished (the template uses a star
+// marker so we can check for the label+marker pair).
+func TestQueue_SOAPNoteRendersSections(t *testing.T) {
+	soapPayload, err := json.Marshal(map[string]string{
+		"subjective": "Patient reports headache for 3 days",
+		"objective":  "No vitals reported",
+		"assessment": "Likely tension headache",
+		"plan":       "Rest, hydrate, OTC analgesic",
+	})
+	if err != nil {
+		t.Fatalf("marshal soap payload: %v", err)
+	}
+	rec := store.Recommendation{
+		ID:           uuid.MustParse("77777777-0000-0000-0000-000000000007"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "soap_note",
+		Payload:      soapPayload,
+		DraftContent: "SOAP note draft (fallback)",
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{rec},
+	}
+	h := buildHandler(t, fs)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("soap_note queue: want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+
+	// All four section labels must appear.
+	for _, label := range []string{"Subjective", "Objective", "Assessment", "Plan"} {
+		if !strings.Contains(body, label) {
+			t.Errorf("soap_note queue: expected section label %q in rendered HTML", label)
+		}
+	}
+
+	// All four section contents must appear (auto-escaped; no special chars here).
+	for _, content := range []string{
+		"Patient reports headache for 3 days",
+		"No vitals reported",
+		"Likely tension headache",
+		"Rest, hydrate, OTC analgesic",
+	} {
+		if !strings.Contains(body, content) {
+			t.Errorf("soap_note queue: expected section content %q in rendered HTML", content)
+		}
+	}
+
+	// The DraftContent fallback text must NOT appear when SOAP sections are rendered.
+	if strings.Contains(body, "SOAP note draft (fallback)") {
+		t.Error("soap_note queue: DraftContent fallback must not appear when SOAP sections are rendered")
+	}
+
+	// Review action forms must still be present.
+	if !strings.Contains(body, `value="approve"`) {
+		t.Error("soap_note queue: approve action must still be present")
+	}
+	if !strings.Contains(body, `value="reject"`) {
+		t.Error("soap_note queue: reject action must still be present")
+	}
+}
+
+// TestQueue_NonSOAPRowRendersDraftContent verifies that a non-soap_note
+// recommendation still renders its DraftContent (not a SOAP section layout).
+func TestQueue_NonSOAPRowRendersDraftContent(t *testing.T) {
+	rec := store.Recommendation{
+		ID:           uuid.MustParse("88888888-0000-0000-0000-000000000008"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "guidance",
+		DraftContent: "Drink plenty of water",
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{rec},
+	}
+	h := buildHandler(t, fs)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("non-soap queue: want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+
+	if !strings.Contains(body, "Drink plenty of water") {
+		t.Error("non-soap queue: DraftContent must appear for non-soap_note recommendation")
+	}
+	// SOAP-specific section markers must not appear.
+	for _, label := range []string{"Subjective", "Objective", "Assessment", "Plan"} {
+		if strings.Contains(body, label) {
+			t.Errorf("non-soap queue: SOAP section label %q must not appear for guidance recommendation", label)
+		}
+	}
+}
+
+// TestQueue_SOAPNoteWithBadPayload verifies that a soap_note row whose Payload
+// is malformed JSON falls back gracefully to rendering DraftContent.
+func TestQueue_SOAPNoteWithBadPayload(t *testing.T) {
+	rec := store.Recommendation{
+		ID:           uuid.MustParse("99999999-0000-0000-0000-000000000009"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "soap_note",
+		Payload:      []byte(`not-valid-json`),
+		DraftContent: "Fallback draft content",
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{rec},
+	}
+	h := buildHandler(t, fs)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("bad-payload soap_note: want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "Fallback draft content") {
+		t.Error("bad-payload soap_note: DraftContent must appear when Payload cannot be parsed")
+	}
+}
+
 // assertAuditEvent is a helper that verifies the fakeStore has an audit event
 // of the given type with matching action and new_state metadata fields.
 func assertAuditEvent(t *testing.T, fs *fakeStore, eventType, action, newState string) {

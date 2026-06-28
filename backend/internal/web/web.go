@@ -18,6 +18,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"html/template"
 	"log"
@@ -372,8 +373,36 @@ func (h *Handler) handlePanel(w http.ResponseWriter, r *http.Request) {
 
 // ---- queue handler ----
 
+// recommendationView wraps store.Recommendation for template rendering.
+// SOAP is non-nil only when PayloadType == domain.PayloadTypeSOAPNote and the
+// Payload JSON unmarshals successfully; nil causes the template to fall back
+// to DraftContent. PHI in SOAP fields is auto-escaped by html/template —
+// template.HTML must never be used on model or patient content.
+type recommendationView struct {
+	store.Recommendation
+	SOAP *domain.SOAPPayload
+}
+
+// toRecommendationViews converts raw store recommendations into view models.
+// For soap_note rows it attempts to unmarshal the Payload; on any parse error
+// the SOAP field is left nil so DraftContent is used instead.
+func toRecommendationViews(recs []store.Recommendation) []recommendationView {
+	views := make([]recommendationView, len(recs))
+	for i, r := range recs {
+		v := recommendationView{Recommendation: r}
+		if r.PayloadType == domain.PayloadTypeSOAPNote && len(r.Payload) > 0 {
+			var sp domain.SOAPPayload
+			if err := json.Unmarshal(r.Payload, &sp); err == nil {
+				v.SOAP = &sp
+			}
+		}
+		views[i] = v
+	}
+	return views
+}
+
 type queuePageData struct {
-	Recommendations []store.Recommendation
+	Recommendations []recommendationView
 	// Error is shown as a flash banner when a review action fails (e.g.
 	// unlicensed-state rejection). Empty string means no error.
 	Error string
@@ -399,7 +428,7 @@ func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{Recommendations: recs}); err != nil {
+	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{Recommendations: toRecommendationViews(recs)}); err != nil {
 		log.Printf("web: render queue template: %v", err)
 	}
 }
@@ -495,7 +524,7 @@ func (h *Handler) renderQueueWithError(w http.ResponseWriter, r *http.Request, c
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{
-		Recommendations: recs,
+		Recommendations: toRecommendationViews(recs),
 		Error:           errMsg,
 	}); err != nil {
 		log.Printf("web: render queue error template: %v", err)

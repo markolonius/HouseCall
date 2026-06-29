@@ -97,7 +97,8 @@ struct CoreAPIAuthClientTests {
         let result = try await client.register(
             tenantId: "tenant-1",
             email: "patient@example.com",
-            password: "TestPassword123!"
+            password: "TestPassword123!",
+            state: "CA"
         )
 
         #expect(result.token == "jwt.register.tok")
@@ -137,7 +138,8 @@ struct CoreAPIAuthClientTests {
         _ = try await client.register(
             tenantId: "t-1",
             email: "a@b.com",
-            password: expectedPassword
+            password: expectedPassword,
+            state: nil
         )
 
         let bodyData = try #require(bodyCapture.data, "Request body was not captured")
@@ -146,6 +148,8 @@ struct CoreAPIAuthClientTests {
         #expect(bodyDict["password"] == expectedPassword)
         #expect(bodyDict["email"] == "a@b.com")
         #expect(bodyDict["tenant_id"] == "t-1")
+        // state was nil → must be omitted from the body entirely.
+        #expect(bodyDict["state"] == nil)
     }
 
     // MARK: - login: success (200)
@@ -231,7 +235,8 @@ struct CoreAPIAuthClientTests {
             _ = try await client.register(
                 tenantId: "t-1",
                 email: "existing@example.com",
-                password: "SomePassword!"
+                password: "SomePassword!",
+                state: nil
             )
             Issue.record("Expected SyncError.conflict but no error was thrown")
         } catch let err as SyncError {

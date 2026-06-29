@@ -21,6 +21,31 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// registerRequest extends the login shape with an optional patient state — the
+// USPS 2-letter code that gates which licensed physician may review this
+// patient's recommendations.
+type registerRequest struct {
+	TenantID string `json:"tenant_id"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	State    string `json:"state"`
+}
+
+// isValidUSStateCode reports whether s is exactly two uppercase ASCII letters.
+// Format-only check (does not enforce the 50-state set); the physician
+// state-licensing comparison is the authority on which codes are usable.
+func isValidUSStateCode(s string) bool {
+	if len(s) != 2 {
+		return false
+	}
+	for _, c := range s {
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 type loginResponse struct {
 	Token     string `json:"token"`
 	ActorType string `json:"actor_type"`
@@ -100,14 +125,16 @@ func (rt *Router) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleRegister handles POST /api/auth/register.
 //
-// Request body: {"tenant_id": "<uuid>", "email": "<email>", "password": "<plaintext>"}
+// Request body: {"tenant_id", "email", "password", "state"?}. `state` is an
+// optional USPS 2-letter code; it determines which state-licensed physician may
+// review this patient's recommendations, so the patient's clinical state must be
+// captured here. When omitted, the sentinel "--" is stored ("not provided");
+// such a patient cannot pass a physician state-licensing check until updated.
 //
-// The patients table requires full_name and state (both NOT NULL). Those fields
-// are not collected at registration; MVP safe defaults are used:
-//   - full_name: "" (empty — patient may update later)
-//   - state:     "--" (sentinel meaning "not provided"; valid char(2))
+// full_name is NOT NULL in the schema but is not collected at registration; the
+// MVP default "" is used (not PHI; updatable later via a profile endpoint).
 func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest // same {tenant_id, email, password} shape as login
+	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -115,6 +142,16 @@ func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if req.TenantID == "" || req.Email == "" || req.Password == "" {
 		http.Error(w, "tenant_id, email, and password are required", http.StatusBadRequest)
 		return
+	}
+	// Validate the optional state: when present it must be a 2-letter uppercase
+	// USPS code. Absent → "--" sentinel.
+	patientState := "--"
+	if req.State != "" {
+		if !isValidUSStateCode(req.State) {
+			http.Error(w, "state must be a 2-letter US state code", http.StatusBadRequest)
+			return
+		}
+		patientState = req.State
 	}
 	tid, err := uuid.Parse(req.TenantID)
 	if err != nil {
@@ -142,11 +179,10 @@ func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
 	patient, err := rt.store.CreatePatient(ctx, tenant, store.Patient{
 		Email:        req.Email,
 		PasswordHash: string(hash),
-		// full_name and state are NOT NULL in the schema but are not collected
-		// at registration (MVP). Safe defaults — neither is PHI and both can
-		// be updated later via a profile endpoint.
+		// full_name is not collected at registration (MVP default ""). State is
+		// the validated USPS code, or "--" when the client did not supply one.
 		FullName: "",
-		State:    "--",
+		State:    patientState,
 	})
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)

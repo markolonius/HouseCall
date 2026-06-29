@@ -10,6 +10,10 @@
 	     Empty when CORE_API_TENANT_ID is not set; cloud auth is disabled when absent. -->
 	<key>CoreAPITenantID</key>
 	<string>$(CORE_API_TENANT_ID)</string>
+	<!-- USPS state code new patients register under (substituted from xcconfig).
+	     Empty → registration omits state (stored "--"). -->
+	<key>CoreAPIPatientState</key>
+	<string>$(CORE_API_PATIENT_STATE)</string>
 	<!-- LLM provider defaults — values are substituted at build time from xcconfig. -->
 	<key>LLMDefaultProvider</key>
 	<string>$(LLM_DEFAULT_PROVIDER)</string>

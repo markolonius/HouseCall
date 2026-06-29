@@ -63,8 +63,9 @@ protocol CoreAPIAuthClientProtocol {
     /// Authenticate an existing patient account.
     func login(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult
 
-    /// Register a new patient account.
-    func register(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult
+    /// Register a new patient account. `state` is an optional USPS 2-letter code
+    /// determining which licensed physician may review the patient.
+    func register(tenantId: String, email: String, password: String, state: String?) async throws -> CoreAPIAuthResult
 }
 
 // MARK: - CoreAPIAuthClient
@@ -150,9 +151,10 @@ final class CoreAPIAuthClient: CoreAPIAuthClientProtocol {
     func register(
         tenantId: String,
         email: String,
-        password: String
+        password: String,
+        state: String?
     ) async throws -> CoreAPIAuthResult {
-        let body = try encodeBody(tenantId: tenantId, email: email, password: password)
+        let body = try encodeBody(tenantId: tenantId, email: email, password: password, state: state)
         let request = try buildRequest(path: "/api/auth/register", body: body)
         let dto: RegisterResponseDTO = try await perform(request)
         return CoreAPIAuthResult(token: dto.token, patientId: dto.patient_id)
@@ -164,12 +166,15 @@ final class CoreAPIAuthClient: CoreAPIAuthClientProtocol {
     ///
     /// The password value is encoded into the request body.
     /// It must never appear in logs, error strings, or debug output.
-    private func encodeBody(tenantId: String, email: String, password: String) throws -> Data {
-        let dict: [String: String] = [
+    private func encodeBody(tenantId: String, email: String, password: String, state: String? = nil) throws -> Data {
+        var dict: [String: String] = [
             "tenant_id": tenantId,
             "email": email,
             "password": password
         ]
+        if let state, !state.isEmpty {
+            dict["state"] = state
+        }
         return try JSONEncoder().encode(dict)
     }
 

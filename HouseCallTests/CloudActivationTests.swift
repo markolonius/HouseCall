@@ -45,7 +45,7 @@ private final class StubCoreAPIAuthClientActivation: CoreAPIAuthClientProtocol, 
         try resolve(loginBehaviour)
     }
 
-    func register(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult {
+    func register(tenantId: String, email: String, password: String, state: String?) async throws -> CoreAPIAuthResult {
         try resolve(registerBehaviour)
     }
 

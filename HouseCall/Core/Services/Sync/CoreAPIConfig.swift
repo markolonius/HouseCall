@@ -54,4 +54,23 @@ enum CoreAPIConfig {
         else { return nil }
         return value
     }
+
+    // MARK: - Patient State
+
+    /// Returns the USPS 2-letter state code to register new patients under, from
+    /// `Info.plist` when substituted by xcconfig at build time.
+    ///
+    /// The patient's state gates which licensed physician may review their
+    /// recommendations, so for the MVP it is supplied via config and must match a
+    /// state the supervising physician is licensed in (see `cmd/seed`).
+    /// Returns `nil` when `CoreAPIPatientState` is absent, empty, or an
+    /// unsubstituted placeholder — registration then omits state (stored "--").
+    static func patientState() -> String? {
+        guard
+            let value = Bundle.main.object(forInfoDictionaryKey: "CoreAPIPatientState") as? String,
+            !value.isEmpty,
+            !value.hasPrefix("$(")
+        else { return nil }
+        return value
+    }
 }

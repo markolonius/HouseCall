@@ -251,10 +251,13 @@ class AuthenticationService: ObservableObject {
         do {
             // Core API register requires a password credential.
             let pw = password ?? ""
+            // Patient state (USPS code) gates physician state-licensing; supplied
+            // via build config for the MVP, omitted (→ "--") when unconfigured.
             authResult = try await authClient.register(
                 tenantId: tenantId,
                 email: email,
-                password: pw
+                password: pw,
+                state: CoreAPIConfig.patientState()
             )
         } catch let syncErr as SyncError {
             switch syncErr {

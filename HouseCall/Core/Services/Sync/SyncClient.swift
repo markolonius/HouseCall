@@ -272,6 +272,21 @@ final class SyncClient {
         return try await perform(request)
     }
 
+    /// Create a server-side conversation for the authenticated patient.
+    ///
+    /// Maps to `POST /api/conversations`. The server requires a non-empty title.
+    /// Returns the `ConversationDTO` whose `ID` becomes the local conversation's
+    /// `serverId` (required before any message can be POSTed).
+    func createConversation(title: String) async throws -> ConversationDTO {
+        let payload = try JSONEncoder().encode(["title": title])
+        let request = try authorisedRequest(
+            method: "POST",
+            path: "/api/conversations",
+            body: payload
+        )
+        return try await perform(request)
+    }
+
     /// List messages for a conversation.
     ///
     /// Maps to `GET /api/conversations/{id}/messages`.

@@ -407,3 +407,75 @@ func TestHandler_Register_PasswordHashStored(t *testing.T) {
 		t.Errorf("bcrypt verification failed: %v (hash=%q)", err, patient.PasswordHash)
 	}
 }
+
+func TestHandler_Register_WithValidState(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tenant, err := s.CreateTenant(ctx, "dtc", "register-state-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	email := "state@register.test"
+	body, _ := json.Marshal(map[string]string{
+		"tenant_id": tenant.ID.String(),
+		"email":     email,
+		"password":  "hunter2-but-longer",
+		"state":     "CA",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rw.Code)
+	}
+
+	patient, err := s.GetPatientByEmail(ctx, store.TenantID(tenant.ID), email)
+	if err != nil {
+		t.Fatalf("get patient: %v", err)
+	}
+	if patient.State != "CA" {
+		t.Errorf("expected stored state CA, got %q", patient.State)
+	}
+}
+
+func TestHandler_Register_InvalidState(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tenant, err := s.CreateTenant(ctx, "dtc", "register-badstate-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	for _, bad := range []string{"C", "California", "ca", "C1"} {
+		body, _ := json.Marshal(map[string]string{
+			"tenant_id": tenant.ID.String(),
+			"email":     "bad-" + bad + "@register.test",
+			"password":  "hunter2-but-longer",
+			"state":     bad,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rw := httptest.NewRecorder()
+		r.ServeHTTP(rw, req)
+
+		if rw.Code != http.StatusBadRequest {
+			t.Errorf("state %q: expected 400, got %d", bad, rw.Code)
+		}
+		if _, err := s.GetPatientByEmail(ctx, store.TenantID(tenant.ID), "bad-"+bad+"@register.test"); err == nil {
+			t.Errorf("state %q: patient should not have been created", bad)
+		}
+	}
+}

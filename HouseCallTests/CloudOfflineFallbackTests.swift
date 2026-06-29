@@ -388,7 +388,7 @@ private final class StubOfflineAuthClient: CoreAPIAuthClientProtocol, @unchecked
         }
     }
 
-    func register(tenantId: String, email: String, password: String) async throws -> CoreAPIAuthResult {
+    func register(tenantId: String, email: String, password: String, state: String?) async throws -> CoreAPIAuthResult {
         // Registration is not exercised in these tests.
         throw SyncError.offline("not implemented in offline stub")
     }

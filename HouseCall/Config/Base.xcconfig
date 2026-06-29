@@ -40,6 +40,12 @@ CORE_API_BASE_URL =
 // Cloud auth is disabled when this is empty.
 CORE_API_TENANT_ID =
 
+// USPS 2-letter state code new patients register under (e.g. CA). Gates which
+// licensed physician may review the patient; must match the seeded physician's
+// licensure (see cmd/seed). Keep EMPTY here; set in Secrets.xcconfig.
+// When empty, registration omits state and the patient is stored as "--".
+CORE_API_PATIENT_STATE =
+
 // Optional include of the gitignored secrets file.
 // Values in Secrets.xcconfig override the defaults above.
 #include? "Secrets.xcconfig"

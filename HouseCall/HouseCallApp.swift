@@ -229,6 +229,16 @@ private struct AutoLaunchChatView: View {
             )
             coordinator?.start()
 
+            // In cloud mode, ensure the conversation exists server-side so the
+            // patient's messages can be POSTed (the send path requires a
+            // serverId). Generic, non-PHI title.
+            if let coordinator {
+                await coordinator.ensureServerConversation(
+                    localConversationId: conversationId,
+                    title: "Consultation"
+                )
+            }
+
             chatViewModel = ConversationViewModel(
                 userId: userId,
                 conversationId: conversationId,

@@ -1521,6 +1521,76 @@ struct CloudSyncTests {
         // Exactly one POST per send attempt — no internal retry loop on 401.
         #expect(callCount.count == 2, "each send makes one POST attempt; 401 must not retry")
     }
+
+    // MARK: - ensureServerConversation (HouseCall-zkeg)
+
+    @Test("ensureServerConversation creates a server conversation and persists serverId when absent")
+    func testEnsureServerConversationCreatesAndPersists() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        // Local conversation with NO serverId — the cloud send path would no-op.
+        let conversation = try seedConversation(in: context, userId: userId, serverId: nil)
+        let convLocalId = conversation.id!
+
+        let newServerId = "srv-conv-\(UUID().uuidString)"
+        SyncMockURLProtocol.register(sessionID: sid, path: "/api/conversations") { req in
+            let json = """
+            {"ID":"\(newServerId)","TenantID":"t1","PatientID":"p1","Title":"Consultation","CreatedAt":"2026-06-28T10:00:00Z","UpdatedAt":"2026-06-28T10:00:00Z"}
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
+            conversationRepository: CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        await coordinator.ensureServerConversation(localConversationId: convLocalId, title: "Consultation")
+
+        let req: NSFetchRequest<Conversation> = Conversation.fetchRequest()
+        req.predicate = NSPredicate(format: "id == %@", convLocalId as CVarArg)
+        let updated = try context.fetch(req).first
+        #expect(updated?.serverId == newServerId, "serverId must be persisted from the create response")
+    }
+
+    @Test("ensureServerConversation is a no-op when serverId already set")
+    func testEnsureServerConversationSkipsWhenPresent() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        let conversation = try seedConversation(in: context, userId: userId, serverId: "already-set")
+        let convLocalId = conversation.id!
+
+        let createCalls = Counter()
+        SyncMockURLProtocol.register(sessionID: sid, path: "/api/conversations") { req in
+            createCalls.increment()
+            return ("{}".data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
+            conversationRepository: CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        await coordinator.ensureServerConversation(localConversationId: convLocalId, title: "Consultation")
+
+        #expect(createCalls.count == 0, "must not POST when the conversation already has a serverId")
+    }
 }
 
 /// Minimal thread-safe counter for asserting call counts in async stubs.

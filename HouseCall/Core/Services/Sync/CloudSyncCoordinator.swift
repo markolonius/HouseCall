@@ -515,5 +515,39 @@ final class CloudSyncCoordinator: ObservableObject {
         }
         try? context.save()
     }
+
+    /// Ensures the local conversation has a server-side counterpart so messages
+    /// can be POSTed.  If `serverId` is already set, does nothing.  Otherwise
+    /// creates a conversation on the Core API and persists the returned id as
+    /// the local conversation's `serverId`.
+    ///
+    /// Best-effort: on failure (offline, 401) the conversation simply stays
+    /// local and the next launch retries; no PHI is logged (title is a generic
+    /// non-PHI label).
+    func ensureServerConversation(localConversationId: UUID, title: String) async {
+        let request: NSFetchRequest<Conversation> = Conversation.fetchRequest()
+        request.predicate = NSPredicate(format: "id == %@", localConversationId as CVarArg)
+        request.fetchLimit = 1
+        guard let conversation = try? context.fetch(request).first else { return }
+        if let existing = conversation.serverId, !existing.isEmpty { return }
+
+        do {
+            let dto = try await syncClient.createConversation(title: title)
+            conversation.serverId = dto.ID
+            try? context.save()
+            try? auditLogger.log(
+                event: .conversationCreated,
+                userId: nil,
+                details: AuditEventDetails(additionalInfo: [
+                    "event": "conversation.created",
+                    "conversationServerId": dto.ID
+                ])
+            )
+        } catch SyncError.unauthorized {
+            handleUnauthorized()
+        } catch {
+            // Offline / transient: leave local; next launch retries. No PHI logged.
+        }
+    }
 }
 

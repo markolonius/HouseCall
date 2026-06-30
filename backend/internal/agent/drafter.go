@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -24,6 +25,13 @@ import (
 // wired in Tasks 1.3 and 2.2; this task only defines the constant and the
 // pure helper function.
 const DefaultMaxInterviewTurns = 12
+
+// soapDraftMaxAttempts is how many times draftSOAPNote re-generates the SOAP
+// note when the model returns output that fails section parsing/validation.
+// Small local models format the required headers only intermittently, so a few
+// fresh generations dramatically raise the success rate without masking a true
+// model outage (transport errors are not retried here).
+const soapDraftMaxAttempts = 3
 
 // ModelClient is the narrow interface the Drafter needs from the model. Using
 // an interface rather than *Client directly lets tests inject a stub without
@@ -276,6 +284,11 @@ func draftFailureReason(err error) string {
 	if errors.As(err, &pe) {
 		return "parse_error"
 	}
+	var ve *domain.SOAPValidationError
+	if errors.As(err, &ve) {
+		// SOAP note generated but missing/blank a required section.
+		return "validation_error"
+	}
 	var me *ModelError
 	if errors.As(err, &me) {
 		// Distinguish a transport/connection failure (wrapped inside ModelError
@@ -295,6 +308,22 @@ func draftFailureReason(err error) string {
 		return "model_unavailable"
 	}
 	return "internal_error"
+}
+
+// headerDecorationRE matches leading Markdown/list decoration on a header line:
+// heading hashes, blockquote markers, emphasis (*/_), list bullets (-/+), and an
+// optional ordered-list number ("1." or "1)"). Stripped before label matching.
+var headerDecorationRE = regexp.MustCompile(`^[\s#>*_+\-]*(?:\d+[.)]\s*)?`)
+
+// normalizeHeaderLine reduces a raw line to its bare uppercase header token by
+// stripping surrounding Markdown/list decoration, so headers like
+// "**SUBJECTIVE:**", "### Subjective", "1. SUBJECTIVE", or "- PLAN:" all match
+// the plain labels. Returns the uppercased, trimmed result.
+func normalizeHeaderLine(line string) string {
+	s := strings.TrimSpace(line)
+	s = headerDecorationRE.ReplaceAllString(s, "")
+	s = strings.TrimRight(s, " \t*_#")
+	return strings.ToUpper(strings.TrimSpace(s))
 }
 
 // parseSOAPSections extracts the four required SOAP sections from raw model
@@ -326,7 +355,10 @@ func parseSOAPSections(raw string) (domain.SOAPPayload, error) {
 	var spans []span
 
 	for i, line := range lines {
-		upper := strings.ToUpper(strings.TrimSpace(line))
+		// Strip common Markdown/list decoration the model adds around headers
+		// (e.g. "**SUBJECTIVE:**", "### Subjective", "1. SUBJECTIVE", "- PLAN:")
+		// so the label match is robust to formatting variation from small models.
+		upper := normalizeHeaderLine(line)
 		for _, label := range orderedLabels {
 			if !seen[label] && (upper == label || upper == label+":" || strings.HasPrefix(upper, label+":")) {
 				seen[label] = true
@@ -410,21 +442,34 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 		})
 	}
 
-	text, err := d.client.Complete(ctx, modelMsgs)
-	if err != nil {
-		// Non-nil error means no valid model output — do NOT persist.
-		return err
+	// Small models (e.g. medgemma:4b) format the SOAP headers correctly only
+	// intermittently, so a single bad generation must not sink the whole draft.
+	// Retry the generate→parse→validate cycle a few times; only a fresh model
+	// generation can fix a malformed one, so we re-call Complete each attempt.
+	// Transport/model errors are NOT retried here (they surface immediately).
+	var text string
+	var soapPayload domain.SOAPPayload
+	var parseErr error
+	for attempt := 0; attempt < soapDraftMaxAttempts; attempt++ {
+		text, err = d.client.Complete(ctx, modelMsgs)
+		if err != nil {
+			// Non-nil error means no valid model output — do NOT persist.
+			return err
+		}
+		soapPayload, parseErr = parseSOAPSections(text)
+		if parseErr == nil {
+			// Domain validation: all four sections must be non-empty.
+			if vErr := soapPayload.Validate(); vErr != nil {
+				parseErr = vErr
+			}
+		}
+		if parseErr == nil {
+			break
+		}
+		// Malformed output — try a fresh generation (unless this was the last attempt).
 	}
-
-	// Parse the model output into the four SOAP sections.
-	soapPayload, err := parseSOAPSections(text)
-	if err != nil {
-		return err
-	}
-	// Domain validation: all four sections must be non-empty (whitespace-only
-	// content is treated as empty by the validator tightened in task 2.1).
-	if err := soapPayload.Validate(); err != nil {
-		return err
+	if parseErr != nil {
+		return parseErr
 	}
 
 	// Marshal the structured payload for storage.

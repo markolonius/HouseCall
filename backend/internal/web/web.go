@@ -38,6 +38,17 @@ var templateFS embed.FS
 
 const sessionCookieName = "hc_session"
 
+// secureCookie reports whether the session cookie should carry the Secure flag.
+// It is true when the request reached us over TLS — either directly
+// (r.TLS != nil) or via a TLS-terminating proxy that set X-Forwarded-Proto.
+// This keeps the cookie Secure in production (served over HTTPS) while allowing
+// the physician web app to work over plain http://localhost during local dev
+// (a Secure cookie is never returned by the browser over HTTP, which otherwise
+// produces an infinite login→queue→login redirect loop).
+func secureCookie(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
 // Handler holds the shared dependencies for the physician web app.
 //
 // The storeQ and auditQ fields allow tests (via NewWithQuerier in export_test.go)
@@ -211,7 +222,7 @@ func (h *Handler) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		Path:     "/web",
 		MaxAge:   int(sessionTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -247,7 +258,7 @@ func (h *Handler) requireWebAuth(next http.Handler) http.Handler {
 				Path:     "/web",
 				MaxAge:   -1,
 				HttpOnly: true,
-				Secure:   true,
+				Secure:   secureCookie(r),
 				SameSite: http.SameSiteLaxMode,
 			})
 			http.Redirect(w, r, "/web/login", http.StatusSeeOther)

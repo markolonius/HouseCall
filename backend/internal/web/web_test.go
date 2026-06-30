@@ -438,14 +438,52 @@ func TestLoginSubmit_Success(t *testing.T) {
 	if !sessionCookie.HttpOnly {
 		t.Error("session cookie must be HttpOnly")
 	}
-	if !sessionCookie.Secure {
-		t.Error("session cookie must be Secure")
+	// Plain (non-TLS) request → Secure must be OFF so the cookie round-trips
+	// over http://localhost in dev. Production (TLS) is covered separately below.
+	if sessionCookie.Secure {
+		t.Error("session cookie must NOT be Secure for a non-TLS request (breaks http localhost dev)")
 	}
 	if sessionCookie.SameSite != http.SameSiteLaxMode && sessionCookie.SameSite != http.SameSiteStrictMode {
 		t.Errorf("session cookie SameSite must be Lax or Strict, got %v", sessionCookie.SameSite)
 	}
 	if sessionCookie.Value == "" {
 		t.Error("session cookie must carry a token value")
+	}
+}
+
+// TestLoginSubmit_SecureCookieBehindTLS verifies the Secure flag IS set when the
+// request arrives over TLS (production: directly or via a TLS-terminating proxy
+// that sets X-Forwarded-Proto=https), so the dev-friendly relaxation does not
+// weaken production.
+func TestLoginSubmit_SecureCookieBehindTLS(t *testing.T) {
+	const password = "Str0ng!Password#99"
+	h := buildHandler(t, newFakeStoreWithPhysician(t, password))
+	form := url.Values{
+		"tenant_id": {testTenantID.String()},
+		"email":     {"doc@clinic.example"},
+		"password":  {password},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/web/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-Proto", "https") // simulate TLS-terminating proxy
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d", rec.Code)
+	}
+	var sessionCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "hc_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected hc_session cookie")
+	}
+	if !sessionCookie.Secure {
+		t.Error("session cookie MUST be Secure when the request is over TLS (X-Forwarded-Proto=https)")
 	}
 }
 

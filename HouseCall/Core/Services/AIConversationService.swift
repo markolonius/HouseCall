@@ -257,15 +257,32 @@ class AIConversationService: ObservableObject {
 
         // --- Cloud sync path ---
         if let coordinator = syncCoordinator {
-            // serverId for the conversation is required to POST; if absent the
-            // message stays pending and replay will retry when available.
-            let conversationServerId = conversation.serverId ?? ""
+            // A server-side conversation (serverId) is required before any
+            // message can be POSTed. Launch-time ensureServerConversation is
+            // best-effort; if it hasn't run or failed, create it on demand here
+            // so the very first send is never silently dropped.
+            var conversationServerId = conversation.serverId ?? ""
+            if conversationServerId.isEmpty {
+                await coordinator.ensureServerConversation(
+                    localConversationId: conversationId,
+                    title: "Consultation"
+                )
+                // Re-fetch to pick up the serverId ensureServerConversation persisted.
+                if let refreshed = try? conversationRepository.fetchConversation(id: conversationId) {
+                    conversationServerId = refreshed.serverId ?? ""
+                }
+            }
             if !conversationServerId.isEmpty {
                 try await coordinator.postMessage(
                     localMessageId: userMessage.id!,
                     conversationServerId: conversationServerId,
                     conversationLocalId: conversationId
                 )
+            } else {
+                // Could not establish a server conversation (offline / server
+                // unreachable). Surface an error instead of silently dropping —
+                // the message stays pending and replays on reconnect.
+                errorMessage = "Unable to reach the server. Your message will be sent when the connection is restored."
             }
             // AI reply arrives asynchronously via WebSocket; no streaming UI here.
             return

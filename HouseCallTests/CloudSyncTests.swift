@@ -1591,6 +1591,57 @@ struct CloudSyncTests {
 
         #expect(createCalls.count == 0, "must not POST when the conversation already has a serverId")
     }
+
+    // MARK: - sendMessage creates the server conversation on demand (HouseCall-y4jt)
+
+    @Test("sendMessage creates the server conversation on demand when serverId is missing, then POSTs")
+    func testSendMessageCreatesServerConversationOnDemand() async throws {
+        let sid = UUID().uuidString
+        let kc = makeKeychain()
+        let session = makeStubSession(sessionID: sid)
+        let context = makeInMemoryContext()
+        let userId = UUID()
+        // Local conversation with NO serverId — the pre-fix send path would drop silently.
+        let conversation = try seedConversation(in: context, userId: userId, serverId: nil)
+        let convLocalId = conversation.id!
+
+        let newServerId = "srv-conv-\(UUID().uuidString)"
+        let serverMsgId = "srv-msg-\(UUID().uuidString)"
+        // Stub 1: POST /api/conversations -> 201 (on-demand create).
+        SyncMockURLProtocol.register(sessionID: sid, path: "/api/conversations") { req in
+            let json = """
+            {"ID":"\(newServerId)","TenantID":"t1","PatientID":"p1","Title":"Consultation","CreatedAt":"2026-06-30T10:00:00Z","UpdatedAt":"2026-06-30T10:00:00Z"}
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        // Stub 2: POST message to the newly-created conversation -> 201.
+        SyncMockURLProtocol.register(sessionID: sid, path: "/api/conversations/\(newServerId)/messages") { req in
+            let json = """
+            {"ID":"\(serverMsgId)","TenantID":"t1","ConversationID":"\(newServerId)","Role":"user","Content":"hi","CreatedAt":"2026-06-30T10:00:01Z"}
+            """
+            return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+        }
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+
+        let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
+        let messageRepo = CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context))
+        let conversationRepo = CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context))
+        let coordinator = CloudSyncCoordinator(syncClient: syncClient, messageRepository: messageRepo, conversationRepository: conversationRepo, auditLogger: AuditLogger(context: context), context: context)
+        let service = AIConversationService(userId: userId, conversationRepository: conversationRepo, messageRepository: messageRepo, auditLogger: AuditLogger(context: context), syncCoordinator: coordinator)
+
+        try await service.loadConversation(convLocalId)
+        try await service.sendMessage(conversationId: convLocalId, content: "hi")
+
+        // Local conversation must now carry the on-demand server id.
+        let conv = try conversationRepo.fetchConversation(id: convLocalId)
+        #expect(conv?.serverId == newServerId, "serverId must be persisted by on-demand create")
+
+        // The user message must have POSTed and synced (not silently dropped).
+        let userMsg = try messageRepo.fetchAllMessages(conversationId: convLocalId).first(where: { $0.role == "user" })
+        #expect(userMsg != nil, "user message persisted")
+        #expect(userMsg?.syncState == "synced", "message must POST after on-demand create, not stay pending")
+        #expect(userMsg?.serverId == serverMsgId, "serverId from POST response")
+    }
 }
 
 /// Minimal thread-safe counter for asserting call counts in async stubs.

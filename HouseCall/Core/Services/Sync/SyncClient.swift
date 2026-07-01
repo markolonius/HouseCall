@@ -87,7 +87,6 @@ enum SyncError: LocalizedError, Equatable {
 
 struct ConversationDTO: Codable {
     let ID: String
-    let TenantID: String
     let PatientID: String
     let Title: String
     let CreatedAt: String
@@ -96,7 +95,6 @@ struct ConversationDTO: Codable {
 
 struct MessageDTO: Codable {
     let ID: String
-    let TenantID: String
     let ConversationID: String
     let Role: String
     let Content: String
@@ -105,7 +103,6 @@ struct MessageDTO: Codable {
 
 struct RecommendationDTO: Codable {
     let ID: String
-    let TenantID: String
     let ConversationID: String
     let PatientID: String
     let State: String

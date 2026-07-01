@@ -781,4 +781,32 @@ struct SyncClientTests {
         #expect(dto.ID == existingServerID,
                 "Dedupe-hit (200) response must return the existing server message ID")
     }
+
+    // MARK: - DTO decoding tolerates the real server shape (HouseCall-zd53)
+
+    // The Go backend marshals store.TenantID (a [16]byte UUID) as a JSON byte
+    // ARRAY, e.g. "TenantID":[0,0,...,1]. The client never uses TenantID (it
+    // comes from the JWT), so the DTOs must decode successfully regardless of
+    // its shape. Before the fix these decodes threw "not in the correct format",
+    // silently breaking conversation create, message sync, and note delivery.
+
+    @Test("ConversationDTO decodes the real server payload (TenantID as byte array)")
+    func testConversationDTODecodesServerShape() throws {
+        let json = """
+        {"ID":"cc50e1b5-bf74-45be-a500-69e881c8f94e","TenantID":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"PatientID":"00000000-0000-0000-0000-000000000020","Title":"Consultation","CreatedAt":"2026-07-01T10:00:00Z","UpdatedAt":"2026-07-01T10:00:00Z"}
+        """.data(using: .utf8)!
+        let dto = try JSONDecoder().decode(ConversationDTO.self, from: json)
+        #expect(dto.ID == "cc50e1b5-bf74-45be-a500-69e881c8f94e")
+        #expect(dto.Title == "Consultation")
+    }
+
+    @Test("MessageDTO decodes the real server payload (TenantID as byte array)")
+    func testMessageDTODecodesServerShape() throws {
+        let json = """
+        {"ID":"782982f1-0757-413e-9c0e-080452c320d4","TenantID":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"ConversationID":"cc50e1b5-bf74-45be-a500-69e881c8f94e","Role":"assistant","Content":"What brings you in today?","CreatedAt":"2026-07-01T10:00:01Z"}
+        """.data(using: .utf8)!
+        let dto = try JSONDecoder().decode(MessageDTO.self, from: json)
+        #expect(dto.Role == "assistant")
+        #expect(dto.Content == "What brings you in today?")
+    }
 }

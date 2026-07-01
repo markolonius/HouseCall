@@ -319,7 +319,11 @@ struct CloudSyncTests {
         let userId = UUID()
         let conversation = try seedConversation(in: context, userId: userId)
         let convLocalId = conversation.id!
-        let convLocalIdString = convLocalId.uuidString
+        // The server never learns the client's local conversation id; WS
+        // events and REST responses always carry the SERVER id
+        // (Conversation.serverId), which the handler resolves back to
+        // convLocalId via a Core Data lookup.
+        let convServerIdString = conversation.serverId!
 
         let recId = "rec-\(UUID().uuidString)"
         let guidanceText = "Stay hydrated and rest. Follow up if symptoms persist."
@@ -333,7 +337,7 @@ struct CloudSyncTests {
             {
               "ID": "\(recId)",
               "TenantID": "t1",
-              "ConversationID": "\(convLocalIdString)",
+              "ConversationID": "\(convServerIdString)",
               "PatientID": "patient-1",
               "State": "DELIVERED",
               "PayloadType": "guidance",
@@ -384,7 +388,7 @@ struct CloudSyncTests {
             type: "recommendation.delivered",
             data: WSEventData(
                 recommendation_id: recId,
-                conversation_id: convLocalIdString
+                conversation_id: convServerIdString
             )
         )
         syncClient.eventPublisher.send(wsEvent)
@@ -992,7 +996,7 @@ struct CloudSyncTests {
             {
               "ID": "\(recId)",
               "TenantID": "t1",
-              "ConversationID": "\(convLocalId.uuidString)",
+              "ConversationID": "\(convServerId)",
               "PatientID": "p1",
               "State": "DELIVERED",
               "PayloadType": "guidance",
@@ -1035,7 +1039,7 @@ struct CloudSyncTests {
             type: "recommendation.delivered",
             data: WSEventData(
                 recommendation_id: recId,
-                conversation_id: convLocalId.uuidString
+                conversation_id: convServerId
             )
         )
         onlineSyncClient.eventPublisher.send(wsEvent)
@@ -1127,11 +1131,13 @@ struct CloudSyncTests {
         coordinator.start()
 
         // Fire a message.created WS event directly into the coordinator.
+        // The WS event carries the SERVER conversation id, exactly as the
+        // real server sends it — the handler resolves it back to convLocalId.
         let wsEvent = WSEvent(
             type: "message.created",
             data: WSEventData(
                 recommendation_id: nil,
-                conversation_id: convLocalId.uuidString,
+                conversation_id: convServerId,
                 message_id: serverMsgId
             )
         )
@@ -1257,7 +1263,7 @@ struct CloudSyncTests {
         let userId = UUID()
         let conversation = try seedConversation(in: context, userId: userId)
         let convLocalId = conversation.id!
-        let convLocalIdString = convLocalId.uuidString
+        let convServerIdString = conversation.serverId!
 
         let recId = "soap-rec-\(UUID().uuidString)"
         // Synthetic SOAP content — not real patient data.
@@ -1273,7 +1279,7 @@ struct CloudSyncTests {
             {
               "ID": "\(recId)",
               "TenantID": "t1",
-              "ConversationID": "\(convLocalIdString)",
+              "ConversationID": "\(convServerIdString)",
               "PatientID": "patient-soap-1",
               "State": "DELIVERED",
               "PayloadType": "soap_note",
@@ -1318,7 +1324,7 @@ struct CloudSyncTests {
             type: "recommendation.delivered",
             data: WSEventData(
                 recommendation_id: recId,
-                conversation_id: convLocalIdString
+                conversation_id: convServerIdString
             )
         )
         syncClient.eventPublisher.send(wsEvent)
@@ -1430,7 +1436,7 @@ struct CloudSyncTests {
             type: "message.created",
             data: WSEventData(
                 recommendation_id: nil,
-                conversation_id: convLocalId.uuidString,
+                conversation_id: convServerId,
                 message_id: serverMsgId
             )
         )

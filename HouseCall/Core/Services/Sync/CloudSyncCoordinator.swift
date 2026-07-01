@@ -288,7 +288,7 @@ final class CloudSyncCoordinator: ObservableObject {
             // question) on the conversation.  Fetch the full message list and
             // upsert any assistant messages that are not yet present locally.
             guard let cidString = event.data.conversation_id else { return }
-            await handleMessageCreated(conversationIdString: cidString)
+            await handleMessageCreated(conversationServerIdString: cidString)
         default:
             break
         }
@@ -306,13 +306,14 @@ final class CloudSyncCoordinator: ObservableObject {
                   let finalContent = dto.FinalContent,
                   !finalContent.isEmpty else { return }
 
-            // Resolve the local conversation UUID.
-            // conversationId (from the WS event) takes precedence; fall back
-            // to dto.ConversationID (non-optional String from the REST response).
-            let cidString = conversationId ?? dto.ConversationID
-            let localConversationId: UUID? = UUID(uuidString: cidString)
-
-            guard let convLocalId = localConversationId else { return }
+            // Resolve the local conversation via Conversation.serverId.
+            // conversationId (SERVER id from the WS event) takes precedence;
+            // fall back to dto.ConversationID (SERVER id from the REST
+            // response). Both are server-generated ids, independent of the
+            // local Core Data conversation's own id — never parse them
+            // directly as the local UUID.
+            let serverCidString = conversationId ?? dto.ConversationID
+            guard let convLocalId = resolveLocalConversationId(bySeverId: serverCidString) else { return }
 
             // Look up the user ID so we can encrypt the content at rest.
             let userId: UUID
@@ -382,15 +383,12 @@ final class CloudSyncCoordinator: ObservableObject {
     /// so replaying the event on reconnect is safe (no double-inserts).
     ///
     /// Only non-PHI metadata (IDs, syncState, role) is used in audit entries.
-    private func handleMessageCreated(conversationIdString: String) async {
-        guard let convLocalId = UUID(uuidString: conversationIdString) else { return }
-
-        // Resolve the conversation's server ID — required to call listMessages.
-        guard
-            let conversation = try? conversationRepository.fetchConversation(id: convLocalId),
-            let conversationServerId = conversation.serverId,
-            !conversationServerId.isEmpty
-        else { return }
+    private func handleMessageCreated(conversationServerIdString: String) async {
+        // The WS event carries the SERVER conversation id; resolve it to the
+        // local Core Data conversation via Conversation.serverId (the two ids
+        // are independently generated and never equal).
+        guard let convLocalId = resolveLocalConversationId(bySeverId: conversationServerIdString) else { return }
+        let conversationServerId = conversationServerIdString
 
         // Resolve the user ID for content encryption.
         let userId: UUID
@@ -457,7 +455,7 @@ final class CloudSyncCoordinator: ObservableObject {
                 userId: nil,
                 details: AuditEventDetails(
                     errorMessage: "message.created handling failed",
-                    additionalInfo: ["conversationId": conversationIdString]
+                    additionalInfo: ["conversationId": conversationServerIdString]
                 )
             )
         }
@@ -477,6 +475,23 @@ final class CloudSyncCoordinator: ObservableObject {
     }
 
     // MARK: - Core Data helpers
+
+    /// Resolves the LOCAL Core Data conversation id for a given SERVER
+    /// conversation id string (`Conversation.serverId`).
+    ///
+    /// The server and local conversation identifiers are independently
+    /// generated UUIDs — the server never learns the client's local id, and
+    /// the client only learns the server's id via `ensureServerConversation`'s
+    /// response, which is persisted into `Conversation.serverId`. WebSocket
+    /// events (`message.created`, `recommendation.delivered`) always carry the
+    /// SERVER conversation id, so it must be resolved through this mapping
+    /// rather than parsed directly as a local UUID.
+    private func resolveLocalConversationId(bySeverId serverId: String) -> UUID? {
+        let request: NSFetchRequest<Conversation> = Conversation.fetchRequest()
+        request.predicate = NSPredicate(format: "serverId == %@", serverId)
+        request.fetchLimit = 1
+        return (try? context.fetch(request).first)?.id
+    }
 
     /// Returns the set of server message IDs (`serverId`) already stored for
     /// the given conversation.  Used by `handleMessageCreated` to skip messages

@@ -92,20 +92,19 @@ class ConversationViewModel: ObservableObject {
     }
 
     /// Load messages for the current conversation
+    ///
+    /// Routes through `aiService.loadConversation` (not a direct repository
+    /// fetch) so `aiService.messages` stays the single source of truth. The
+    /// aiService's own `$messages` publisher is what mirrors into
+    /// `self.messages` (see `setupServiceObservers`) — fetching directly here
+    /// created a second, uncoordinated writer that could race with that
+    /// mirror. When `aiService.messages` was still a session-local, partial
+    /// array (e.g. only the just-appended user message on the cloud send
+    /// path), its publish would stomp the fuller array this method had just
+    /// set directly, flashing the chat list down to a handful of messages
+    /// until the next WebSocket-triggered refresh corrected it.
     func loadMessages() {
-        Task {
-            do {
-                let fetchedMessages = try messageRepository.fetchAllMessages(conversationId: conversationId)
-                self.messages = fetchedMessages
-
-                // Load conversation metadata
-                if let conversation = try conversationRepository.fetchConversation(id: conversationId) {
-                    self.currentConversation = conversation
-                }
-            } catch {
-                handleError(error)
-            }
-        }
+        loadConversation()
     }
 
     /// Send a message to the AI

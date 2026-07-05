@@ -127,7 +127,7 @@ func runServe(dsn, addr string) error {
 	rt.Mount(r)
 
 	// Physician web app — server-rendered, mounted under /web.
-	webHandler, err := web.New(s, secret, audit.New(s))
+	webHandler, err := web.New(s, secret, audit.New(s), rt)
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)
 	}

@@ -37,8 +37,9 @@ type AuditQuerier interface {
 }
 
 // NewWithQuerier constructs a Handler for tests, accepting interface values
-// in place of the concrete *store.Store and *audit.Writer.
-func NewWithQuerier(sq StoreQuerier, secret []byte, aq AuditQuerier) (*Handler, error) {
+// in place of the concrete *store.Store and *audit.Writer. notifier may be
+// nil — handleReview treats a nil notifier as "don't push".
+func NewWithQuerier(sq StoreQuerier, secret []byte, aq AuditQuerier, notifier PatientNotifier) (*Handler, error) {
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, err
@@ -47,6 +48,7 @@ func NewWithQuerier(sq StoreQuerier, secret []byte, aq AuditQuerier) (*Handler, 
 		store:     nil,
 		secret:    secret,
 		audit:     nil,
+		notifier:  notifier,
 		templates: tmpl,
 		storeQ:    sq,
 		auditQ:    aq,

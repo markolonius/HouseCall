@@ -49,15 +49,23 @@ func secureCookie(r *http.Request) bool {
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
+// PatientNotifier pushes a real-time event to a patient's active WebSocket
+// connections. Satisfied by *api.Router (via its SendToPatient method) —
+// passed in from cmd/server to avoid an import cycle between web and api.
+type PatientNotifier interface {
+	SendToPatient(tenantID, patientID string, event []byte)
+}
+
 // Handler holds the shared dependencies for the physician web app.
 //
 // The storeQ and auditQ fields allow tests (via NewWithQuerier in export_test.go)
 // to inject fakes without a real database. Production code (New) leaves those
 // nil and falls back to the concrete store/audit fields.
 type Handler struct {
-	store     *store.Store
-	secret    []byte
-	audit     *audit.Writer
+	store    *store.Store
+	secret   []byte
+	audit    *audit.Writer
+	notifier PatientNotifier
 	// templates is a per-page template set keyed by page name (e.g. "login",
 	// "panel", "queue"). Each value is the layout cloned with only that page's
 	// block definitions, so {{define "content"}} in different page files do not
@@ -85,7 +93,10 @@ type Handler struct {
 
 // New constructs a Handler for production use. secret is the HMAC-SHA256
 // signing key shared with the Core API. aw is the shared audit.Writer.
-func New(s *store.Store, secret []byte, aw *audit.Writer) (*Handler, error) {
+// notifier delivers the recommendation.delivered WebSocket push to the
+// patient when a review reaches DELIVERED — pass the same *api.Router used
+// to mount the JSON API so both paths notify identically.
+func New(s *store.Store, secret []byte, aw *audit.Writer, notifier PatientNotifier) (*Handler, error) {
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, err
@@ -94,6 +105,7 @@ func New(s *store.Store, secret []byte, aw *audit.Writer) (*Handler, error) {
 		store:     s,
 		secret:    secret,
 		audit:     aw,
+		notifier:  notifier,
 		templates: tmpl,
 	}, nil
 }
@@ -518,7 +530,21 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	// outside the transaction would (a) duplicate the event on the web path
 	// while the API path emits only one, and (b) break atomicity (the audit
 	// row would be written even if the state update rolled back).
-	_ = result // result used for redirect; audit already handled
+
+	// Push a WebSocket event to the patient only once DELIVERED — mirrors
+	// api/recommendations.go's handleReviewRecommendation. Without this the
+	// physician portal's approve action drives state to DELIVERED but the
+	// patient's app never learns about it until some unrelated refresh.
+	if result.FinalState == domain.StateDelivered && h.notifier != nil {
+		event, _ := json.Marshal(map[string]any{
+			"type": "recommendation.delivered",
+			"data": map[string]any{
+				"recommendation_id": result.RecommendationID.String(),
+				"conversation_id":   result.ConversationID.String(),
+			},
+		})
+		h.notifier.SendToPatient(claims.TenantID.String(), result.PatientID.String(), event)
+	}
 
 	// Redirect back to the queue (PRG pattern: prevents double-submit on reload).
 	http.Redirect(w, r, "/web/queue", http.StatusSeeOther)

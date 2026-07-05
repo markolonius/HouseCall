@@ -47,10 +47,10 @@ var testSecret = []byte("web-test-secret-32-bytes!!!!!!!")
 // fakeStore implements the store methods the web package calls so tests can
 // run without a database.
 type fakeStore struct {
-	physicians    map[string]store.Physician    // keyed by email
-	patients      map[string]store.Patient      // keyed by email
-	panelPatients []store.PanelPatient          // returned by ListPatientsByPhysician
-	queueRecs     []store.Recommendation        // returned by ListRecommendationsByPhysician
+	physicians    map[string]store.Physician // keyed by email
+	patients      map[string]store.Patient   // keyed by email
+	panelPatients []store.PanelPatient       // returned by ListPatientsByPhysician
+	queueRecs     []store.Recommendation     // returned by ListRecommendationsByPhysician
 	// physicianForPanel / Rec scoping: keyed by physician id string
 	panelByPhys map[string][]store.PanelPatient
 	recsByPhys  map[string][]store.Recommendation
@@ -266,7 +266,36 @@ func mustHashPassword(t *testing.T, password string) string {
 // it on a fresh chi router, returning the router ready for httptest.
 func buildHandler(t *testing.T, fs *fakeStore) http.Handler {
 	t.Helper()
-	h, err := web.NewWithQuerier(&storeAdapter{fs}, testSecret, &noopAuditWriter{})
+	h, err := web.NewWithQuerier(&storeAdapter{fs}, testSecret, &noopAuditWriter{}, nil)
+	if err != nil {
+		t.Fatalf("web.NewWithQuerier: %v", err)
+	}
+	r := chi.NewRouter()
+	h.Mount(r)
+	return r
+}
+
+// spyPatientNotifier records every SendToPatient call so tests can assert
+// the physician portal pushes the same recommendation.delivered event the
+// JSON API path does.
+type spyPatientNotifier struct {
+	calls []spyNotifierCall
+}
+
+type spyNotifierCall struct {
+	tenantID, patientID string
+	event               []byte
+}
+
+func (n *spyPatientNotifier) SendToPatient(tenantID, patientID string, event []byte) {
+	n.calls = append(n.calls, spyNotifierCall{tenantID: tenantID, patientID: patientID, event: event})
+}
+
+// buildHandlerWithNotifier is buildHandler plus a notifier the test can
+// inspect after the request completes.
+func buildHandlerWithNotifier(t *testing.T, fs *fakeStore, notifier web.PatientNotifier) http.Handler {
+	t.Helper()
+	h, err := web.NewWithQuerier(&storeAdapter{fs}, testSecret, &noopAuditWriter{}, notifier)
 	if err != nil {
 		t.Fatalf("web.NewWithQuerier: %v", err)
 	}
@@ -594,7 +623,7 @@ func TestMiddlewareExtractsTenantAndIdentity(t *testing.T) {
 // freshly constructed Handler, without mounting any chi router.
 func buildProtectedHandler(t *testing.T, fs *fakeStore, inner http.Handler) http.Handler {
 	t.Helper()
-	h, err := web.NewWithQuerier(&storeAdapter{fs}, testSecret, &noopAuditWriter{})
+	h, err := web.NewWithQuerier(&storeAdapter{fs}, testSecret, &noopAuditWriter{}, nil)
 	if err != nil {
 		t.Fatalf("web.NewWithQuerier: %v", err)
 	}
@@ -626,8 +655,8 @@ func assertRedirectToLogin(t *testing.T, rec *httptest.ResponseRecorder) {
 // testPhysID2 / testTenantID2 represent a second physician in a second tenant
 // used to verify isolation.
 var (
-	testTenantID2 = store.TenantID(uuid.MustParse("dddddddd-0000-0000-0000-000000000004"))
-	testPhysID2   = uuid.MustParse("eeeeeeee-0000-0000-0000-000000000005")
+	testTenantID2  = store.TenantID(uuid.MustParse("dddddddd-0000-0000-0000-000000000004"))
+	testPhysID2    = uuid.MustParse("eeeeeeee-0000-0000-0000-000000000005")
 	testPatientID2 = uuid.MustParse("ffffffff-0000-0000-0000-000000000006")
 )
 
@@ -698,7 +727,7 @@ func TestPanel_ShowsOnlySessionPhysicianPatients(t *testing.T) {
 // TestPanel_EmptyPanel verifies that an empty panel renders without error.
 func TestPanel_EmptyPanel(t *testing.T) {
 	fs := &fakeStore{
-		physicians:  map[string]store.Physician{},
+		physicians:    map[string]store.Physician{},
 		panelPatients: nil,
 	}
 	h := buildHandler(t, fs)
@@ -743,19 +772,19 @@ func TestQueue_NonPhysician(t *testing.T) {
 // render recommendations belonging to a second physician in another tenant.
 func TestQueue_ShowsOnlySessionPhysicianRecs(t *testing.T) {
 	phys1Rec := store.Recommendation{
-		ID:          uuid.MustParse("11111111-0000-0000-0000-000000000001"),
-		TenantID:    testTenantID,
-		PatientID:   testPatientID,
-		State:       "PENDING_REVIEW",
-		PayloadType: "guidance",
+		ID:           uuid.MustParse("11111111-0000-0000-0000-000000000001"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "guidance",
 		DraftContent: "Rest and hydrate",
 	}
 	phys2Rec := store.Recommendation{
-		ID:          uuid.MustParse("22222222-0000-0000-0000-000000000002"),
-		TenantID:    testTenantID2,
-		PatientID:   testPatientID2,
-		State:       "PENDING_REVIEW",
-		PayloadType: "prescription",
+		ID:           uuid.MustParse("22222222-0000-0000-0000-000000000002"),
+		TenantID:     testTenantID2,
+		PatientID:    testPatientID2,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "prescription",
 		DraftContent: "Take ibuprofen",
 	}
 
@@ -792,19 +821,19 @@ func TestQueue_ShowsOnlySessionPhysicianRecs(t *testing.T) {
 // handler passes the correct state argument.
 func TestQueue_OnlyPendingReview(t *testing.T) {
 	pending := store.Recommendation{
-		ID:          uuid.MustParse("33333333-0000-0000-0000-000000000003"),
-		TenantID:    testTenantID,
-		PatientID:   testPatientID,
-		State:       "PENDING_REVIEW",
-		PayloadType: "guidance",
+		ID:           uuid.MustParse("33333333-0000-0000-0000-000000000003"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "guidance",
 		DraftContent: "Drink water",
 	}
 	draft := store.Recommendation{
-		ID:          uuid.MustParse("44444444-0000-0000-0000-000000000004"),
-		TenantID:    testTenantID,
-		PatientID:   testPatientID,
-		State:       "DRAFT",
-		PayloadType: "guidance",
+		ID:           uuid.MustParse("44444444-0000-0000-0000-000000000004"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "DRAFT",
+		PayloadType:  "guidance",
 		DraftContent: "This is a draft",
 	}
 
@@ -857,7 +886,7 @@ func TestQueue_EmptyQueue(t *testing.T) {
 // both /web/panel and /web/queue when viewing authenticated pages.
 func TestNavLinks_PanelAndQueue(t *testing.T) {
 	fs := &fakeStore{
-		physicians: map[string]store.Physician{},
+		physicians:    map[string]store.Physician{},
 		panelPatients: nil,
 	}
 	h := buildHandler(t, fs)
@@ -999,6 +1028,60 @@ func TestReview_Approve(t *testing.T) {
 
 	// A recommendation.reviewed audit event must have been written.
 	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionApprove, domain.StateDelivered)
+}
+
+// TestReview_Approve_NotifiesPatient verifies that approving a recommendation
+// via the physician portal pushes a recommendation.delivered WebSocket event
+// to the patient, matching the JSON API path (api/recommendations.go).
+func TestReview_Approve_NotifiesPatient(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	notifier := &spyPatientNotifier{}
+	h := buildHandlerWithNotifier(t, fs, notifier)
+
+	rec := postReview(t, h, testRecID, domain.ActionApprove, "")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("approve: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	if len(notifier.calls) != 1 {
+		t.Fatalf("want exactly 1 SendToPatient call, got %d", len(notifier.calls))
+	}
+	call := notifier.calls[0]
+	if call.tenantID != testTenantID.String() {
+		t.Errorf("tenantID: want %q, got %q", testTenantID.String(), call.tenantID)
+	}
+	if call.patientID != testPatientID.String() {
+		t.Errorf("patientID: want %q, got %q", testPatientID.String(), call.patientID)
+	}
+	var payload struct {
+		Type string `json:"type"`
+		Data struct {
+			RecommendationID string `json:"recommendation_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(call.event, &payload); err != nil {
+		t.Fatalf("event not valid JSON: %v", err)
+	}
+	if payload.Type != "recommendation.delivered" {
+		t.Errorf("event type: want %q, got %q", "recommendation.delivered", payload.Type)
+	}
+	if payload.Data.RecommendationID != testRecID.String() {
+		t.Errorf("event recommendation_id: want %q, got %q", testRecID.String(), payload.Data.RecommendationID)
+	}
+}
+
+// TestReview_Reject_DoesNotNotifyPatient verifies that a rejection (which
+// never reaches DELIVERED) does not push a WebSocket event.
+func TestReview_Reject_DoesNotNotifyPatient(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	notifier := &spyPatientNotifier{}
+	h := buildHandlerWithNotifier(t, fs, notifier)
+
+	postReview(t, h, testRecID, domain.ActionReject, "")
+
+	if len(notifier.calls) != 0 {
+		t.Fatalf("want 0 SendToPatient calls on reject, got %d", len(notifier.calls))
+	}
 }
 
 // TestReview_Reject verifies that POSTing action=reject drives the

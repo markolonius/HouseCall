@@ -48,10 +48,10 @@
 
 ## Phase 4 — Post-approval plan relay
 
-- [ ] 4.1 Relay system prompt (`prompt.go`): explain-only constraint,
+- [x] 4.1 Relay system prompt (`prompt.go`): explain-only constraint,
       deferral instruction, new-complaint marker (same marker discipline as
       `parseInterviewTurn`); parser + unit tests for all three outcomes.
-- [ ] 4.2 Drafter: `PLAN_DELIVERED` path — assemble context from delivered
+- [x] 4.2 Drafter: `PLAN_DELIVERED` path — assemble context from delivered
       recommendation final content + conversation history, call model,
       persist + push reply. New-complaint marker → transition to `INTAKE`
       and run the intake turn. Integration tests: clarifying question

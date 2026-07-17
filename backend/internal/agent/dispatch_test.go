@@ -74,37 +74,43 @@ func TestDispatchTurn_AwaitingReview_NoModelCallNoRecommendation(t *testing.T) {
 	noRecommendationForConv(t, s, f.TenantID, conv.ID)
 }
 
-// TestDispatchTurn_PlanDelivered_NoModelCallNoRecommendation proves the
-// PLAN_DELIVERED branch of dispatchTurn is a no-op for this task (task 4.2
-// implements the relay); no model call, no recommendation, no notification.
-func TestDispatchTurn_PlanDelivered_NoModelCallNoRecommendation(t *testing.T) {
+// TestDispatchTurn_PlanDelivered_RunsRelayTurn proves the PLAN_DELIVERED
+// branch of dispatchTurn now routes to the post-approval plan relay (task
+// 4.2): given a conversation with a delivered recommendation to ground on,
+// dispatchTurn makes a model call and persists a relay reply. This
+// supersedes the earlier no-op assertion (task 4.1's stub); see
+// relay_flow_integration_test.go for the full relay scenario coverage
+// (explain, defer, new-complaint, model failure).
+func TestDispatchTurn_PlanDelivered_RunsRelayTurn(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
-	f := setupIntegrationFixture(t, s)
+	f := setupRelayFixture(t, s) // relay_flow_integration_test.go (same package)
 	ctx := context.Background()
 
-	conv := f.Conv
-	conv.CarePhase = store.CarePhasePlanDelivered
+	if _, err := s.CreateMessage(ctx, f.TenantID, f.Conv.ID, "user", "What does the plan say about follow-up?"); err != nil {
+		t.Fatalf("create patient message: %v", err)
+	}
 
-	spy := &spyClient{text: "MODEL SHOULD NOT BE CALLED"}
+	const reply = "Your plan says to follow up if symptoms worsen or you develop a fever above 102F."
+	spy := &spyClient{text: reply}
 	physNotifier := &captureNotifier{}
 	patNotifier := &spyPatientNotifier{}
 	d := NewDrafter(spy, s, physNotifier, patNotifier)
 
-	if err := d.dispatchTurn(ctx, f.TenantID, conv, f.Patient); err != nil {
+	if err := d.dispatchTurn(ctx, f.TenantID, f.Conv, f.Patient); err != nil {
 		t.Fatalf("dispatchTurn: %v", err)
 	}
 
-	if len(spy.captured) != 0 {
-		t.Errorf("expected 0 model calls for PLAN_DELIVERED, got %d", len(spy.captured))
+	if len(spy.captured) != 1 {
+		t.Errorf("expected 1 model call for PLAN_DELIVERED relay, got %d", len(spy.captured))
 	}
 	if physNotifier.count() != 0 {
-		t.Errorf("expected 0 physician notifications for PLAN_DELIVERED, got %d", physNotifier.count())
+		t.Errorf("expected 0 physician notifications for a PLAN_DELIVERED relay reply, got %d", physNotifier.count())
 	}
-	if patNotifier.count() != 0 {
-		t.Errorf("expected 0 patient notifications for PLAN_DELIVERED, got %d", patNotifier.count())
+	if patNotifier.count() != 1 {
+		t.Errorf("expected 1 patient notification for the relay reply, got %d", patNotifier.count())
 	}
-	noRecommendationForConv(t, s, f.TenantID, conv.ID)
+	noRecommendationForConv(t, s, f.TenantID, f.Conv.ID)
 }
 
 // TestDispatchTurn_Intake_RunsInterviewTurn proves the INTAKE branch still

@@ -40,9 +40,10 @@ func noRecommendationForConv(t *testing.T, s *store.Store, tenantID store.Tenant
 }
 
 // TestDispatchTurn_AwaitingReview_NoModelCallNoRecommendation proves the
-// AWAITING_REVIEW branch of dispatchTurn does not call the model, does not
-// create a recommendation, and does not notify anyone — the dispatch itself
-// is the double-draft guard (task 2.3 adds the acknowledgement message).
+// AWAITING_REVIEW branch of dispatchTurn does not call the model and does not
+// create a recommendation, but DOES notify the patient with the fixed
+// "report is with your physician" reminder (task 2.3) — the dispatch itself
+// is the double-draft guard.
 func TestDispatchTurn_AwaitingReview_NoModelCallNoRecommendation(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
@@ -67,8 +68,8 @@ func TestDispatchTurn_AwaitingReview_NoModelCallNoRecommendation(t *testing.T) {
 	if physNotifier.count() != 0 {
 		t.Errorf("expected 0 physician notifications for AWAITING_REVIEW, got %d", physNotifier.count())
 	}
-	if patNotifier.count() != 0 {
-		t.Errorf("expected 0 patient notifications for AWAITING_REVIEW (task 2.3 adds these), got %d", patNotifier.count())
+	if patNotifier.count() != 1 {
+		t.Errorf("expected 1 patient notification (the reminder) for AWAITING_REVIEW, got %d", patNotifier.count())
 	}
 	noRecommendationForConv(t, s, f.TenantID, conv.ID)
 }
@@ -190,6 +191,9 @@ func TestDraftAsync_AwaitingReview_NoModelCall(t *testing.T) {
 
 	if len(spy.captured) != 0 {
 		t.Errorf("expected 0 model calls via DraftAsync for AWAITING_REVIEW, got %d", len(spy.captured))
+	}
+	if patNotifier.count() != 1 {
+		t.Errorf("expected 1 patient notification (the reminder) via DraftAsync for AWAITING_REVIEW, got %d", patNotifier.count())
 	}
 	noRecommendationForConv(t, s, f.TenantID, conv.ID)
 }

@@ -190,13 +190,58 @@ func (d *Drafter) dispatchTurn(ctx context.Context, tenantID store.TenantID, con
 
 // runAwaitingReviewTurn handles a patient message received while the
 // conversation's drafted recommendation is still awaiting physician review.
+// This is the double-draft fix (bead HouseCall-lkzs, 2026-07-15): dispatchTurn
+// already routes AWAITING_REVIEW away from runInterviewTurn, so this method
+// makes NO model call and creates NO recommendation — it only tells the
+// patient their report is already with the physician.
 //
-// TODO(task 2.3): persist the fixed "your report is with your physician"
-// assistant message. For now this is intentionally a no-op — the dispatch
-// itself (routing AWAITING_REVIEW away from runInterviewTurn) is the guard
-// against the double-draft bug; no model call and no recommendation must be
-// produced here regardless of what task 2.3 adds.
-func (d *Drafter) runAwaitingReviewTurn(_ context.Context, _ store.TenantID, _ store.Conversation, _ store.Patient) error {
+// Order guarantee mirrors deliverInterviewQuestion: the reminder message is
+// persisted and audited before the patient notifier fires, so the client can
+// never receive a reference to a message that does not yet exist in the DB.
+//
+// PHI discipline: ReviewPendingReminderMessage is fixed, non-clinical text —
+// not model output — so no drafted SOAP content can leak here. Audit metadata
+// and the patient WebSocket event contain conversation_id and message_id
+// only.
+func (d *Drafter) runAwaitingReviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	// Step 1: persist the fixed reminder as an assistant-role message so the
+	// iOS client can retrieve it via GET /api/conversations/{id}/messages.
+	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", ReviewPendingReminderMessage)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: write the audit event. Metadata contains identifiers only — no
+	// PHI, no message content (the message is fixed text, but the pattern is
+	// kept consistent with deliverInterviewQuestion / draftSOAPNote's ack).
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.awaiting_review_reminder",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		}),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the reminder from being
+		// delivered — log the error type only (never the value, which could
+		// echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit a WebSocket event to the patient — same message.created
+	// shape as deliverInterviewQuestion/draftSOAPNote's ack push. The payload
+	// is IDs only so no PHI crosses the notification channel; the client
+	// fetches content via its authenticated REST endpoint after receiving
+	// the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		},
+	}))
+
 	return nil
 }
 

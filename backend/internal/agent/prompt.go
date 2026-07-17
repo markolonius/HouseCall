@@ -27,6 +27,20 @@ const ReadyForNoteMarker = "<READY_FOR_NOTE>"
 // content.
 const ReviewPendingAckMessage = "Thanks — I've gathered what I need and sent it to your physician for review. I'll let you know as soon as they respond."
 
+// ReviewPendingReminderMessage is the fixed, non-clinical assistant message
+// persisted in response to any patient message received WHILE the
+// conversation is already `AWAITING_REVIEW` — i.e. after
+// ReviewPendingAckMessage has already been sent for the pending
+// recommendation. It is distinct wording from ReviewPendingAckMessage
+// (which announces the handoff) because this one answers a NEW message the
+// patient sent while waiting; conflating the two would make it look like a
+// second draft had been produced. Static text — NOT model output — for the
+// same reason as ReviewPendingAckMessage: no free-text agent content is
+// shown to the patient until a physician has reviewed the draft. See
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "A message during AWAITING_REVIEW does not draft again".
+const ReviewPendingReminderMessage = "Your report is with your physician for review right now — I'll notify you the moment they respond. If anything urgent changes, please seek care right away."
+
 // InterviewSystemPrompt instructs the model to act as a clinician conducting a
 // focused history-taking interview. It is used as the system message in every
 // interview turn; the full conversation history follows so the model can track

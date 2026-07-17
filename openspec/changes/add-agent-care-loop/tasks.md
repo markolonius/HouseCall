@@ -25,7 +25,7 @@
       assistant message and transition to `AWAITING_REVIEW` in the same
       transaction; push the message to the patient over WS. Tests: ack
       persisted, contains no SOAP content, phase moved atomically.
-- [ ] 2.3 Drafter: `AWAITING_REVIEW` path persists the fixed
+- [x] 2.3 Drafter: `AWAITING_REVIEW` path persists the fixed
       "report is with your physician" message, no model call, no new
       recommendation. Test reproduces the 2026-07-15 double-draft bug and
       proves it fixed. Close bead `HouseCall-lkzs` when this lands.

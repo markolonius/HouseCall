@@ -566,10 +566,15 @@ func (d *Drafter) deliverRelayReply(ctx context.Context, tenantID store.TenantID
 
 // reopenIntakeForNewComplaint handles the RelayOutcome.NewComplaint == true
 // branch of runPlanDeliveredTurn: it transitions the conversation
-// PLAN_DELIVERED → INTAKE and immediately runs an interview turn so the
+// PLAN_DELIVERED → INTAKE and immediately runs an intake turn so the
 // patient's new-complaint message — already present in the conversation
 // history that generateRelayTurn (and now generateInterviewTurn) read —
-// begins being interviewed without requiring a further patient message.
+// is screened for emergency presentations before the interview begins,
+// without requiring a further patient message. A new complaint raised
+// against a delivered plan is exactly the kind of message (e.g. "I also
+// now have crushing chest pain") the red-flag triage screen exists to
+// catch, so this path must go through runIntakeTurn — not runInterviewTurn
+// directly — like every other INTAKE-phase turn.
 //
 // The phase transition and its audit event are written together in a short
 // transaction so the audit trail always reflects a durable phase change (the
@@ -577,7 +582,7 @@ func (d *Drafter) deliverRelayReply(ctx context.Context, tenantID store.TenantID
 // TransitionCarePhase's compare-and-swap guard means a racing writer that
 // already moved the conversation off PLAN_DELIVERED causes this call to fail
 // with store.ErrNotFound, which propagates like any other draft failure —
-// no interview turn runs and DraftAsync writes ai_interaction_failed.
+// no intake turn runs and DraftAsync writes ai_interaction_failed.
 func (d *Drafter) reopenIntakeForNewComplaint(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
 	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
 		if err := tx.TransitionCarePhase(ctx, tenantID, conv.ID, store.CarePhasePlanDelivered, store.CarePhaseIntake); err != nil {
@@ -595,12 +600,13 @@ func (d *Drafter) reopenIntakeForNewComplaint(ctx context.Context, tenantID stor
 		return err
 	}
 
-	// Run the interview turn against the now-INTAKE conversation. The
-	// existing message history already contains the patient's new-complaint
-	// message, so this turn is what starts the interview on it — no
-	// additional patient message is required.
+	// Run the intake turn (triage screen, then interview) against the
+	// now-INTAKE conversation. The existing message history already
+	// contains the patient's new-complaint message, so this turn is what
+	// screens and then starts the interview on it — no additional patient
+	// message is required.
 	conv.CarePhase = store.CarePhaseIntake
-	return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	return d.runIntakeTurn(ctx, tenantID, conv, patient)
 }
 
 // runInterviewTurn is the synchronous orchestration logic called by

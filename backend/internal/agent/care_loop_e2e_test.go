@@ -18,9 +18,11 @@
 //
 // A single scripted model client (e2eClient, defined below) is shared across
 // the entire test so the call sequence is asserted end to end: triage now
-// precedes every INTAKE-phase turn (Phase 5), so those calls are counted
-// alongside the interview/SOAP-draft/relay calls that existed before this
-// change. See the step-by-step commentary inline for the full 11-call
+// precedes every INTAKE-phase turn (Phase 5), including the turn that
+// immediately follows a reopened-intake transition (reopenIntakeForNewComplaint
+// calls runIntakeTurn, not runInterviewTurn directly), so those calls are
+// counted alongside the interview/SOAP-draft/relay calls that existed before
+// this change. See the step-by-step commentary inline for the full 12-call
 // sequence.
 //
 // DB-backed: skips when TEST_DATABASE_URL is unset, consistent with the rest
@@ -173,7 +175,8 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 
 		// --- Step 7: new complaint reopens intake ---
 		{step: "7a relay detects new complaint", text: NewComplaintMarker},
-		{step: "7b interview turn on reopened intake (no triage — reopenIntakeForNewComplaint calls runInterviewTurn directly)", text: newComplaintQ},
+		{step: "7b triage on reopened intake (routine)", text: RoutineMarker},
+		{step: "7c interview turn on reopened intake", text: newComplaintQ},
 	})
 
 	d := NewDrafter(client, s, physNotifier, patNotifier)
@@ -523,11 +526,13 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 	if err := d.dispatchTurn(ctx, f.TenantID, conv, f.Patient); err != nil {
 		t.Fatalf("step7: dispatchTurn: %v", err)
 	}
-	// Two calls: the relay call that detects the new complaint, then the
-	// interview-turn call that follows immediately (reopenIntakeForNewComplaint
-	// calls runInterviewTurn directly — no triage call in between).
-	if got := client.callCount(); got != callCountBeforeStep7+2 {
-		t.Fatalf("step7: model call count = %d, want %d (relay detection + interview turn, no triage)", got, callCountBeforeStep7+2)
+	// Three calls: the relay call that detects the new complaint, then the
+	// triage call and the interview-turn call that follow (the reopened
+	// conversation goes through runIntakeTurn like any other INTAKE-phase
+	// turn — a new complaint against a delivered plan must be screened for
+	// emergency presentations, not skip straight to the interview).
+	if got := client.callCount(); got != callCountBeforeStep7+3 {
+		t.Fatalf("step7: model call count = %d, want %d (relay detection + triage + interview turn)", got, callCountBeforeStep7+3)
 	}
 
 	convAfterNewComplaint, err := s.GetConversation(ctx, f.TenantID, f.Conv.ID)
@@ -547,10 +552,10 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 		t.Error("step7: the new-complaint marker itself must never reach a patient-facing message")
 	}
 
-	// Final sanity: the whole walkthrough made exactly 11 model calls, in the
+	// Final sanity: the whole walkthrough made exactly 12 model calls, in the
 	// exact order scripted at the top of this test.
-	if got := client.callCount(); got != 11 {
-		t.Errorf("care loop end-to-end: total model calls = %d, want 11", got)
+	if got := client.callCount(); got != 12 {
+		t.Errorf("care loop end-to-end: total model calls = %d, want 12", got)
 	}
 }
 

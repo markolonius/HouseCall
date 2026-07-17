@@ -46,13 +46,16 @@ func TestDoubleDraftBug_AwaitingReview_SecondMessageDoesNotRedraft(t *testing.T)
 	ctx := context.Background()
 
 	// --- Phase 1: complete the interview and draft the SOAP note. ---
-	// First Complete() call is runInterviewTurn's generateInterviewTurn,
-	// which emits the completion marker; the second is draftSOAPNote's model
-	// call, which returns a well-formed SOAP note.
+	// First Complete() call is runIntakeTurn's triage classification (task
+	// 5.2), scripted routine so it falls through to the interview; the second
+	// is runInterviewTurn's generateInterviewTurn, which emits the completion
+	// marker; the third is draftSOAPNote's model call, which returns a
+	// well-formed SOAP note.
 	client := &sequentialClient{responses: []struct {
 		text string
 		err  error
 	}{
+		{text: RoutineMarker},
 		{text: ReadyForNoteMarker},
 		{text: wellFormedSOAPText},
 	}}

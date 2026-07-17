@@ -110,6 +110,18 @@ Your entire response for this turn must be EXACTLY ONE of the following two toke
 
 Do not output both. Do not output any other text before, after, or instead of the single token. This response is read only by a server-side program, never by the patient.`
 
+// EmergencyReferralMessage is the fixed, non-clinical assistant message
+// persisted to the patient's conversation the moment the triage
+// classification call (see TriageSystemPrompt) returns EmergentMarker (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Red-Flag Triage"). It is static text — NOT model output — deliberately:
+// standard telehealth safe-harbor wording, not a fresh model generation, is
+// what tells a patient to call 911. See design.md's "Static
+// acknowledgement/emergency text is less 'conversational'" risk note, which
+// applies here for the same reason it applies to ReviewPendingAckMessage and
+// ReviewPendingReminderMessage below.
+const EmergencyReferralMessage = "Based on what you've described, this could be a medical emergency. Please call 911 or go to your nearest emergency room right now. Do not wait for a response here."
+
 // ReviewPendingAckMessage is the fixed, non-clinical assistant message
 // persisted to the patient's conversation the moment a SOAP note draft is
 // committed (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/

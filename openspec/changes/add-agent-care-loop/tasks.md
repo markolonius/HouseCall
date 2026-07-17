@@ -2,7 +2,7 @@
 
 ## Phase 1 — Care-phase foundation (server)
 
-- [ ] 1.1 Migration: add `care_phase` to `conversations`
+- [x] 1.1 Migration: add `care_phase` to `conversations`
       (`INTAKE | AWAITING_REVIEW | PLAN_DELIVERED`, NOT NULL, default
       `INTAKE`) with CHECK constraint; backfill existing rows from
       recommendation history (delivered → `PLAN_DELIVERED`, pending →

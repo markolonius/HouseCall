@@ -86,6 +86,17 @@ audit event, and stop the normal turn. Classifier unavailable or unparseable
 → fail open to the normal interview turn (the physician gate is still ahead;
 blocking care on a triage outage is worse) and write `ai_interaction_failed`.
 
+## Decision: Delivery tolerates a care-phase CAS miss
+
+Delivery (approve/modify → `DELIVERED`) transitions the conversation
+`AWAITING_REVIEW` → `PLAN_DELIVERED` in the same transaction. When the
+conversation is *not* observed in `AWAITING_REVIEW` (backfilled/legacy rows,
+lost CAS race), the delivery still commits and a
+`recommendation.delivered_phase_mismatch` audit event (identifiers only) is
+written instead: `care_phase` routes agent behaviour, it is not a gate on a
+physician's clinical action. Any other transition error still fails the whole
+transaction.
+
 ## Risks / Trade-offs
 
 - **Relay hallucination beyond the approved plan** — mitigated by grounding

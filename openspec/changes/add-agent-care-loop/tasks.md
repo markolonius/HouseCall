@@ -13,7 +13,7 @@
       `TransitionCarePhase` helper that enforces the allowed edges and runs
       inside the caller's transaction. Unit tests for every allowed and
       disallowed edge.
-- [ ] 1.4 API: include `care_phase` in conversation DTOs (list + single).
+- [x] 1.4 API: include `care_phase` in conversation DTOs (list + single).
       Handler tests assert the field for each phase.
 
 ## Phase 2 — Phase dispatch, acknowledgement, double-draft fix

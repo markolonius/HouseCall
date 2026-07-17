@@ -115,6 +115,10 @@ func TestDispatchTurn_PlanDelivered_RunsRelayTurn(t *testing.T) {
 
 // TestDispatchTurn_Intake_RunsInterviewTurn proves the INTAKE branch still
 // runs the ordinary interview turn (the regression guard task 2.1 asks for).
+// Since task 5.2, INTAKE dispatch runs a triage classification call before
+// the interview turn (see runIntakeTurn), so this uses a sequentialClient
+// scripted with a routine triage result followed by the interview question,
+// and asserts both calls happened.
 func TestDispatchTurn_Intake_RunsInterviewTurn(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
@@ -125,17 +129,23 @@ func TestDispatchTurn_Intake_RunsInterviewTurn(t *testing.T) {
 	conv.CarePhase = store.CarePhaseIntake
 
 	const question = "How long have you had this headache?"
-	spy := &spyClient{text: question}
+	client := &sequentialClient{responses: []struct {
+		text string
+		err  error
+	}{
+		{text: RoutineMarker},
+		{text: question},
+	}}
 	physNotifier := &captureNotifier{}
 	patNotifier := &spyPatientNotifier{}
-	d := NewDrafter(spy, s, physNotifier, patNotifier)
+	d := NewDrafter(client, s, physNotifier, patNotifier)
 
 	if err := d.dispatchTurn(ctx, f.TenantID, conv, f.Patient); err != nil {
 		t.Fatalf("dispatchTurn: %v", err)
 	}
 
-	if len(spy.captured) != 1 {
-		t.Fatalf("expected 1 model call for INTAKE, got %d", len(spy.captured))
+	if client.idx != 2 {
+		t.Fatalf("expected 2 model calls for INTAKE (triage + interview), got %d", client.idx)
 	}
 	if patNotifier.count() != 1 {
 		t.Errorf("expected 1 patient notification for the interview question, got %d", patNotifier.count())
@@ -145,7 +155,8 @@ func TestDispatchTurn_Intake_RunsInterviewTurn(t *testing.T) {
 // TestDispatchTurn_EmptyCarePhase_TreatedAsIntake proves the defensive
 // fallback: a Conversation with a zero-value CarePhase (pre-migration rows or
 // older in-memory fixtures) is dispatched as INTAKE rather than silently
-// dropped.
+// dropped. Like TestDispatchTurn_Intake_RunsInterviewTurn, this now scripts a
+// routine triage result ahead of the interview question (task 5.2).
 func TestDispatchTurn_EmptyCarePhase_TreatedAsIntake(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
@@ -156,17 +167,23 @@ func TestDispatchTurn_EmptyCarePhase_TreatedAsIntake(t *testing.T) {
 	conv.CarePhase = "" // zero value, not a real phase
 
 	const question = "Any fever or chills?"
-	spy := &spyClient{text: question}
+	client := &sequentialClient{responses: []struct {
+		text string
+		err  error
+	}{
+		{text: RoutineMarker},
+		{text: question},
+	}}
 	physNotifier := &captureNotifier{}
 	patNotifier := &spyPatientNotifier{}
-	d := NewDrafter(spy, s, physNotifier, patNotifier)
+	d := NewDrafter(client, s, physNotifier, patNotifier)
 
 	if err := d.dispatchTurn(ctx, f.TenantID, conv, f.Patient); err != nil {
 		t.Fatalf("dispatchTurn: %v", err)
 	}
 
-	if len(spy.captured) != 1 {
-		t.Fatalf("expected empty CarePhase to fall back to INTAKE (1 model call), got %d", len(spy.captured))
+	if client.idx != 2 {
+		t.Fatalf("expected empty CarePhase to fall back to INTAKE (2 model calls: triage + interview), got %d", client.idx)
 	}
 	if patNotifier.count() != 1 {
 		t.Errorf("expected 1 patient notification for the fallback interview turn, got %d", patNotifier.count())

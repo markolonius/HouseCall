@@ -464,25 +464,40 @@ func TestDraft_TenantScoping(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // assertFailurePath is a shared helper for the four Task 4.3 failure-mode
-// tests. It:
+// tests. All four use a stub client that errors on EVERY Complete() call, so
+// since task 5.2 wired triage ahead of the interview turn, the triage
+// classification call fails too — runIntakeTurn writes its own
+// ai_interaction_failed audit row (metadata.stage == "triage") for that
+// before failing open and re-attempting the (also-failing) interview turn,
+// whose error is what DraftAsync's own ai_interaction_failed audit write
+// records. Both rows are legitimate and expected with an always-erroring
+// client; this helper scopes its assertions to the DraftAsync-level row (no
+// "stage" field) so it keeps testing exactly what it always tested — the
+// whole-turn draft failure path and its reason classification.
 //
-//  1. Waits up to 2 s for the goroutine to finish (detected via audit row).
+// It:
+//
+//  1. Waits up to 2 s for the goroutine to finish (detected via the
+//     DraftAsync-level audit row).
 //  2. Asserts zero recommendations exist for the fixture's conversation.
-//  3. Asserts exactly one ai_interaction_failed audit row exists with the
-//     expected coarse reason and no PHI / model-body content.
+//  3. Asserts exactly one DraftAsync-level ai_interaction_failed audit row
+//     exists with the expected coarse reason and no PHI / model-body content.
 //  4. Asserts no queue.updated event was emitted.
 func assertFailurePath(t *testing.T, pool *pgxpool.Pool, s *store.Store, f drafterFixture, notifier *stubNotifier, wantReason string) {
 	t.Helper()
 	ctx := context.Background()
 
-	// Poll until the audit row appears (goroutine completes near-instantly with
-	// stub clients, but give it up to 2 s to be safe in CI).
+	// Poll until the DraftAsync-level audit row appears (goroutine completes
+	// near-instantly with stub clients, but give it up to 2 s to be safe in
+	// CI). Excludes the triage-stage row (see doc comment above) so the
+	// deadline loop waits for the row this test actually asserts on.
 	deadline := time.Now().Add(2 * time.Second)
 	var auditRows int
 	for time.Now().Before(deadline) {
 		row := pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM audit_events
-			  WHERE tenant_id = $1 AND event_type = 'ai_interaction_failed'`,
+			  WHERE tenant_id = $1 AND event_type = 'ai_interaction_failed'
+			    AND metadata->>'stage' IS DISTINCT FROM 'triage'`,
 			f.TenantID.UUID(),
 		)
 		if err := row.Scan(&auditRows); err == nil && auditRows > 0 {
@@ -513,11 +528,14 @@ func assertFailurePath(t *testing.T, pool *pgxpool.Pool, s *store.Store, f draft
 		}
 	}
 
-	// (b) Exactly one ai_interaction_failed audit row with correct reason and no PHI.
+	// (b) Exactly one DraftAsync-level ai_interaction_failed audit row (the
+	// triage-stage row, if any, is asserted separately — see this helper's
+	// doc comment) with correct reason and no PHI.
 	rows, err := pool.Query(ctx,
 		`SELECT metadata FROM audit_events
 		  WHERE tenant_id = $1 AND event_type = 'ai_interaction_failed'
-		    AND metadata->>'conversation_id' = $2`,
+		    AND metadata->>'conversation_id' = $2
+		    AND metadata->>'stage' IS DISTINCT FROM 'triage'`,
 		f.TenantID.UUID(),
 		f.Conv.ID.String(),
 	)

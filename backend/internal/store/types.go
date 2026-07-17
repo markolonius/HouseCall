@@ -58,11 +58,24 @@ type CareRelationship struct {
 	CreatedAt   time.Time
 }
 
+// CarePhase is the conversation's position in the care-phase state machine
+// (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Conversation Care Phase State Machine"). It is stored as text in Postgres
+// with a CHECK constraint restricting it to the three values below.
+type CarePhase string
+
+const (
+	CarePhaseIntake         CarePhase = "INTAKE"
+	CarePhaseAwaitingReview CarePhase = "AWAITING_REVIEW"
+	CarePhasePlanDelivered  CarePhase = "PLAN_DELIVERED"
+)
+
 type Conversation struct {
 	ID        uuid.UUID
 	TenantID  TenantID
 	PatientID uuid.UUID
 	Title     string
+	CarePhase CarePhase
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

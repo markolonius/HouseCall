@@ -89,11 +89,25 @@ func (d *Drafter) WithOnComplete(fn func()) *Drafter {
 	return &cp
 }
 
-// DraftAsync spawns a goroutine that runs one step of the clinical interview
-// per patient message: either delivers the next interview question directly to
-// the patient, or — when the interview is judged complete — drafts a soap_note
-// recommendation into PENDING_REVIEW for physician review. It is fire-and-
-// forget: errors are logged but never returned to the caller.
+// DraftAsync spawns a goroutine that runs one turn of the care-phase state
+// machine for a patient message, dispatching on conv.CarePhase (see
+// openspec/changes/add-agent-care-loop/design.md, "Per-phase dispatch
+// replaces the single interview path"):
+//
+//   - INTAKE (and any unrecognized/empty phase, defensively — conversations
+//     loaded before the care_phase migration or built by in-memory test
+//     fixtures may have a zero-value CarePhase): today's interview behaviour —
+//     either delivers the next interview question directly to the patient, or
+//     drafts a soap_note recommendation into PENDING_REVIEW for physician
+//     review.
+//   - AWAITING_REVIEW: no model call and no new recommendation — the
+//     conversation already has a draft awaiting physician review. This
+//     dispatch branch IS the double-draft guard (task 2.3 fills in the
+//     patient-facing acknowledgement).
+//   - PLAN_DELIVERED: no model call yet (task 4.2 implements the post-approval
+//     plan relay).
+//
+// It is fire-and-forget: errors are logged but never returned to the caller.
 //
 // The caller must not pass a request-scoped context — use context.Background()
 // or a long-lived server context so the goroutine is not cancelled when the
@@ -107,7 +121,7 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 			defer d.onComplete()
 		}
 
-		// Recover from any panic inside runInterviewTurn (nil-deref, driver
+		// Recover from any panic inside the dispatched turn (nil-deref, driver
 		// bug, etc.) so a single drafting failure cannot crash the server
 		// process. middleware.Recoverer only protects HTTP handler goroutines;
 		// fire-and-forget goroutines must manage their own recovery.
@@ -120,7 +134,7 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 		}()
 
 		ctx := context.Background()
-		if err := d.runInterviewTurn(ctx, tenantID, conv, patient); err != nil {
+		if err := d.dispatchTurn(ctx, tenantID, conv, patient); err != nil {
 			// Log type only — never the error message or body, which may echo
 			// request content or PHI (see ModelError.Body HIPAA note in
 			// client.go).
@@ -149,8 +163,58 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 	}()
 }
 
-// runInterviewTurn is the synchronous orchestration logic called by DraftAsync
-// per patient message. It runs one step of the clinical interview:
+// dispatchTurn is the single entry point DraftAsync's goroutine calls to run
+// one turn of the care-phase state machine. It selects the per-phase
+// behaviour from conv.CarePhase — see DraftAsync's doc comment for the
+// behaviour of each branch.
+//
+// Dispatching here (rather than inside runInterviewTurn) is deliberate: it is
+// the mechanism that prevents a second model call/recommendation while a
+// conversation is AWAITING_REVIEW (the double-draft bug this change fixes).
+func (d *Drafter) dispatchTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	switch conv.CarePhase {
+	case store.CarePhaseAwaitingReview:
+		return d.runAwaitingReviewTurn(ctx, tenantID, conv, patient)
+	case store.CarePhasePlanDelivered:
+		return d.runPlanDeliveredTurn(ctx, tenantID, conv, patient)
+	case store.CarePhaseIntake, "":
+		// Empty CarePhase is treated as INTAKE defensively: conversations
+		// loaded before the care_phase migration backfill, or built by
+		// in-memory/older test fixtures that never set the field, must still
+		// get the interview behaviour rather than silently no-op.
+		return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	default:
+		return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	}
+}
+
+// runAwaitingReviewTurn handles a patient message received while the
+// conversation's drafted recommendation is still awaiting physician review.
+//
+// TODO(task 2.3): persist the fixed "your report is with your physician"
+// assistant message. For now this is intentionally a no-op — the dispatch
+// itself (routing AWAITING_REVIEW away from runInterviewTurn) is the guard
+// against the double-draft bug; no model call and no recommendation must be
+// produced here regardless of what task 2.3 adds.
+func (d *Drafter) runAwaitingReviewTurn(_ context.Context, _ store.TenantID, _ store.Conversation, _ store.Patient) error {
+	return nil
+}
+
+// runPlanDeliveredTurn handles a patient message received after the
+// conversation's recommendation has been delivered.
+//
+// TODO(task 4.2): assemble relay context from the delivered recommendation's
+// final content plus conversation history, call the model with the relay
+// system prompt, and persist/push the reply (or transition back to INTAKE on
+// a new-complaint marker). For now this is intentionally a no-op — no model
+// call and no recommendation are produced.
+func (d *Drafter) runPlanDeliveredTurn(_ context.Context, _ store.TenantID, _ store.Conversation, _ store.Patient) error {
+	return nil
+}
+
+// runInterviewTurn is the synchronous orchestration logic called by
+// dispatchTurn for conversations in INTAKE. It runs one step of the clinical
+// interview:
 //
 //   - Generates the next turn from the tenant-scoped conversation history using
 //     the clinical interview system prompt.

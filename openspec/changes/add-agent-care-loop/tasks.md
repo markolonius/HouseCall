@@ -21,7 +21,7 @@
 - [x] 2.1 Drafter: dispatch on `care_phase` in `DraftAsync`; `INTAKE` keeps
       today's interview path. Regression: existing interview-flow integration
       tests stay green.
-- [ ] 2.2 Drafter: on SOAP draft commit, persist the fixed acknowledgement
+- [x] 2.2 Drafter: on SOAP draft commit, persist the fixed acknowledgement
       assistant message and transition to `AWAITING_REVIEW` in the same
       transaction; push the message to the patient over WS. Tests: ack
       persisted, contains no SOAP content, phase moved atomically.

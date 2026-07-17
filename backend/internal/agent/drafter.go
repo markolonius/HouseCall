@@ -104,8 +104,9 @@ func (d *Drafter) WithOnComplete(fn func()) *Drafter {
 //     conversation already has a draft awaiting physician review. This
 //     dispatch branch IS the double-draft guard (task 2.3 fills in the
 //     patient-facing acknowledgement).
-//   - PLAN_DELIVERED: no model call yet (task 4.2 implements the post-approval
-//     plan relay).
+//   - PLAN_DELIVERED: post-approval plan relay — explains or defers questions
+//     about the delivered recommendation, or reopens INTAKE and runs an
+//     interview turn when the patient reports a new complaint.
 //
 // It is fire-and-forget: errors are logged but never returned to the caller.
 //
@@ -246,15 +247,179 @@ func (d *Drafter) runAwaitingReviewTurn(ctx context.Context, tenantID store.Tena
 }
 
 // runPlanDeliveredTurn handles a patient message received after the
-// conversation's recommendation has been delivered.
+// conversation's recommendation has been delivered (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). It assembles relay context from the
+// delivered recommendation's final content plus conversation history, calls
+// the model with RelaySystemPrompt, and parses the result with
+// parseRelayTurn:
 //
-// TODO(task 4.2): assemble relay context from the delivered recommendation's
-// final content plus conversation history, call the model with the relay
-// system prompt, and persist/push the reply (or transition back to INTAKE on
-// a new-complaint marker). For now this is intentionally a no-op — no model
-// call and no recommendation are produced.
-func (d *Drafter) runPlanDeliveredTurn(_ context.Context, _ store.TenantID, _ store.Conversation, _ store.Patient) error {
+//   - NewComplaint == false: the reply (an explanation grounded in the
+//     delivered plan, or a fixed-style deferral — both are plain relay text,
+//     indistinguishable at this layer by design) is persisted as an
+//     assistant message and pushed to the patient. No care-phase transition;
+//     the conversation stays in PLAN_DELIVERED.
+//   - NewComplaint == true: the conversation transitions PLAN_DELIVERED →
+//     INTAKE, and an interview turn runs immediately against the same
+//     conversation history (which already includes the patient's
+//     new-complaint message) so the interview starts without requiring a
+//     further patient message.
+//
+// Error discipline mirrors runInterviewTurn: a non-nil return means no
+// content was delivered to the patient. The caller (DraftAsync) logs the
+// error type and writes the ai_interaction_failed audit event — no model
+// output or PHI is inspected here.
+func (d *Drafter) runPlanDeliveredTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	raw, err := d.generateRelayTurn(ctx, tenantID, conv)
+	if err != nil {
+		return err
+	}
+
+	outcome := parseRelayTurn(raw)
+
+	if outcome.NewComplaint {
+		return d.reopenIntakeForNewComplaint(ctx, tenantID, conv, patient)
+	}
+
+	return d.deliverRelayReply(ctx, tenantID, conv, patient, outcome.Text)
+}
+
+// generateRelayTurn assembles the relay model context for a PLAN_DELIVERED
+// turn: RelaySystemPrompt (system role), a second system-role message
+// grounding the reply in the most recently delivered recommendation's final
+// content (see deliveredPlanContextMessage), followed by the full
+// tenant-scoped conversation history — the same message-assembly shape as
+// generateInterviewTurn, with the delivered-plan grounding message in place
+// of the rejection-guidance message.
+//
+// No content is logged (PHI constraint). A non-nil error means no usable
+// model output was obtained; the caller must not treat the returned string
+// as clinical content.
+func (d *Drafter) generateRelayTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
+	// Grounding source: the most recently delivered recommendation for this
+	// conversation. Per design.md, relay context is assembled ONLY from this
+	// content and the conversation history — nothing else.
+	deliveredRec, err := d.store.GetLatestDeliveredRecommendation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+	var deliveredContent string
+	if deliveredRec.FinalContent != nil {
+		deliveredContent = *deliveredRec.FinalContent
+	}
+
+	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
+	modelMsgs := make([]Message, 0, len(msgs)+2)
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: RelaySystemPrompt,
+	})
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: deliveredPlanContextMessage(deliveredContent),
+	})
+	for _, m := range msgs {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	return d.client.Complete(ctx, modelMsgs)
+}
+
+// deliverRelayReply persists a PLAN_DELIVERED relay reply — an explanation
+// grounded in the delivered plan, or a fixed-style deferral (see
+// RelayOutcome's doc comment for why the two are not distinguished here) —
+// as an assistant-role message, writes an audit event with identifiers only
+// (no PHI), and emits a WebSocket event to the patient. This does NOT
+// transition the conversation's care phase: PLAN_DELIVERED stays
+// PLAN_DELIVERED for both the explain and defer scenarios.
+//
+// Order guarantee mirrors deliverInterviewQuestion: the message is committed
+// and audited before the patient notifier fires, so the client can never
+// receive a reference to a message that does not yet exist in the DB.
+func (d *Drafter) deliverRelayReply(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient, text string) error {
+	// Step 1: persist the reply as an assistant-role message so the iOS
+	// client can retrieve it via GET /api/conversations/{id}/messages.
+	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", text)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: write the audit event. Metadata contains identifiers only — no
+	// PHI, no message content.
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.relay_reply",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		}),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the reply from being
+		// delivered — log the error type only (never the value, which could
+		// echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit a WebSocket event to the patient. The payload is IDs only
+	// so no PHI crosses the notification channel; the client fetches content
+	// via its authenticated REST endpoint after receiving the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		},
+	}))
+
 	return nil
+}
+
+// reopenIntakeForNewComplaint handles the RelayOutcome.NewComplaint == true
+// branch of runPlanDeliveredTurn: it transitions the conversation
+// PLAN_DELIVERED → INTAKE and immediately runs an interview turn so the
+// patient's new-complaint message — already present in the conversation
+// history that generateRelayTurn (and now generateInterviewTurn) read —
+// begins being interviewed without requiring a further patient message.
+//
+// The phase transition and its audit event are written together in a short
+// transaction so the audit trail always reflects a durable phase change (the
+// same discipline as every other TransitionCarePhase caller in this file).
+// TransitionCarePhase's compare-and-swap guard means a racing writer that
+// already moved the conversation off PLAN_DELIVERED causes this call to fail
+// with store.ErrNotFound, which propagates like any other draft failure —
+// no interview turn runs and DraftAsync writes ai_interaction_failed.
+func (d *Drafter) reopenIntakeForNewComplaint(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
+		if err := tx.TransitionCarePhase(ctx, tenantID, conv.ID, store.CarePhasePlanDelivered, store.CarePhaseIntake); err != nil {
+			return err
+		}
+		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+			ActorType: string(domain.ActorAgent),
+			ActorID:   nil, // agent has no user UUID
+			EventType: "agent.new_complaint_reopened_intake",
+			Metadata: mustMarshalJSON(map[string]any{
+				"conversation_id": conv.ID.String(),
+			}),
+		})
+	}); err != nil {
+		return err
+	}
+
+	// Run the interview turn against the now-INTAKE conversation. The
+	// existing message history already contains the patient's new-complaint
+	// message, so this turn is what starts the interview on it — no
+	// additional patient message is required.
+	conv.CarePhase = store.CarePhaseIntake
+	return d.runInterviewTurn(ctx, tenantID, conv, patient)
 }
 
 // runInterviewTurn is the synchronous orchestration logic called by

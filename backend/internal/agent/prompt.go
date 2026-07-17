@@ -247,3 +247,25 @@ Do NOT emit this marker for questions about the existing plan, even difficult on
 5. **Tone.** Be empathetic, non-judgmental, and concise. One or two short sentences is normally enough — you are relaying an already-approved plan, not conducting a new evaluation.
 
 Begin by responding to the patient's message using only the delivered plan and conversation history supplied to you as context.`
+
+// deliveredPlanContextTemplate formats the delivered recommendation's final
+// content as a system-role grounding message for a PLAN_DELIVERED relay turn
+// (task 4.2; see design.md's "Relay grounding is prompt + provenance, not a
+// new delivery gate"). It is deliberately NOT part of RelaySystemPrompt
+// (static/shared) — it is appended as a separate system-role message
+// carrying the one piece of per-conversation grounding content the relay is
+// allowed to draw on, mirroring generateInterviewTurn's
+// rejectionGuidanceMessage pattern for injecting per-conversation context
+// alongside a shared system prompt.
+//
+// The content is model-context-only: this string is built from
+// store.Recommendation.FinalContent purely to construct a Message passed to
+// the model client. It must never be written to a store.CreateMessage call,
+// a log line, or audit metadata (PHI constraint).
+const deliveredPlanContextTemplate = "The plan a physician already reviewed and approved for this patient is below. Ground every answer in this content and the conversation history that follows — do not add clinical guidance beyond it.\n\n%s"
+
+// deliveredPlanContextMessage renders deliveredPlanContextTemplate with the
+// delivered recommendation's final content.
+func deliveredPlanContextMessage(finalContent string) string {
+	return fmt.Sprintf(deliveredPlanContextTemplate, finalContent)
+}

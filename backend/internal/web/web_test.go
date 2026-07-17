@@ -56,12 +56,13 @@ type fakeStore struct {
 	recsByPhys  map[string][]store.Recommendation
 
 	// review action support (task 5.3)
-	recsByID      map[uuid.UUID]store.Recommendation // all recs by ID (for GetRecommendationForPhysician)
-	physByID      map[uuid.UUID]store.Physician      // physicians by ID (for GetPhysician)
-	patientsByID  map[uuid.UUID]store.Patient        // patients by ID (for GetPatient)
-	auditEvents   []store.AuditEvent                 // captured audit events
-	updatedStates map[uuid.UUID]string               // final state per recommendation (set by Txn)
-	txnErr        error                              // if set, Txn returns this error
+	recsByID         map[uuid.UUID]store.Recommendation // all recs by ID (for GetRecommendationForPhysician)
+	physByID         map[uuid.UUID]store.Physician      // physicians by ID (for GetPhysician)
+	patientsByID     map[uuid.UUID]store.Patient        // patients by ID (for GetPatient)
+	auditEvents      []store.AuditEvent                 // captured audit events
+	updatedStates    map[uuid.UUID]string               // final state per recommendation (set by Txn)
+	rejectionReasons map[uuid.UUID]string               // reason per recommendation (set by UpdateRecommendationRejection)
+	txnErr           error                              // if set, Txn returns this error
 
 	// care-phase transition support (task 2.4)
 	carePhaseErr   error           // if set, TransitionCarePhase returns this error instead of recording
@@ -210,6 +211,24 @@ func (t *fakeTxWriter) UpdateRecommendationState(_ context.Context, _ store.Tena
 	if rec, ok := t.f.recsByID[id]; ok {
 		rec.State = state
 		rec.FinalContent = content
+		t.f.recsByID[id] = rec
+	}
+	return nil
+}
+
+func (t *fakeTxWriter) UpdateRecommendationRejection(_ context.Context, _ store.TenantID, id uuid.UUID, _ uuid.UUID, reason string) error {
+	if t.f.updatedStates == nil {
+		t.f.updatedStates = make(map[uuid.UUID]string)
+	}
+	if t.f.rejectionReasons == nil {
+		t.f.rejectionReasons = make(map[uuid.UUID]string)
+	}
+	t.f.updatedStates[id] = domain.StateRejected
+	t.f.rejectionReasons[id] = reason
+	// Rejected recommendations never carry final_content.
+	if rec, ok := t.f.recsByID[id]; ok {
+		rec.State = domain.StateRejected
+		rec.FinalContent = nil
 		t.f.recsByID[id] = rec
 	}
 	return nil
@@ -969,12 +988,31 @@ func newFakeStoreForReview(physStates []string, patientState string) *fakeStore 
 }
 
 // postReview sends a POST to /web/recommendations/{id}/review with the given
-// action and optional final_content, using the session cookie for testPhysID.
+// action and optional final_content (reason defaults to empty — use
+// postReviewReject for reject flows that need a non-empty reason), using the
+// session cookie for testPhysID.
 func postReview(t *testing.T, h http.Handler, recID uuid.UUID, action, finalContent string) *httptest.ResponseRecorder {
+	t.Helper()
+	return postReviewFull(t, h, recID, action, finalContent, "")
+}
+
+// postReviewReject is postReview for the reject action, which requires a
+// non-empty reason (task 3.1).
+func postReviewReject(t *testing.T, h http.Handler, recID uuid.UUID, reason string) *httptest.ResponseRecorder {
+	t.Helper()
+	return postReviewFull(t, h, recID, domain.ActionReject, "", reason)
+}
+
+// postReviewFull is the shared implementation behind postReview and
+// postReviewReject.
+func postReviewFull(t *testing.T, h http.Handler, recID uuid.UUID, action, finalContent, reason string) *httptest.ResponseRecorder {
 	t.Helper()
 	form := url.Values{"action": {action}}
 	if finalContent != "" {
 		form.Set("final_content", finalContent)
+	}
+	if reason != "" {
+		form.Set("reason", reason)
 	}
 	req := httptest.NewRequest(http.MethodPost,
 		"/web/recommendations/"+recID.String()+"/review",
@@ -1095,20 +1133,21 @@ func TestReview_Reject_DoesNotNotifyPatient(t *testing.T) {
 	notifier := &spyPatientNotifier{}
 	h := buildHandlerWithNotifier(t, fs, notifier)
 
-	postReview(t, h, testRecID, domain.ActionReject, "")
+	postReviewReject(t, h, testRecID, "ask about current medications")
 
 	if len(notifier.calls) != 0 {
 		t.Fatalf("want 0 SendToPatient calls on reject, got %d", len(notifier.calls))
 	}
 }
 
-// TestReview_Reject verifies that POSTing action=reject drives the
-// recommendation to REJECTED and redirects to the queue.
+// TestReview_Reject verifies that POSTing action=reject with a reason drives
+// the recommendation to REJECTED, stores the reason, and redirects to the
+// queue.
 func TestReview_Reject(t *testing.T) {
 	fs := newFakeStoreForReview([]string{"CA"}, "CA")
 	h := buildHandler(t, fs)
 
-	rec := postReview(t, h, testRecID, domain.ActionReject, "")
+	rec := postReviewReject(t, h, testRecID, "ask about current medications")
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("reject: want 303, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -1117,6 +1156,9 @@ func TestReview_Reject(t *testing.T) {
 	if got := fs.updatedStates[testRecID]; got != domain.StateRejected {
 		t.Fatalf("reject: want state REJECTED, got %q", got)
 	}
+	if got := fs.rejectionReasons[testRecID]; got != "ask about current medications" {
+		t.Fatalf("reject: reason = %q, want %q", got, "ask about current medications")
+	}
 
 	// Verify final_content is nil (patients must never see a rejected rec's content).
 	if r, ok := fs.recsByID[testRecID]; ok && r.FinalContent != nil {
@@ -1124,6 +1166,32 @@ func TestReview_Reject(t *testing.T) {
 	}
 
 	assertAuditEvent(t, fs, "recommendation.reviewed", domain.ActionReject, domain.StateRejected)
+}
+
+// TestReview_Reject_EmptyReasonRefused verifies that submitting reject
+// without a reason re-renders the queue with a visible flash error (400),
+// nothing is written, and the recommendation state is not mutated.
+func TestReview_Reject_EmptyReasonRefused(t *testing.T) {
+	fs := newFakeStoreForReview([]string{"CA"}, "CA")
+	h := buildHandler(t, fs)
+
+	rec := postReview(t, h, testRecID, domain.ActionReject, "")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reject without reason: want 400, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if _, changed := fs.updatedStates[testRecID]; changed {
+		t.Error("reject without reason: state must not be mutated")
+	}
+	if len(fs.auditEvents) != 0 {
+		t.Errorf("reject without reason: want 0 audit events, got %d", len(fs.auditEvents))
+	}
+	// The queue must be re-rendered with a visible error banner, not a bare
+	// error response.
+	body := rec.Body.String()
+	if !strings.Contains(body, "reason is required") {
+		t.Error("reject without reason: response body must contain physician-facing error message")
+	}
 }
 
 // TestReview_Modify verifies that POSTing action=modify with final_content:
@@ -1659,7 +1727,7 @@ func TestReview_SOAPNote_Reject(t *testing.T) {
 	fs := newFakeStoreForSOAPReview([]string{"CA"}, "CA")
 	h := buildHandler(t, fs)
 
-	rec := postReview(t, h, testRecID, domain.ActionReject, "")
+	rec := postReviewReject(t, h, testRecID, "ask about current medications")
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("soap reject: want 303, got %d (body: %s)", rec.Code, rec.Body.String())

@@ -362,6 +362,47 @@ func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID,
 	return out, rows.Err()
 }
 
+// GetLatestRejectionReason returns the rejection reason of the most recently
+// reviewed REJECTED recommendation for a conversation, but only when that
+// rejection is still the conversation's latest reviewed outcome — i.e. no
+// DELIVERED recommendation for the same conversation was reviewed more
+// recently. A later delivery means the plan was subsequently
+// approved/modified and delivered, so an earlier rejection is stale and no
+// longer useful reviewer guidance. Returns ok == false when there is no
+// rejection at all, or the newest rejection is older than a later delivery.
+// Used by the agent drafter (task 3.3) to inject reviewer guidance into the
+// interview prompt — never into any patient-facing message.
+func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (reason string, ok bool, err error) {
+	err = s.pool.QueryRow(ctx,
+		`WITH latest_rejected AS (
+		     SELECT rejection_reason, reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'REJECTED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 ),
+		 latest_delivered AS (
+		     SELECT reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 )
+		 SELECT lr.rejection_reason
+		   FROM latest_rejected lr
+		   LEFT JOIN latest_delivered ld ON true
+		  WHERE ld.reviewed_at IS NULL OR lr.reviewed_at > ld.reviewed_at`,
+		tenant.UUID(), conversationID,
+	).Scan(&reason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return reason, true, nil
+}
+
 // --- recommendations (additional) ---
 
 // ListRecommendationsByPhysician returns recommendations in the given state
@@ -437,6 +478,7 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 // real database connection.
 type TxWriter interface {
 	UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error
+	UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error
 	CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error
 	TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error
 }
@@ -507,6 +549,27 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 		        final_content = $5
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id, state, reviewedBy, finalContent,
+	)
+	return err
+}
+
+// UpdateRecommendationRejection sets the recommendation to REJECTED, stamps
+// reviewed_by/reviewed_at, and stores the physician's rejection reason —
+// within tx, atomically with the audit event and the AWAITING_REVIEW→INTAKE
+// care-phase reset (see internal/review.Execute). This is a dedicated method
+// rather than an addition to UpdateRecommendationState because
+// rejection_reason is written on no other transition. final_content is
+// deliberately left untouched (stays nil) — a REJECTED recommendation is
+// never patient-visible.
+func (ts *TxStore) UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error {
+	_, err := ts.tx.Exec(ctx,
+		`UPDATE recommendations
+		    SET state            = 'REJECTED',
+		        reviewed_by      = $3,
+		        reviewed_at      = NOW(),
+		        rejection_reason = $4
+		  WHERE tenant_id = $1 AND id = $2`,
+		tenant.UUID(), id, reviewedBy, reason,
 	)
 	return err
 }

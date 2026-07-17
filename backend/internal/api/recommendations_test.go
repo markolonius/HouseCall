@@ -369,3 +369,151 @@ func TestHandler_PhysicianNotFound_Returns403(t *testing.T) {
 			rw.Code, rw.Body.String())
 	}
 }
+
+// newRecommendationFixture creates a tenant, a patient, a physician licensed
+// in the patient's state, a care relationship between them, a conversation,
+// and a PENDING_REVIEW recommendation — the common setup shared by the reject
+// handler tests below.
+func newRecommendationFixture(t *testing.T, s *store.Store) (tid store.TenantID, patient store.Patient, physician store.Physician, rec store.Recommendation) {
+	t.Helper()
+	ctx := context.Background()
+
+	tenant, err := s.CreateTenant(ctx, "dtc", "api-handler-reject-test-"+uuid.NewString())
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	tid = store.TenantID(tenant.ID)
+
+	patient, err = s.CreatePatient(ctx, tid, store.Patient{
+		Email:        "patient-" + uuid.NewString() + "@apihandler.test",
+		FullName:     "Pat",
+		State:        "CA",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("create patient: %v", err)
+	}
+
+	physician, err = s.CreatePhysician(ctx, tid, store.Physician{
+		Email:          "doc-" + uuid.NewString() + "@apihandler.test",
+		FullName:       "Doc",
+		StatesLicensed: []string{"CA"},
+		PasswordHash:   "hash",
+	})
+	if err != nil {
+		t.Fatalf("create physician: %v", err)
+	}
+
+	if _, err := s.CreateCareRelationship(ctx, tid, patient.ID, physician.ID); err != nil {
+		t.Fatalf("care relationship: %v", err)
+	}
+
+	conv, err := s.CreateConversation(ctx, tid, patient.ID, "handler test conv")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	rec, err = s.CreateRecommendation(ctx, tid, store.Recommendation{
+		ConversationID: conv.ID,
+		PatientID:      patient.ID,
+		State:          domain.StatePendingReview,
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"draft"}`),
+		DraftContent:   "draft content",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+	return tid, patient, physician, rec
+}
+
+// TestHandler_RejectWithoutReason_Returns422 verifies that POSTing a reject
+// action with an empty reason is refused with HTTP 422 and the recommendation
+// state is not mutated. This guards the API-side contract that mirrors the
+// web portal's reason-required reject flow (task 3.2).
+func TestHandler_RejectWithoutReason_Returns422(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tid, _, physician, rec := newRecommendationFixture(t, s)
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	token := signedJWT(apiTestSecret, tid.String(), physician.ID.String(), "physician")
+
+	body, _ := json.Marshal(map[string]string{"action": domain.ActionReject})
+	url := fmt.Sprintf("/api/recommendations/%s/review", rec.ID.String())
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("reject without reason: expected HTTP 422, got %d (body: %s)", rw.Code, rw.Body.String())
+	}
+
+	got, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get recommendation after refused reject: %v", err)
+	}
+	if got.State != domain.StatePendingReview {
+		t.Fatalf("reject without reason: state was mutated: got %q, want %q",
+			got.State, domain.StatePendingReview)
+	}
+}
+
+// TestHandler_RejectWithReason_Returns200 verifies that POSTing a reject
+// action with a non-empty reason succeeds (HTTP 200), drives the
+// recommendation to REJECTED, and stores the reason.
+func TestHandler_RejectWithReason_Returns200(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tid, _, physician, rec := newRecommendationFixture(t, s)
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	token := signedJWT(apiTestSecret, tid.String(), physician.ID.String(), "physician")
+
+	body, _ := json.Marshal(map[string]string{
+		"action": domain.ActionReject,
+		"reason": "recommendation does not match reported symptoms",
+	})
+	url := fmt.Sprintf("/api/recommendations/%s/review", rec.ID.String())
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("reject with reason: expected HTTP 200, got %d (body: %s)", rw.Code, rw.Body.String())
+	}
+
+	var respBody struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &respBody); err != nil {
+		t.Fatalf("unmarshal response body: %v", err)
+	}
+	if respBody.State != domain.StateRejected {
+		t.Fatalf("reject with reason: response state = %q, want %q", respBody.State, domain.StateRejected)
+	}
+
+	got, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get recommendation after reject: %v", err)
+	}
+	if got.State != domain.StateRejected {
+		t.Fatalf("reject with reason: state = %q, want %q", got.State, domain.StateRejected)
+	}
+}

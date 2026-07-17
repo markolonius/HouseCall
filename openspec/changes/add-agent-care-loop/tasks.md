@@ -35,13 +35,13 @@
 
 ## Phase 3 — Rejection reason + revision loop
 
-- [ ] 3.1 `Transition`: rejection requires non-empty reason; stored +
+- [x] 3.1 `Transition`: rejection requires non-empty reason; stored +
       audited in the same transaction; conversation returns to `INTAKE`.
       Tests: empty reason refused, reason audited, phase reset.
-- [ ] 3.2 Web portal: reason textarea on the reject form, required
+- [x] 3.2 Web portal: reason textarea on the reject form, required
       client-side and validated server-side (re-render with error when
       empty). Handler tests both paths.
-- [ ] 3.3 Drafter: `INTAKE` turns include the latest rejection reason (when
+- [x] 3.3 Drafter: `INTAKE` turns include the latest rejection reason (when
       the conversation has a rejected recommendation newer than any
       delivered one) as reviewer guidance in the interview prompt. Tests:
       reason present in model context, absent from patient-facing output.

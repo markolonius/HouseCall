@@ -362,6 +362,47 @@ func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID,
 	return out, rows.Err()
 }
 
+// GetLatestRejectionReason returns the rejection reason of the most recently
+// reviewed REJECTED recommendation for a conversation, but only when that
+// rejection is still the conversation's latest reviewed outcome — i.e. no
+// DELIVERED recommendation for the same conversation was reviewed more
+// recently. A later delivery means the plan was subsequently
+// approved/modified and delivered, so an earlier rejection is stale and no
+// longer useful reviewer guidance. Returns ok == false when there is no
+// rejection at all, or the newest rejection is older than a later delivery.
+// Used by the agent drafter (task 3.3) to inject reviewer guidance into the
+// interview prompt — never into any patient-facing message.
+func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (reason string, ok bool, err error) {
+	err = s.pool.QueryRow(ctx,
+		`WITH latest_rejected AS (
+		     SELECT rejection_reason, reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'REJECTED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 ),
+		 latest_delivered AS (
+		     SELECT reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 )
+		 SELECT lr.rejection_reason
+		   FROM latest_rejected lr
+		   LEFT JOIN latest_delivered ld ON true
+		  WHERE ld.reviewed_at IS NULL OR lr.reviewed_at > ld.reviewed_at`,
+		tenant.UUID(), conversationID,
+	).Scan(&reason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return reason, true, nil
+}
+
 // --- recommendations (additional) ---
 
 // ListRecommendationsByPhysician returns recommendations in the given state

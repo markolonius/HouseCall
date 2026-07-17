@@ -8,6 +8,8 @@
 // built.
 package agent
 
+import "fmt"
+
 // ReadyForNoteMarker is the sentinel token the interview model emits on its own
 // line — and nothing else for that turn — when it judges that enough clinical
 // history has been gathered to write a SOAP note. The agent runtime detects
@@ -119,6 +121,28 @@ That's helpful to know. On a scale of 0 to 10, with 10 being the worst pain you'
 ---
 
 Begin the interview with the patient's first message.`
+
+// rejectionGuidanceTemplate formats the reviewer-guidance message injected
+// into an INTAKE interview turn's model context when the conversation's
+// latest reviewed outcome is a physician rejection (task 3.3; see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Rejection Revision Loop"). It is deliberately NOT part of
+// InterviewSystemPrompt (which is shared/static) — it is appended as a
+// separate system-role message only for conversations with a current
+// rejection, following generateInterviewTurn's message-assembly pattern.
+//
+// The reason is model-context-only: this string is used solely to build a
+// Message passed to the model client. It must never be written to a
+// store.CreateMessage call, a log line, or audit metadata — callers must not
+// repurpose it for anything patient-facing. The instruction to the model not
+// to quote the reason verbatim is prompt discipline, not a hard filter (see
+// design.md); it does not guarantee the model will comply.
+const rejectionGuidanceTemplate = "A physician reviewed a previous draft for this patient and requested: %s\n\nFocus your next questions on gathering whatever is needed to address this before concluding the interview. This is internal reviewer guidance — do not quote or repeat it to the patient."
+
+// rejectionGuidanceMessage renders rejectionGuidanceTemplate with reason.
+func rejectionGuidanceMessage(reason string) string {
+	return fmt.Sprintf(rejectionGuidanceTemplate, reason)
+}
 
 // SOAPDraftSystemPrompt instructs the model to synthesise a structured SOAP
 // note from a completed patient history interview. It is used as the system

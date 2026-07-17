@@ -20,8 +20,9 @@
 //     branches on. Kept as a separate test to document that equivalence
 //     explicitly and exercise deferral-shaped text.
 //  3. New complaint reopens intake: model returns NewComplaintMarker -> the
-//     conversation transitions PLAN_DELIVERED -> INTAKE and an interview turn
-//     runs immediately against a second scripted model response.
+//     conversation transitions PLAN_DELIVERED -> INTAKE and runs an intake
+//     turn immediately — triage first, then the interview — against the
+//     conversation history that already includes the new-complaint message.
 //  4. Model failure in PLAN_DELIVERED: ai_interaction_failed audit written, no
 //     patient message, no care-phase transition.
 package agent
@@ -228,13 +229,19 @@ func assertRelayReplyPersisted(t *testing.T, s *store.Store, f relayFixture, wan
 // Scenario 3: a new complaint reopens intake.
 // ---------------------------------------------------------------------------
 
-// TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsInterviewTurn
+// TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsTriageThenInterviewTurn
 // asserts the "a new complaint reopens intake" scenario: when the relay
 // model signals NewComplaintMarker, the conversation's care_phase moves
-// PLAN_DELIVERED -> INTAKE and an interview turn runs immediately (a second
-// scripted model call) against the conversation history that already
-// includes the patient's new-complaint message.
-func TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsInterviewTurn(t *testing.T) {
+// PLAN_DELIVERED -> INTAKE and the reopened conversation is screened by the
+// red-flag triage classifier before the interview turn runs — the same
+// runIntakeTurn dispatch every other INTAKE-phase turn goes through (see
+// ai-agent-runtime spec.md, "Red-Flag Triage": no carve-out for the
+// reopened-intake path). A new complaint raised against a delivered plan is
+// exactly the kind of message the triage screen exists to catch. Uses
+// triageSequentialClient (triage_dispatch_test.go, same package) so the
+// model call count can be asserted directly rather than only inferred from
+// persisted messages.
+func TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsTriageThenInterviewTurn(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
 	f := setupRelayFixture(t, s)
@@ -245,11 +252,12 @@ func TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsInterviewTurn(t *
 	}
 
 	const interviewQuestion = "Can you describe what the rash looks like — is it red, raised, or itchy?"
-	client := &sequentialClient{responses: []struct {
+	client := &triageSequentialClient{responses: []struct {
 		text string
 		err  error
 	}{
 		{text: NewComplaintMarker}, // relay call: detects the new complaint
+		{text: RoutineMarker},      // triage call on the reopened INTAKE turn
 		{text: interviewQuestion},  // follow-up interview call
 	}}
 
@@ -259,6 +267,13 @@ func TestRunPlanDeliveredTurn_NewComplaint_ReopensIntakeAndRunsInterviewTurn(t *
 
 	if err := d.runPlanDeliveredTurn(ctx, f.TenantID, f.Conv, f.Patient); err != nil {
 		t.Fatalf("runPlanDeliveredTurn: unexpected error: %v", err)
+	}
+
+	// Three model calls: the relay call, the triage call, and the interview
+	// call — the reopened conversation must go through triage, not jump
+	// straight from the relay call to the interview call.
+	if got := client.callCount(); got != 3 {
+		t.Errorf("model Complete called %d times, want 3 (relay + triage + interview)", got)
 	}
 
 	// Care phase must have moved to INTAKE.

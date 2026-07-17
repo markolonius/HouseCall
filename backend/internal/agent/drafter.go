@@ -327,6 +327,16 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 // ReadyForNoteMarker and branching between delivering an interview question
 // and triggering SOAP note drafting. This method is intentionally output-
 // agnostic: it returns whatever the model produced.
+//
+// Task 3.3: when the conversation's latest reviewed outcome is a physician
+// rejection (store.GetLatestRejectionReason), an additional system-role
+// message carrying the rejection reason as reviewer guidance is inserted
+// between InterviewSystemPrompt and the conversation history — see
+// rejectionGuidanceMessage in prompt.go. The reason reaches the model
+// context only; it is never persisted via store.CreateMessage or written to
+// any patient-facing text (patient-facing content in this codepath is
+// entirely model-generated question text and the fixed ack/reminder
+// messages elsewhere, none of which touch this string).
 func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
 	// Fetch the full conversation history scoped to this tenant. The query
 	// includes tenant_id in the WHERE clause so cross-tenant bleed is
@@ -336,14 +346,29 @@ func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.Tena
 		return "", err
 	}
 
+	// Determine whether a rejection is the conversation's current (not
+	// stale) reviewed outcome. See store.GetLatestRejectionReason for the
+	// "newer than any delivered recommendation" rule.
+	reason, hasRejection, err := d.store.GetLatestRejectionReason(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
 	// Build the model message slice: the clinical interview system prompt as
-	// the sole system message, followed by every stored turn in order.
-	// Content goes to the model call only — never written to logs or audit.
-	modelMsgs := make([]Message, 0, len(msgs)+1)
+	// the leading system message, optionally followed by the rejection
+	// reviewer-guidance message, then every stored turn in order. Content
+	// goes to the model call only — never written to logs or audit.
+	modelMsgs := make([]Message, 0, len(msgs)+2)
 	modelMsgs = append(modelMsgs, Message{
 		Role:    "system",
 		Content: InterviewSystemPrompt,
 	})
+	if hasRejection {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    "system",
+			Content: rejectionGuidanceMessage(reason),
+		})
+	}
 	for _, m := range msgs {
 		modelMsgs = append(modelMsgs, Message{
 			Role:    m.Role,

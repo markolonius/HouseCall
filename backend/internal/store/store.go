@@ -438,6 +438,7 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 type TxWriter interface {
 	UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error
 	CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error
+	TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error
 }
 
 // TxStore wraps a pgx.Tx and exposes the write methods needed for atomic

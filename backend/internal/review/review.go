@@ -81,6 +81,12 @@ type Result struct {
 //   - An unlicensed-state rejection emits an audit event without mutating state;
 //     the caller receives domain.ErrUnlicensedState.
 //   - A non-care-relationship access returns store.ErrNotFound (no information disclosure).
+//   - On delivery (approve/modify reaching DELIVERED), the conversation's care
+//     phase moves AWAITING_REVIEW → PLAN_DELIVERED in the same transaction as
+//     the state write. If the conversation is not observed in AWAITING_REVIEW
+//     (a phase-tracking mismatch), the move is skipped and audited rather than
+//     failing the delivery — see the CAS-miss comment at the call site.
+//     REJECTED never touches care_phase.
 func Execute(
 	ctx context.Context,
 	s Store,
@@ -181,7 +187,7 @@ func Execute(
 			finalState, &physicianID, storedContent); err != nil {
 			return err
 		}
-		return tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
+		if err := tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
 			ActorType: "physician",
 			ActorID:   &physicianID,
 			EventType: "recommendation.reviewed",
@@ -189,6 +195,46 @@ func Execute(
 				"recommendation_id": recID.String(),
 				"action":            action,
 				"new_state":         finalState,
+			}),
+		}); err != nil {
+			return err
+		}
+
+		// Step 3: for a delivery (approve/modify reaching DELIVERED), move the
+		// conversation AWAITING_REVIEW → PLAN_DELIVERED in the same transaction
+		// as the state write above, per design.md ("Phase transitions happen in
+		// the same transaction as the event that causes them"). REJECTED never
+		// reaches this branch — care_phase is untouched on rejection (Phase 3
+		// owns AWAITING_REVIEW → INTAKE for that case).
+		if finalState != domain.StateDelivered {
+			return nil
+		}
+		err := tx.TransitionCarePhase(ctx, tenant, rec.ConversationID,
+			store.CarePhaseAwaitingReview, store.CarePhasePlanDelivered)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			// Anything other than the CAS miss (e.g. a real DB error) fails the
+			// transaction — a delivery must not silently skip its phase move for
+			// an unexpected reason.
+			return err
+		}
+		// CAS miss: the conversation was not observed in AWAITING_REVIEW (e.g. a
+		// pre-migration/backfilled row, or a state that drifted for some other
+		// reason). Deliberately tolerated rather than failed: the care-phase
+		// state machine is agent-behaviour routing, not a gate on the
+		// physician's clinical decision, and a physician-approved recommendation
+		// must never be blocked from reaching the patient over an internal
+		// bookkeeping mismatch. Record the mismatch in the audit trail (no PHI)
+		// so it is visible for follow-up, and let the delivery commit.
+		return tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
+			ActorType: "physician",
+			ActorID:   &physicianID,
+			EventType: "recommendation.delivered_phase_mismatch",
+			Metadata: marshalJSON(map[string]any{
+				"recommendation_id": recID.String(),
+				"conversation_id":   rec.ConversationID.String(),
 			}),
 		})
 	}); err != nil {

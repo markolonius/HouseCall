@@ -7,13 +7,21 @@
 //   - final_content is PHI: it is accepted as a parameter but never logged or
 //     placed in audit metadata. It is only written to the DB as part of the
 //     atomic state+audit transaction.
-//   - Audit metadata carries only identifiers and action/state strings — no PHI.
+//   - Audit metadata otherwise carries only identifiers and action/state
+//     strings — no PHI — with one deliberate, spec-mandated exception: the
+//     rejection reason (physician free-text) is included in the
+//     recommendation.reviewed audit event's metadata for a REJECTED outcome,
+//     per openspec/changes/add-agent-care-loop/specs/physician-in-loop/spec.md
+//     ("The reason is stored and audited atomically"). It receives the same
+//     treatment as final_content: written only inside the atomic
+//     state+audit transaction, never logged, never sent to the patient.
 package review
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/markolonius/housecall/backend/internal/domain"
@@ -26,6 +34,14 @@ import (
 // case to the correct HTTP status: recommendation-not-found → 404,
 // physician-not-found → 403 (session/auth anomaly, not a lookup miss).
 var ErrActorNotFound = errors.New("review: actor (physician) not found")
+
+// ErrEmptyRejectionReason is returned by Execute when action is
+// domain.ActionReject and reason is empty (after trimming whitespace). No
+// store call is made when this error is returned — the recommendation,
+// audit trail, and care_phase are all left untouched. See
+// openspec/changes/add-agent-care-loop/specs/physician-in-loop/spec.md,
+// "Rejecting without a reason is refused".
+var ErrEmptyRejectionReason = errors.New("review: rejection reason is required")
 
 // Store is the minimum set of store operations that Execute requires.
 // *store.Store satisfies this interface in production; test fakes supply their
@@ -68,25 +84,31 @@ type Result struct {
 //   - action: domain.ActionApprove | domain.ActionModify | domain.ActionReject.
 //   - finalContent: the physician's edited text; required for modify, used as
 //     override for approve; ignored for reject. PHI — never logged.
+//   - reason: required for reject (trimmed non-empty); ignored for approve/modify.
+//     PHI-adjacent physician free-text — never logged, never delivered to the
+//     patient (no WS push, no message row). See ErrEmptyRejectionReason.
 //
 // Transitions mirror the Core API exactly:
 //   - approve:  PENDING_REVIEW → APPROVED → DELIVERED  (final_content set on DELIVERED)
 //   - modify:   PENDING_REVIEW → MODIFIED → DELIVERED  (final_content = finalContent, set on DELIVERED)
-//   - reject:   PENDING_REVIEW → REJECTED               (final_content stays nil)
+//   - reject:   PENDING_REVIEW → REJECTED               (final_content stays nil; reason stored)
 //
 // Invariants preserved:
 //   - DELIVERED is only reachable from APPROVED or MODIFIED.
 //   - final_content is set ONLY on the DELIVERED write, never on intermediate states.
+//   - REJECTED requires a non-empty reason and stores it on the row; REJECTED
+//     stays terminal (no transition in domain.Transition originates from it).
 //   - State change + audit are written in one DB transaction (atomic).
 //   - An unlicensed-state rejection emits an audit event without mutating state;
 //     the caller receives domain.ErrUnlicensedState.
 //   - A non-care-relationship access returns store.ErrNotFound (no information disclosure).
 //   - On delivery (approve/modify reaching DELIVERED), the conversation's care
 //     phase moves AWAITING_REVIEW → PLAN_DELIVERED in the same transaction as
-//     the state write. If the conversation is not observed in AWAITING_REVIEW
+//     the state write. On rejection, the conversation's care phase resets
+//     AWAITING_REVIEW → INTAKE in the same transaction as the REJECTED write.
+//     If the conversation is not observed in AWAITING_REVIEW for either case
 //     (a phase-tracking mismatch), the move is skipped and audited rather than
-//     failing the delivery — see the CAS-miss comment at the call site.
-//     REJECTED never touches care_phase.
+//     failing the review outcome — see transitionCarePhaseTolerant.
 func Execute(
 	ctx context.Context,
 	s Store,
@@ -95,7 +117,16 @@ func Execute(
 	recID uuid.UUID,
 	action string,
 	finalContent string,
+	reason string,
 ) (Result, error) {
+	// Reject requires a non-empty (trimmed) reason. Validated first, before any
+	// store access, so an invalid rejection touches nothing: no fetch, no state
+	// change, no audit event, no care-phase move.
+	trimmedReason := strings.TrimSpace(reason)
+	if action == domain.ActionReject && trimmedReason == "" {
+		return Result{}, ErrEmptyRejectionReason
+	}
+
 	// Resolve the recommendation through the care-relationship-scoped query.
 	// A physician who is not in an active care relationship with the patient —
 	// or whose recommendation belongs to another tenant — receives ErrNotFound
@@ -183,60 +214,64 @@ func Execute(
 	// State change AND audit_event written in a single DB transaction so they
 	// either both commit or both roll back.
 	if err := s.TxnW(ctx, func(tx store.TxWriter) error {
-		if err := tx.UpdateRecommendationState(ctx, tenant, recID,
-			finalState, &physicianID, storedContent); err != nil {
-			return err
+		if finalState == domain.StateRejected {
+			if err := tx.UpdateRecommendationRejection(ctx, tenant, recID, physicianID, trimmedReason); err != nil {
+				return err
+			}
+		} else {
+			if err := tx.UpdateRecommendationState(ctx, tenant, recID,
+				finalState, &physicianID, storedContent); err != nil {
+				return err
+			}
+		}
+
+		auditMetadata := map[string]any{
+			"recommendation_id": recID.String(),
+			"action":            action,
+			"new_state":         finalState,
+		}
+		if finalState == domain.StateRejected {
+			// The rejection reason is physician free-text about the patient's
+			// case. Per
+			// openspec/changes/add-agent-care-loop/specs/physician-in-loop/spec.md
+			// ("The reason is stored and audited atomically") it belongs in the
+			// audit event for this transition, in the same transaction as the
+			// state write above — same treatment as storing it on the
+			// recommendation row itself: at rest under the same DB-level
+			// protection as draft_content/final_content, never written to a
+			// server log, and never delivered to the patient (no WS push, no
+			// message row).
+			auditMetadata["reason"] = trimmedReason
 		}
 		if err := tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
 			ActorType: "physician",
 			ActorID:   &physicianID,
 			EventType: "recommendation.reviewed",
-			Metadata: marshalJSON(map[string]any{
-				"recommendation_id": recID.String(),
-				"action":            action,
-				"new_state":         finalState,
-			}),
+			Metadata:  marshalJSON(auditMetadata),
 		}); err != nil {
 			return err
 		}
 
-		// Step 3: for a delivery (approve/modify reaching DELIVERED), move the
-		// conversation AWAITING_REVIEW → PLAN_DELIVERED in the same transaction
-		// as the state write above, per design.md ("Phase transitions happen in
-		// the same transaction as the event that causes them"). REJECTED never
-		// reaches this branch — care_phase is untouched on rejection (Phase 3
-		// owns AWAITING_REVIEW → INTAKE for that case).
-		if finalState != domain.StateDelivered {
+		// Step 3: move the conversation's care_phase in the same transaction as
+		// the state write above, per design.md ("Phase transitions happen in the
+		// same transaction as the event that causes them"):
+		//   - delivery (approve/modify reaching DELIVERED): AWAITING_REVIEW → PLAN_DELIVERED
+		//   - rejection (REJECTED):                          AWAITING_REVIEW → INTAKE
+		// Approved/Modified mid-states that have not yet reached DELIVERED never
+		// occur here (Step 2 above always drives them to DELIVERED before this
+		// transaction runs), so those are the only two cases.
+		switch finalState {
+		case domain.StateDelivered:
+			return transitionCarePhaseTolerant(ctx, tx, tenant, physicianID, recID, rec.ConversationID,
+				store.CarePhaseAwaitingReview, store.CarePhasePlanDelivered,
+				"recommendation.delivered_phase_mismatch")
+		case domain.StateRejected:
+			return transitionCarePhaseTolerant(ctx, tx, tenant, physicianID, recID, rec.ConversationID,
+				store.CarePhaseAwaitingReview, store.CarePhaseIntake,
+				"recommendation.rejected_phase_mismatch")
+		default:
 			return nil
 		}
-		err := tx.TransitionCarePhase(ctx, tenant, rec.ConversationID,
-			store.CarePhaseAwaitingReview, store.CarePhasePlanDelivered)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			// Anything other than the CAS miss (e.g. a real DB error) fails the
-			// transaction — a delivery must not silently skip its phase move for
-			// an unexpected reason.
-			return err
-		}
-		// CAS miss: the conversation was not observed in AWAITING_REVIEW (e.g. a
-		// pre-migration/backfilled row, or a state that drifted for some other
-		// reason). Deliberately tolerated rather than failed: the care-phase
-		// state machine is agent-behaviour routing, not a gate on the
-		// physician's clinical decision, and a physician-approved recommendation
-		// must never be blocked from reaching the patient over an internal
-		// bookkeeping mismatch. Record the mismatch in the audit trail (no PHI)
-		// so it is visible for follow-up, and let the delivery commit.
-		return tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
-			ActorType: "physician",
-			ActorID:   &physicianID,
-			EventType: "recommendation.delivered_phase_mismatch",
-			Metadata: marshalJSON(map[string]any{
-				"recommendation_id": recID.String(),
-				"conversation_id":   rec.ConversationID.String(),
-			}),
-		})
 	}); err != nil {
 		return Result{}, err
 	}
@@ -247,6 +282,52 @@ func Execute(
 		ConversationID:   rec.ConversationID,
 		RecommendationID: recID,
 	}, nil
+}
+
+// transitionCarePhaseTolerant moves the conversation identified by
+// conversationID from `from` to `to` within tx, tolerating a CAS miss
+// (store.ErrNotFound) by writing mismatchEvent (identifiers only) instead of
+// failing the caller's transaction. Any other error (a real DB failure) is
+// returned as-is and fails the transaction.
+//
+// This is shared by the delivery (AWAITING_REVIEW → PLAN_DELIVERED) and
+// rejection (AWAITING_REVIEW → INTAKE) paths — see the "Delivery tolerates a
+// care-phase CAS miss" decision in design.md. The same reasoning applies to
+// both: care_phase is agent-behaviour routing, not a gate on a physician's
+// clinical decision. By the time this is called the physician's review
+// outcome (approve/modify/reject) has already passed the domain state
+// machine and licensing check, so an internal phase-tracking mismatch must
+// never block it from committing.
+func transitionCarePhaseTolerant(
+	ctx context.Context,
+	tx store.TxWriter,
+	tenant store.TenantID,
+	physicianID uuid.UUID,
+	recID uuid.UUID,
+	conversationID uuid.UUID,
+	from, to store.CarePhase,
+	mismatchEvent string,
+) error {
+	err := tx.TransitionCarePhase(ctx, tenant, conversationID, from, to)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	// CAS miss: the conversation was not observed in `from` (e.g. a
+	// pre-migration/backfilled row, or a state that drifted for some other
+	// reason). Record the mismatch in the audit trail (no PHI) so it is
+	// visible for follow-up, and let the review outcome commit anyway.
+	return tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
+		ActorType: "physician",
+		ActorID:   &physicianID,
+		EventType: mismatchEvent,
+		Metadata: marshalJSON(map[string]any{
+			"recommendation_id": recID.String(),
+			"conversation_id":   conversationID.String(),
+		}),
+	})
 }
 
 func marshalJSON(v any) []byte {

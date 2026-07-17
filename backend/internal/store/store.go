@@ -437,6 +437,7 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 // real database connection.
 type TxWriter interface {
 	UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error
+	UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error
 	CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error
 	TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error
 }
@@ -507,6 +508,27 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 		        final_content = $5
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id, state, reviewedBy, finalContent,
+	)
+	return err
+}
+
+// UpdateRecommendationRejection sets the recommendation to REJECTED, stamps
+// reviewed_by/reviewed_at, and stores the physician's rejection reason —
+// within tx, atomically with the audit event and the AWAITING_REVIEW→INTAKE
+// care-phase reset (see internal/review.Execute). This is a dedicated method
+// rather than an addition to UpdateRecommendationState because
+// rejection_reason is written on no other transition. final_content is
+// deliberately left untouched (stays nil) — a REJECTED recommendation is
+// never patient-visible.
+func (ts *TxStore) UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error {
+	_, err := ts.tx.Exec(ctx,
+		`UPDATE recommendations
+		    SET state            = 'REJECTED',
+		        reviewed_by      = $3,
+		        reviewed_at      = NOW(),
+		        rejection_reason = $4
+		  WHERE tenant_id = $1 AND id = $2`,
+		tenant.UUID(), id, reviewedBy, reason,
 	)
 	return err
 }

@@ -462,6 +462,15 @@ func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
 // It accepts application/x-www-form-urlencoded with fields:
 //   - action: "approve" | "reject" | "modify"
 //   - final_content: required for "modify"; accepted (but not required) for "approve"
+//   - reason: required for "reject"; ignored otherwise. PHI-adjacent physician
+//     free-text — never logged.
+//
+// NOTE (task 3.1): the queue template does not yet render a reason input for
+// the reject form (that UI wiring belongs to task 3.2). Until then, reason
+// arrives as "" for every reject submitted through the current UI, which
+// review.Execute refuses with review.ErrEmptyRejectionReason — mapped below
+// to a 400. The field is read here so the handler and review.Execute already
+// speak the same contract once 3.2 adds the form input.
 //
 // On success it redirects to /web/queue (303).
 // On ErrUnlicensedState it renders the queue with an error banner (state is NOT
@@ -488,6 +497,7 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 
 	action := r.FormValue("action")
 	finalContent := r.FormValue("final_content")
+	reason := r.FormValue("reason")
 
 	// modify requires a non-empty final_content.
 	if action == domain.ActionModify && finalContent == "" {
@@ -496,7 +506,7 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	result, err := review.Execute(ctx, h.reviewStore(), claims.TenantID, claims.ActorID, recID, action, finalContent)
+	result, err := review.Execute(ctx, h.reviewStore(), claims.TenantID, claims.ActorID, recID, action, finalContent, reason)
 
 	if errors.Is(err, review.ErrActorNotFound) {
 		// Physician record not found for the session actor — the session is no
@@ -507,6 +517,10 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, review.ErrEmptyRejectionReason) {
+		http.Error(w, "reason required for reject", http.StatusBadRequest)
 		return
 	}
 	if errors.Is(err, domain.ErrUnlicensedState) {

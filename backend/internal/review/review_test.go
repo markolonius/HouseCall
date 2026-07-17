@@ -11,6 +11,7 @@ package review_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -36,13 +37,23 @@ type reviewFakeStore struct {
 	// can assert it was (or wasn't) called, and with which from/to.
 	carePhaseCalls []carePhaseCall
 	// auditEvents records every audit event written inside the transaction
-	// (including the recommendation.delivered_phase_mismatch event).
+	// (including the recommendation.delivered_phase_mismatch and
+	// recommendation.rejected_phase_mismatch events).
 	auditEvents []store.AuditEvent
+	// rejectionCalls records every UpdateRecommendationRejection invocation so
+	// tests can assert the stored reason.
+	rejectionCalls []rejectionCall
 }
 
 type carePhaseCall struct {
 	conversationID uuid.UUID
 	from, to       store.CarePhase
+}
+
+type rejectionCall struct {
+	id         uuid.UUID
+	reviewedBy uuid.UUID
+	reason     string
 }
 
 func (f *reviewFakeStore) GetRecommendationForPhysician(_ context.Context, _ store.TenantID, _, _ uuid.UUID) (store.Recommendation, error) {
@@ -82,6 +93,12 @@ type noopTxWriter struct{ f *reviewFakeStore }
 func (n *noopTxWriter) UpdateRecommendationState(_ context.Context, _ store.TenantID, _ uuid.UUID, _ string, _ *uuid.UUID, _ *string) error {
 	return nil
 }
+func (n *noopTxWriter) UpdateRecommendationRejection(_ context.Context, _ store.TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error {
+	if n.f != nil {
+		n.f.rejectionCalls = append(n.f.rejectionCalls, rejectionCall{id: id, reviewedBy: reviewedBy, reason: reason})
+	}
+	return nil
+}
 func (n *noopTxWriter) CreateAuditEvent(_ context.Context, _ store.TenantID, e store.AuditEvent) error {
 	if n.f != nil {
 		n.f.auditEvents = append(n.f.auditEvents, e)
@@ -113,7 +130,7 @@ func TestExecute_RecommendationNotFound(t *testing.T) {
 	s := &reviewFakeStore{rec: nil} // rec not found
 
 	_, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionApprove, "")
+		testPhysicianID, testRecID, domain.ActionApprove, "", "")
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want store.ErrNotFound, got %v", err)
 	}
@@ -139,7 +156,7 @@ func TestExecute_PhysicianNotFound(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: nil}
 
 	_, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionApprove, "")
+		testPhysicianID, testRecID, domain.ActionApprove, "", "")
 	if !errors.Is(err, review.ErrActorNotFound) {
 		t.Fatalf("want review.ErrActorNotFound, got %v", err)
 	}
@@ -173,7 +190,7 @@ func TestExecute_ApproveDelivers(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
 
 	result, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionApprove, "")
+		testPhysicianID, testRecID, domain.ActionApprove, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,7 +237,7 @@ func TestExecute_ModifyDelivers_TransitionsCarePhase(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
 
 	result, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionModify, "take ibuprofen")
+		testPhysicianID, testRecID, domain.ActionModify, "take ibuprofen", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,10 +252,33 @@ func TestExecute_ModifyDelivers_TransitionsCarePhase(t *testing.T) {
 	}
 }
 
-// TestExecute_Reject_DoesNotTouchCarePhase verifies that a rejection never
-// calls TransitionCarePhase — Phase 3 owns AWAITING_REVIEW -> INTAKE on
-// rejection, and this task must not touch care_phase for that path.
-func TestExecute_Reject_DoesNotTouchCarePhase(t *testing.T) {
+// TestExecute_Reject_EmptyReasonRefused verifies that an empty (or
+// whitespace-only) rejection reason is refused with review.ErrEmptyRejectionReason
+// and that Execute makes NO store call at all — not even
+// GetRecommendationForPhysician. rec is deliberately left nil (which would
+// otherwise cause GetRecommendationForPhysician to return store.ErrNotFound)
+// so a store.ErrNotFound result here would prove the validation ran too late.
+func TestExecute_Reject_EmptyReasonRefused(t *testing.T) {
+	for _, reason := range []string{"", "   ", "\t\n"} {
+		s := &reviewFakeStore{} // rec/phys/patient all nil — must never be touched.
+
+		_, err := review.Execute(context.Background(), s, testTenant,
+			testPhysicianID, testRecID, domain.ActionReject, "", reason)
+		if !errors.Is(err, review.ErrEmptyRejectionReason) {
+			t.Fatalf("reason %q: want review.ErrEmptyRejectionReason, got %v", reason, err)
+		}
+		if len(s.rejectionCalls) != 0 || len(s.auditEvents) != 0 || len(s.carePhaseCalls) != 0 {
+			t.Fatalf("reason %q: empty-reason rejection must not touch the store: rejectionCalls=%d auditEvents=%d carePhaseCalls=%d",
+				reason, len(s.rejectionCalls), len(s.auditEvents), len(s.carePhaseCalls))
+		}
+	}
+}
+
+// TestExecute_RejectReasonStoredAndAudited verifies that a valid rejection
+// stores the trimmed reason via UpdateRecommendationRejection and includes it
+// in the recommendation.reviewed audit event's metadata, both within the same
+// TxnW call.
+func TestExecute_RejectReasonStoredAndAudited(t *testing.T) {
 	rec := &store.Recommendation{
 		ID:             testRecID,
 		TenantID:       testTenant,
@@ -260,15 +300,173 @@ func TestExecute_Reject_DoesNotTouchCarePhase(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
 
 	result, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionReject, "")
+		testPhysicianID, testRecID, domain.ActionReject, "", "  ask about current medications  ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.FinalState != domain.StateRejected {
 		t.Fatalf("want REJECTED, got %q", result.FinalState)
 	}
-	if len(s.carePhaseCalls) != 0 {
-		t.Fatalf("reject must not call TransitionCarePhase, got %d calls", len(s.carePhaseCalls))
+
+	if len(s.rejectionCalls) != 1 {
+		t.Fatalf("want exactly 1 UpdateRecommendationRejection call, got %d", len(s.rejectionCalls))
+	}
+	rc := s.rejectionCalls[0]
+	if rc.id != testRecID {
+		t.Errorf("rejection call id: want %s, got %s", testRecID, rc.id)
+	}
+	if rc.reviewedBy != testPhysicianID {
+		t.Errorf("rejection call reviewedBy: want %s, got %s", testPhysicianID, rc.reviewedBy)
+	}
+	const wantReason = "ask about current medications"
+	if rc.reason != wantReason {
+		t.Errorf("rejection call reason: want %q, got %q (must be trimmed)", wantReason, rc.reason)
+	}
+
+	found := false
+	for _, e := range s.auditEvents {
+		if e.EventType != "recommendation.reviewed" {
+			continue
+		}
+		found = true
+		var meta map[string]any
+		if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+			t.Fatalf("unmarshal audit metadata: %v", err)
+		}
+		if meta["reason"] != wantReason {
+			t.Errorf("audit metadata reason: want %q, got %v", wantReason, meta["reason"])
+		}
+		if meta["new_state"] != domain.StateRejected {
+			t.Errorf("audit metadata new_state: want %q, got %v", domain.StateRejected, meta["new_state"])
+		}
+	}
+	if !found {
+		t.Fatal("want a recommendation.reviewed audit event")
+	}
+}
+
+// TestExecute_RejectResetsCarePhase verifies that a rejection moves the
+// conversation's care_phase AWAITING_REVIEW -> INTAKE in the same transaction
+// as the REJECTED write (task 3.1 — Phase 2's delivery path owns
+// AWAITING_REVIEW -> PLAN_DELIVERED; this is the mirror image for reject).
+func TestExecute_RejectResetsCarePhase(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
+
+	result, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionReject, "", "ask about current medications")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.FinalState != domain.StateRejected {
+		t.Fatalf("want REJECTED, got %q", result.FinalState)
+	}
+	if len(s.carePhaseCalls) != 1 {
+		t.Fatalf("want exactly 1 TransitionCarePhase call, got %d", len(s.carePhaseCalls))
+	}
+	call := s.carePhaseCalls[0]
+	if call.conversationID != testConvID {
+		t.Errorf("conversationID: want %s, got %s", testConvID, call.conversationID)
+	}
+	if call.from != store.CarePhaseAwaitingReview || call.to != store.CarePhaseIntake {
+		t.Errorf("transition: want AWAITING_REVIEW -> INTAKE, got %s -> %s", call.from, call.to)
+	}
+}
+
+// TestExecute_RejectTolerates_CarePhaseMismatch mirrors
+// TestExecute_DeliverTolerates_CarePhaseMismatch for the reject path: when the
+// conversation is not observed in AWAITING_REVIEW at rejection time
+// (TransitionCarePhase returns store.ErrNotFound — a CAS miss), Execute does
+// NOT fail the rejection. The recommendation still reaches REJECTED and a
+// recommendation.rejected_phase_mismatch audit event records the mismatch.
+func TestExecute_RejectTolerates_CarePhaseMismatch(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: store.ErrNotFound}
+
+	result, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionReject, "", "ask about current medications")
+	if err != nil {
+		t.Fatalf("rejection must not fail on a care-phase CAS miss: %v", err)
+	}
+	if result.FinalState != domain.StateRejected {
+		t.Fatalf("want REJECTED despite the care-phase mismatch, got %q", result.FinalState)
+	}
+
+	found := false
+	for _, e := range s.auditEvents {
+		if e.EventType == "recommendation.rejected_phase_mismatch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("want a recommendation.rejected_phase_mismatch audit event")
+	}
+}
+
+// TestExecute_RejectFails_OnUnexpectedCarePhaseError mirrors
+// TestExecute_DeliverFails_OnUnexpectedCarePhaseError for the reject path:
+// only the specific CAS-miss case is tolerated — any other TransitionCarePhase
+// error fails the whole transaction.
+func TestExecute_RejectFails_OnUnexpectedCarePhaseError(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	wantErr := errors.New("boom: connection reset")
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: wantErr}
+
+	_, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionReject, "", "ask about current medications")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("want %v, got %v", wantErr, err)
 	}
 }
 
@@ -302,7 +500,7 @@ func TestExecute_DeliverTolerates_CarePhaseMismatch(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: store.ErrNotFound}
 
 	result, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionApprove, "")
+		testPhysicianID, testRecID, domain.ActionApprove, "", "")
 	if err != nil {
 		t.Fatalf("delivery must not fail on a care-phase CAS miss: %v", err)
 	}
@@ -348,7 +546,7 @@ func TestExecute_DeliverFails_OnUnexpectedCarePhaseError(t *testing.T) {
 	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: wantErr}
 
 	_, err := review.Execute(context.Background(), s, testTenant,
-		testPhysicianID, testRecID, domain.ActionApprove, "")
+		testPhysicianID, testRecID, domain.ActionApprove, "", "")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("want %v, got %v", wantErr, err)
 	}

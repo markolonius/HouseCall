@@ -97,6 +97,13 @@ written instead: `care_phase` routes agent behaviour, it is not a gate on a
 physician's clinical action. Any other transition error still fails the whole
 transaction.
 
+Rejection (`REJECTED`, task 3.1) mirrors this exactly for its
+`AWAITING_REVIEW` → `INTAKE` reset: a CAS miss commits the rejection anyway
+and writes `recommendation.rejected_phase_mismatch` instead of failing it, for
+the same reason — a physician's rejection decision must never be blocked by
+an internal phase-tracking mismatch. `review.Execute` shares one helper
+(`transitionCarePhaseTolerant`) for both cases.
+
 ## Risks / Trade-offs
 
 - **Relay hallucination beyond the approved plan** — mitigated by grounding

@@ -126,7 +126,7 @@ func TestInterviewFlow_EndToEnd(t *testing.T) {
 
 	const interviewQuestion = "Can you describe where the pain is located?"
 
-	physNotifier1 := &captureNotifier{} // defined in soap_drafter_test.go (same pkg)
+	physNotifier1 := &captureNotifier{}   // defined in soap_drafter_test.go (same pkg)
 	patNotifier1 := &spyPatientNotifier{} // defined in deliver_question_test.go (same pkg)
 
 	d1 := NewDrafter(
@@ -329,7 +329,7 @@ func TestInterviewFlow_EndToEnd(t *testing.T) {
 	// Expected: FinalState == DELIVERED; DB row durably in DELIVERED.
 	// -----------------------------------------------------------------------
 
-	result, err := review.Execute(ctx, s, f.TenantID, f.Physician.ID, pendingRec.ID, domain.ActionApprove, "")
+	result, err := review.Execute(ctx, s, f.TenantID, f.Physician.ID, pendingRec.ID, domain.ActionApprove, "", "")
 	if err != nil {
 		t.Fatalf("scenario 3: review.Execute: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestGenerateInterviewTurn_StoreError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	spy := &spyClient{text: "Some follow-up question?"} // from interview_turn_test.go
+	spy := &spyClient{text: "Some follow-up question?"}             // from interview_turn_test.go
 	d := NewDrafter(spy, s, stubNotifierNoop{}, stubNotifierNoop{}) // from interview_turn_test.go
 
 	text, err := d.generateInterviewTurn(ctx, f.TenantID, f.Conv)

@@ -18,18 +18,18 @@
 
 ## Phase 2 — Phase dispatch, acknowledgement, double-draft fix
 
-- [ ] 2.1 Drafter: dispatch on `care_phase` in `DraftAsync`; `INTAKE` keeps
+- [x] 2.1 Drafter: dispatch on `care_phase` in `DraftAsync`; `INTAKE` keeps
       today's interview path. Regression: existing interview-flow integration
       tests stay green.
-- [ ] 2.2 Drafter: on SOAP draft commit, persist the fixed acknowledgement
+- [x] 2.2 Drafter: on SOAP draft commit, persist the fixed acknowledgement
       assistant message and transition to `AWAITING_REVIEW` in the same
       transaction; push the message to the patient over WS. Tests: ack
       persisted, contains no SOAP content, phase moved atomically.
-- [ ] 2.3 Drafter: `AWAITING_REVIEW` path persists the fixed
+- [x] 2.3 Drafter: `AWAITING_REVIEW` path persists the fixed
       "report is with your physician" message, no model call, no new
       recommendation. Test reproduces the 2026-07-15 double-draft bug and
       proves it fixed. Close bead `HouseCall-lkzs` when this lands.
-- [ ] 2.4 Recommendation delivery (`web.go` review handler + `Transition`
+- [x] 2.4 Recommendation delivery (`web.go` review handler + `Transition`
       call site): transition conversation to `PLAN_DELIVERED` in the delivery
       transaction. Integration test: approve → phase `PLAN_DELIVERED`.
 

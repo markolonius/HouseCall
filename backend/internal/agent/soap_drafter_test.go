@@ -10,6 +10,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -442,4 +443,238 @@ Preliminary assessment: upper respiratory tract infection; physician review requ
 	if notifier.count() != 0 {
 		t.Errorf("expected 0 queue.updated events on parse error, got %d", notifier.count())
 	}
+
+	// No ack message must be persisted — the parse failure happens before the
+	// transaction that would write the ack even opens.
+	msgs, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			t.Errorf("unexpected assistant message after parse failure: %q", m.Content)
+		}
+	}
+
+	// The conversation's care phase must remain INTAKE.
+	conv, err := s.GetConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if conv.CarePhase != store.CarePhaseIntake {
+		t.Errorf("care_phase = %q after parse failure, want %q", conv.CarePhase, store.CarePhaseIntake)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 2.2: review-pending acknowledgement + INTAKE→AWAITING_REVIEW
+// ---------------------------------------------------------------------------
+
+// TestDraftSOAPNote_PersistsAck_TransitionsPhase_NotifiesPatient verifies that
+// a successful draftSOAPNote commit:
+//   - persists the fixed ReviewPendingAckMessage as an assistant message in
+//     the same conversation, and that message reveals none of the drafted
+//     Subjective/Objective/Assessment/Plan content,
+//   - moves the conversation's care_phase from INTAKE to AWAITING_REVIEW, and
+//   - pushes exactly one message.created WS event to the patient, referencing
+//     the ack message's id, only after the commit.
+func TestDraftSOAPNote_PersistsAck_TransitionsPhase_NotifiesPatient(t *testing.T) {
+	pool := itTestPool(t)
+	s := store.New(pool)
+	f := setupSOAPDrafterFixture(t, s)
+	ctx := context.Background()
+
+	physNotifier := &captureNotifier{}
+	patNotifier := &recordingPatientNotifierSOAP{}
+	client := &spyClient{text: wellFormedSOAPText}
+	d := NewDrafter(client, s, physNotifier, patNotifier)
+
+	if err := d.draftSOAPNote(ctx, f.TenantID, f.Conv, f.Patient); err != nil {
+		t.Fatalf("draftSOAPNote: unexpected error: %v", err)
+	}
+
+	// The recommendation payload — used below to assert the ack does not leak it.
+	recs, err := s.ListRecommendationsByState(ctx, f.TenantID, domain.StatePendingReview)
+	if err != nil {
+		t.Fatalf("list recommendations: %v", err)
+	}
+	var rec store.Recommendation
+	for _, r := range recs {
+		if r.ConversationID == f.Conv.ID {
+			rec = r
+		}
+	}
+	if rec.ID == uuid.Nil {
+		t.Fatal("expected a PENDING_REVIEW recommendation, found none")
+	}
+	var sp domain.SOAPPayload
+	if err := json.Unmarshal(rec.Payload, &sp); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	// 1. The ack must be persisted as an assistant message in the conversation.
+	msgs, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var assistantMsgs []store.Message
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			assistantMsgs = append(assistantMsgs, m)
+		}
+	}
+	if len(assistantMsgs) != 1 {
+		t.Fatalf("expected 1 assistant message (the ack), got %d", len(assistantMsgs))
+	}
+	ackMsg := assistantMsgs[0]
+	if ackMsg.Content != ReviewPendingAckMessage {
+		t.Errorf("ack content = %q, want fixed ReviewPendingAckMessage", ackMsg.Content)
+	}
+
+	// 2. The ack must not reveal any of the drafted SOAP content.
+	for _, forbidden := range []string{sp.Subjective, sp.Objective, sp.Assessment, sp.Plan} {
+		if forbidden != "" && strings.Contains(ackMsg.Content, forbidden) {
+			t.Errorf("ack message leaks drafted SOAP content: found %q", forbidden)
+		}
+	}
+
+	// 3. The conversation's care phase must now be AWAITING_REVIEW.
+	conv, err := s.GetConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if conv.CarePhase != store.CarePhaseAwaitingReview {
+		t.Errorf("care_phase = %q, want %q", conv.CarePhase, store.CarePhaseAwaitingReview)
+	}
+
+	// 4. The patient must have been notified exactly once, with the ack's
+	// message id — and only after the commit (the recommendation and phase
+	// transition above are already durably visible by the time we assert this).
+	if patNotifier.count() != 1 {
+		t.Fatalf("expected 1 patient notification (the ack), got %d", patNotifier.count())
+	}
+	var evt map[string]any
+	if err := json.Unmarshal(patNotifier.last(), &evt); err != nil {
+		t.Fatalf("unmarshal patient event: %v", err)
+	}
+	if evt["type"] != "message.created" {
+		t.Errorf("event type = %q, want %q", evt["type"], "message.created")
+	}
+	data, _ := evt["data"].(map[string]any)
+	if data["message_id"] != ackMsg.ID.String() {
+		t.Errorf("event message_id = %v, want %s", data["message_id"], ackMsg.ID)
+	}
+	if data["conversation_id"] != f.Conv.ID.String() {
+		t.Errorf("event conversation_id = %v, want %s", data["conversation_id"], f.Conv.ID)
+	}
+}
+
+// TestDraftSOAPNote_CASFailureAbortsWholeTransaction reproduces the race the
+// INTAKE→AWAITING_REVIEW compare-and-swap is meant to guard: the conversation
+// passed to draftSOAPNote observed CarePhaseIntake, but by the time the
+// transaction runs, the row has already moved to AWAITING_REVIEW (e.g. a
+// concurrent draft, or task 2.3's double-draft guard closing a race window).
+// TransitionCarePhase's CAS then fails with store.ErrNotFound, which must
+// abort and roll back the ENTIRE transaction: no recommendation persisted, no
+// ack message persisted — nothing partial.
+func TestDraftSOAPNote_CASFailureAbortsWholeTransaction(t *testing.T) {
+	pool := itTestPool(t)
+	s := store.New(pool)
+	f := setupSOAPDrafterFixture(t, s)
+	ctx := context.Background()
+
+	// Simulate the race: move the conversation to AWAITING_REVIEW out from
+	// under the (stale) f.Conv value, which still reports CarePhaseIntake.
+	if err := s.Txn(ctx, func(tx *store.TxStore) error {
+		return tx.TransitionCarePhase(ctx, f.TenantID, f.Conv.ID, store.CarePhaseIntake, store.CarePhaseAwaitingReview)
+	}); err != nil {
+		t.Fatalf("simulate race: %v", err)
+	}
+
+	physNotifier := &captureNotifier{}
+	patNotifier := &recordingPatientNotifierSOAP{}
+	client := &spyClient{text: wellFormedSOAPText}
+	d := NewDrafter(client, s, physNotifier, patNotifier)
+
+	err := d.draftSOAPNote(ctx, f.TenantID, f.Conv, f.Patient)
+	if err == nil {
+		t.Fatal("expected error from CAS failure, got nil")
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expected store.ErrNotFound (CAS failure), got %T: %v", err, err)
+	}
+
+	// No recommendation of any kind must exist for this conversation.
+	for _, state := range []string{domain.StateDraft, domain.StatePendingReview} {
+		recs, listErr := s.ListRecommendationsByState(ctx, f.TenantID, state)
+		if listErr != nil {
+			t.Fatalf("list %s recommendations: %v", state, listErr)
+		}
+		for _, r := range recs {
+			if r.ConversationID == f.Conv.ID {
+				t.Errorf("unexpected %s recommendation after CAS failure — transaction was not atomic", state)
+			}
+		}
+	}
+
+	// No ack message must be persisted.
+	msgs, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			t.Errorf("unexpected assistant message after CAS failure: %q", m.Content)
+		}
+	}
+
+	// Neither notifier must have fired — nothing committed.
+	if physNotifier.count() != 0 {
+		t.Errorf("expected 0 queue.updated events after CAS failure, got %d", physNotifier.count())
+	}
+	if patNotifier.count() != 0 {
+		t.Errorf("expected 0 patient notifications after CAS failure, got %d", patNotifier.count())
+	}
+
+	// The conversation must remain in AWAITING_REVIEW (the state set up by the
+	// simulated race) — draftSOAPNote's failed attempt must not have touched it.
+	conv, err := s.GetConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if conv.CarePhase != store.CarePhaseAwaitingReview {
+		t.Errorf("care_phase = %q, want %q (untouched by the failed transaction)", conv.CarePhase, store.CarePhaseAwaitingReview)
+	}
+}
+
+// recordingPatientNotifierSOAP is a PatientNotifier that records every
+// SendToPatient call. Named distinctly from recordingPatientNotifier in
+// drafter_test.go ("package agent_test") to avoid confusion — this one lives
+// in "package agent".
+type recordingPatientNotifierSOAP struct {
+	mu    sync.Mutex
+	calls [][]byte
+}
+
+func (n *recordingPatientNotifierSOAP) SendToPatient(_, _ string, event []byte) {
+	cp := make([]byte, len(event))
+	copy(cp, event)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, cp)
+}
+
+func (n *recordingPatientNotifierSOAP) count() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.calls)
+}
+
+func (n *recordingPatientNotifierSOAP) last() []byte {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.calls) == 0 {
+		return nil
+	}
+	return n.calls[len(n.calls)-1]
 }

@@ -18,7 +18,7 @@
 
 ## Phase 2 — Phase dispatch, acknowledgement, double-draft fix
 
-- [ ] 2.1 Drafter: dispatch on `care_phase` in `DraftAsync`; `INTAKE` keeps
+- [x] 2.1 Drafter: dispatch on `care_phase` in `DraftAsync`; `INTAKE` keeps
       today's interview path. Regression: existing interview-flow integration
       tests stay green.
 - [ ] 2.2 Drafter: on SOAP draft commit, persist the fixed acknowledgement

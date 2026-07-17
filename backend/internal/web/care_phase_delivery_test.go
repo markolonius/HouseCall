@@ -13,6 +13,7 @@ package web_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -161,9 +162,19 @@ func seedCarePhaseDeliveryFixture(t *testing.T, s *store.Store) carePhaseDeliver
 // handler with a physician session cookie.
 func postCarePhaseReview(t *testing.T, h *web.Handler, tenant store.TenantID, physicianID, recID uuid.UUID, action, finalContent string) *httptest.ResponseRecorder {
 	t.Helper()
+	return postCarePhaseReviewFull(t, h, tenant, physicianID, recID, action, finalContent, "")
+}
+
+// postCarePhaseReviewFull is postCarePhaseReview plus an explicit reason
+// field, for reject flows (task 3.1 requires a non-empty reason).
+func postCarePhaseReviewFull(t *testing.T, h *web.Handler, tenant store.TenantID, physicianID, recID uuid.UUID, action, finalContent, reason string) *httptest.ResponseRecorder {
+	t.Helper()
 	form := url.Values{"action": {action}}
 	if finalContent != "" {
 		form.Set("final_content", finalContent)
+	}
+	if reason != "" {
+		form.Set("reason", reason)
 	}
 	req := httptest.NewRequest("POST",
 		"/web/recommendations/"+recID.String()+"/review",
@@ -237,11 +248,11 @@ func TestReview_Modify_MovesCarePhaseToPlanDelivered(t *testing.T) {
 	}
 }
 
-// TestReview_Reject_DoesNotChangeCarePhase verifies that a rejection — which
-// never reaches DELIVERED — leaves the conversation in AWAITING_REVIEW.
-// Phase 3 owns the AWAITING_REVIEW -> INTAKE transition on rejection; this
-// task must not touch care_phase for the reject path.
-func TestReview_Reject_DoesNotChangeCarePhase(t *testing.T) {
+// TestReview_Reject_ResetsCarePhaseToIntake verifies that a rejection with a
+// reason moves the conversation AWAITING_REVIEW -> INTAKE in the same
+// transaction as the REJECTED write (task 3.1), and that the rejection reason
+// is persisted on the recommendation row.
+func TestReview_Reject_ResetsCarePhaseToIntake(t *testing.T) {
 	pool := carePhaseTestPool(t)
 	s := store.New(pool)
 	h, err := web.New(s, testSecret, audit.New(s), nil)
@@ -250,7 +261,8 @@ func TestReview_Reject_DoesNotChangeCarePhase(t *testing.T) {
 	}
 	fx := seedCarePhaseDeliveryFixture(t, s)
 
-	resp := postCarePhaseReview(t, h, fx.tenant, fx.physician.ID, fx.rec.ID, domain.ActionReject, "")
+	const wantReason = "ask about current medications"
+	resp := postCarePhaseReviewFull(t, h, fx.tenant, fx.physician.ID, fx.rec.ID, domain.ActionReject, "", wantReason)
 	if resp.Code != 303 {
 		t.Fatalf("reject: want 303, got %d (body: %s)", resp.Code, resp.Body.String())
 	}
@@ -261,6 +273,51 @@ func TestReview_Reject_DoesNotChangeCarePhase(t *testing.T) {
 	}
 	if updatedRec.State != domain.StateRejected {
 		t.Fatalf("recommendation state = %q, want REJECTED", updatedRec.State)
+	}
+
+	var gotReason *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT rejection_reason FROM recommendations WHERE tenant_id = $1 AND id = $2`,
+		fx.tenant.UUID(), fx.rec.ID,
+	).Scan(&gotReason); err != nil {
+		t.Fatalf("query rejection_reason: %v", err)
+	}
+	if gotReason == nil || *gotReason != wantReason {
+		t.Fatalf("rejection_reason = %v, want %q", gotReason, wantReason)
+	}
+
+	conv, err := s.GetConversation(context.Background(), fx.tenant, fx.conv.ID)
+	if err != nil {
+		t.Fatalf("get conversation: %v", err)
+	}
+	if conv.CarePhase != store.CarePhaseIntake {
+		t.Fatalf("care_phase = %q, want INTAKE", conv.CarePhase)
+	}
+}
+
+// TestReview_Reject_EmptyReasonRefused_DB verifies the DB-backed path returns
+// 400 and leaves the recommendation/care_phase untouched when reject is
+// submitted without a reason.
+func TestReview_Reject_EmptyReasonRefused_DB(t *testing.T) {
+	pool := carePhaseTestPool(t)
+	s := store.New(pool)
+	h, err := web.New(s, testSecret, audit.New(s), nil)
+	if err != nil {
+		t.Fatalf("web.New: %v", err)
+	}
+	fx := seedCarePhaseDeliveryFixture(t, s)
+
+	resp := postCarePhaseReview(t, h, fx.tenant, fx.physician.ID, fx.rec.ID, domain.ActionReject, "")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("reject without reason: want 400, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+
+	updatedRec, err := s.GetRecommendation(context.Background(), fx.tenant, fx.rec.ID)
+	if err != nil {
+		t.Fatalf("get recommendation: %v", err)
+	}
+	if updatedRec.State != domain.StatePendingReview {
+		t.Fatalf("recommendation state = %q, want unchanged PENDING_REVIEW", updatedRec.State)
 	}
 
 	conv, err := s.GetConversation(context.Background(), fx.tenant, fx.conv.ID)

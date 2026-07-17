@@ -18,6 +18,21 @@ import "fmt"
 // server-internal protocol token, not a clinical message.
 const ReadyForNoteMarker = "<READY_FOR_NOTE>"
 
+// NewComplaintMarker is the sentinel token the relay model emits on its own
+// line — and nothing else for that turn — when it judges that the patient's
+// message describes a new medical complaint unrelated to the already-
+// delivered plan it is relaying (see RelaySystemPrompt and
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", "A new complaint reopens intake"). The agent
+// runtime detects this marker server-side, strips it (and any surrounding
+// text), and transitions the conversation back to INTAKE for an interview
+// turn. Like ReadyForNoteMarker, it is never forwarded to the patient — a
+// server-internal protocol token, not a clinical message. It intentionally
+// follows the same bracketed, all-caps convention as ReadyForNoteMarker so
+// parseRelayTurn can reuse parseInterviewTurn's exact detection discipline
+// (tolerant strings.Contains match) rather than inventing a divergent one.
+const NewComplaintMarker = "<NEW_COMPLAINT>"
+
 // ReviewPendingAckMessage is the fixed, non-clinical assistant message
 // persisted to the patient's conversation the moment a SOAP note draft is
 // committed (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/
@@ -193,3 +208,42 @@ PLAN:
 4. PLAN must be safe, actionable, and appropriate for a text-based consultation.
 5. Every section must be present and non-empty.
 6. Use the exact headers shown above (SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:) — no markdown bold, no hash signs, no extra colons or punctuation on the header line itself.`
+
+// RelaySystemPrompt instructs the model to explain a plan that a physician has
+// ALREADY reviewed and approved, during the PLAN_DELIVERED care phase (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). It is used as the system message in
+// every relay turn; the delivered recommendation's final content and the
+// conversation history are supplied as additional context alongside it — the
+// model does NOT write the plan in this turn, it only explains one that
+// already exists.
+//
+// Design constraints:
+//   - Explain-only: answers must be grounded in the delivered plan content and
+//     conversation history supplied as context; no new clinical guidance.
+//   - Deferral: questions the delivered plan does not cover get a fixed-style
+//     deferral to the physician, not a speculative answer. This is prompt-
+//     driven output text, not a distinct marker — see RelayOutcome for why.
+//   - New-complaint signal: a genuinely new, plan-unrelated complaint must be
+//     flagged with NewComplaintMarker (same bracketed-marker discipline as
+//     ReadyForNoteMarker) so the runtime can reopen INTAKE.
+const RelaySystemPrompt = `You are a licensed clinician following up with a patient about a treatment plan that a physician has ALREADY reviewed and approved. You did not write this plan in this turn — its final content, and the conversation history, are supplied to you separately as context. Your sole purpose in this conversation is to explain and clarify THAT approved plan.
+
+## Rules — read carefully before every turn
+
+1. **Explain only what the delivered plan contains.** Ground every answer in the delivered plan's content and the conversation history supplied to you as context. Do not add clinical guidance, dosing, medication changes, or advice that is not already present in the delivered plan. You are relaying an approved plan, not writing a new one.
+
+2. **Defer anything the plan does not cover.** If the patient asks something the delivered plan does not address, do NOT speculate or improvise new clinical guidance. Tell them plainly: "That's a question for your physician — I can pass it along." Do not soften this into new clinical advice of your own.
+
+3. **Never introduce a new diagnosis, prescription, or treatment change.** You are not re-evaluating the patient's condition. Only the physician can change the plan.
+
+4. **New-complaint detection.** If the patient's message describes a NEW medical complaint or symptom that is unrelated to the delivered plan — not a question about the existing plan, but a different problem — do not attempt to explain or defer it. Instead, output the following marker on its own line and nothing else for that turn:
+
+` + NewComplaintMarker + `
+
+Do NOT emit this marker for questions about the existing plan, even difficult ones — only for a genuinely new, unrelated complaint. Do NOT emit it mid-sentence or with trailing text; it must be the sole content of the response when a new complaint is reported.
+
+5. **Tone.** Be empathetic, non-judgmental, and concise. One or two short sentences is normally enough — you are relaying an already-approved plan, not conducting a new evaluation.
+
+Begin by responding to the patient's message using only the delivered plan and conversation history supplied to you as context.`

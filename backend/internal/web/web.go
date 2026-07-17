@@ -465,16 +465,15 @@ func (h *Handler) handleQueue(w http.ResponseWriter, r *http.Request) {
 //   - reason: required for "reject"; ignored otherwise. PHI-adjacent physician
 //     free-text — never logged.
 //
-// NOTE (task 3.1): the queue template does not yet render a reason input for
-// the reject form (that UI wiring belongs to task 3.2). Until then, reason
-// arrives as "" for every reject submitted through the current UI, which
-// review.Execute refuses with review.ErrEmptyRejectionReason — mapped below
-// to a 400. The field is read here so the handler and review.Execute already
-// speak the same contract once 3.2 adds the form input.
+// The queue template's reject form (task 3.2) includes a required reason
+// textarea; `required` is client-side only. If reason is empty or whitespace,
+// review.Execute refuses with review.ErrEmptyRejectionReason — mapped below to
+// a queue re-render with a flash error (state is NOT mutated, nothing is
+// written).
 //
 // On success it redirects to /web/queue (303).
-// On ErrUnlicensedState it renders the queue with an error banner (state is NOT
-// mutated; the rejection audit event was already written by review.Execute).
+// On ErrUnlicensedState or ErrEmptyRejectionReason it renders the queue with
+// an error banner (state is NOT mutated).
 // On a care-relationship / access failure it returns 403/404.
 func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 	claims, ok := webClaimsFromCtx(r.Context())
@@ -520,13 +519,17 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, review.ErrEmptyRejectionReason) {
-		http.Error(w, "reason required for reject", http.StatusBadRequest)
+		// Render the queue with an error banner instead of a bare 400 so the
+		// physician sees why the rejection did not go through (the reason
+		// textarea is required client-side, but the server is the source of
+		// truth). State was NOT mutated.
+		h.renderQueueWithError(w, r, claims, http.StatusBadRequest, "A reason is required to reject a recommendation.")
 		return
 	}
 	if errors.Is(err, domain.ErrUnlicensedState) {
 		// Render the queue with an error banner. State was NOT mutated; the audit
 		// event was already written by review.Execute.
-		h.renderQueueWithError(w, r, claims, "Action rejected: you are not licensed in the patient's state.")
+		h.renderQueueWithError(w, r, claims, http.StatusForbidden, "Action rejected: you are not licensed in the patient's state.")
 		return
 	}
 	if errors.Is(err, domain.ErrInvalidTransition) {
@@ -565,7 +568,7 @@ func (h *Handler) handleReview(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderQueueWithError re-fetches the queue and renders it with an error banner.
-func (h *Handler) renderQueueWithError(w http.ResponseWriter, r *http.Request, claims webClaims, errMsg string) {
+func (h *Handler) renderQueueWithError(w http.ResponseWriter, r *http.Request, claims webClaims, status int, errMsg string) {
 	recs, err := h.listRecommendationsByPhysician(r.Context(), claims.TenantID, claims.ActorID, "PENDING_REVIEW")
 	if err != nil {
 		log.Printf("web: queue store error on error render: %v", err)
@@ -573,7 +576,7 @@ func (h *Handler) renderQueueWithError(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusForbidden)
+	w.WriteHeader(status)
 	if err := h.tmpl("queue").ExecuteTemplate(w, "layout", queuePageData{
 		Recommendations: toRecommendationViews(recs),
 		Error:           errMsg,

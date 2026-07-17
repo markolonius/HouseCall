@@ -1169,9 +1169,8 @@ func TestReview_Reject(t *testing.T) {
 }
 
 // TestReview_Reject_EmptyReasonRefused verifies that submitting reject
-// without a reason is refused (400) and the recommendation state is not
-// mutated. This is the current behaviour of the reject button until task 3.2
-// adds a reason input to the queue template.
+// without a reason re-renders the queue with a visible flash error (400),
+// nothing is written, and the recommendation state is not mutated.
 func TestReview_Reject_EmptyReasonRefused(t *testing.T) {
 	fs := newFakeStoreForReview([]string{"CA"}, "CA")
 	h := buildHandler(t, fs)
@@ -1186,6 +1185,12 @@ func TestReview_Reject_EmptyReasonRefused(t *testing.T) {
 	}
 	if len(fs.auditEvents) != 0 {
 		t.Errorf("reject without reason: want 0 audit events, got %d", len(fs.auditEvents))
+	}
+	// The queue must be re-rendered with a visible error banner, not a bare
+	// error response.
+	body := rec.Body.String()
+	if !strings.Contains(body, "reason is required") {
+		t.Error("reject without reason: response body must contain physician-facing error message")
 	}
 }
 

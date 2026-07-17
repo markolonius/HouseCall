@@ -51,7 +51,7 @@ import (
 // call in the sequence received — needed for Step 4's "rejection reason
 // reached the model" assertion. Unlike triageSequentialClient, exhausting
 // the script calls t.Fatalf immediately (with the call index) rather than
-// returning a ParseError, since a wrong call count anywhere in an 11-call
+// returning a ParseError, since a wrong call count anywhere in a 12-call
 // sequence is a test-authoring bug worth failing loudly and precisely on.
 // ---------------------------------------------------------------------------
 
@@ -147,7 +147,7 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 	)
 	const rejectionReason = "ask about current medications before drafting a new plan"
 
-	// The full 11-call scripted sequence. Each entry's `step` documents which
+	// The full 12-call scripted sequence. Each entry's `step` documents which
 	// numbered walkthrough step (below) it belongs to.
 	client := newE2EClient(t, []e2eScriptedResponse{
 		// --- Step 1: intake -> ack (first patient message, already seeded) ---

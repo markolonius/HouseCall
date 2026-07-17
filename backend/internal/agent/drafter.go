@@ -544,8 +544,37 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 
 	agentActor := domain.Actor{Type: domain.ActorAgent, ID: uuid.Nil}
 
-	// Persist DRAFT → PENDING_REVIEW + audit event atomically.
+	// The care phase the conversation was observed in when this turn was
+	// dispatched. dispatchTurn routes both CarePhaseIntake and the empty
+	// (pre-migration/legacy-fixture) phase to runInterviewTurn → draftSOAPNote,
+	// so an empty value here is treated as INTAKE for the CAS `from` — the
+	// same defensive mapping dispatchTurn already applies. Every real
+	// database row always has a non-empty care_phase (NOT NULL DEFAULT
+	// 'INTAKE'), so this only matters for in-memory test fixtures.
+	fromPhase := conv.CarePhase
+	if fromPhase == "" {
+		fromPhase = store.CarePhaseIntake
+	}
+
+	// Persist DRAFT → PENDING_REVIEW, the fixed patient-facing acknowledgement
+	// message, and the INTAKE → AWAITING_REVIEW care-phase transition
+	// atomically. Doing all of this in one transaction is deliberate: a
+	// physician must never see a queue entry (or a patient an ack) for a
+	// draft that didn't durably land, and the conversation must never sit in
+	// AWAITING_REVIEW without an actual pending recommendation behind it.
+	//
+	// CAS-failure semantics: TransitionCarePhase compares-and-swaps on
+	// care_phase = fromPhase. If the row has already moved on (e.g. a racing
+	// second draft — the double-draft bug guarded against in task 2.3, or any
+	// other concurrent writer), it returns store.ErrNotFound, which aborts and
+	// rolls back the ENTIRE transaction: no recommendation, no ack message,
+	// nothing partial. The caller (DraftAsync) treats this exactly like any
+	// other draft failure — it logs the failure type and writes an
+	// ai_interaction_failed audit event. No recommendation is left in DRAFT
+	// state and no ack is shown for content the patient never actually
+	// triggered a successful draft for.
 	var recID uuid.UUID
+	var ackMsgID uuid.UUID
 	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
 		// Step 1: insert at DRAFT.
 		rec, err := tx.CreateRecommendation(ctx, tenantID, store.Recommendation{
@@ -574,7 +603,7 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 
 		// Step 4: write the audit event. Metadata contains identifiers +
 		// payload_type only — no PHI, no model output.
-		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		if err := tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
 			ActorType: string(domain.ActorAgent),
 			ActorID:   nil, // agent has no user UUID
 			EventType: "recommendation.submitted_for_review",
@@ -584,7 +613,41 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 				"new_state":         nextState,
 				"payload_type":      domain.PayloadTypeSOAPNote,
 			}),
-		})
+		}); err != nil {
+			return err
+		}
+
+		// Step 5: persist the fixed review-pending acknowledgement as an
+		// assistant message in the same conversation. This is static text
+		// (ReviewPendingAckMessage), never model output, and reveals nothing
+		// of the drafted Subjective/Objective/Assessment/Plan content.
+		ackMsg, err := tx.CreateMessage(ctx, tenantID, conv.ID, "assistant", ReviewPendingAckMessage)
+		if err != nil {
+			return err
+		}
+		ackMsgID = ackMsg.ID
+
+		// Step 6: write the audit event for the acknowledgement. Metadata
+		// contains identifiers only — no PHI, no message content (the message
+		// is fixed text, but the pattern is kept consistent with
+		// deliverInterviewQuestion).
+		if err := tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+			ActorType: string(domain.ActorAgent),
+			ActorID:   nil, // agent has no user UUID
+			EventType: "agent.review_pending_ack",
+			Metadata: mustMarshalJSON(map[string]any{
+				"conversation_id":   conv.ID.String(),
+				"message_id":        ackMsgID.String(),
+				"recommendation_id": recID.String(),
+			}),
+		}); err != nil {
+			return err
+		}
+
+		// Step 7: move the conversation INTAKE → AWAITING_REVIEW so
+		// dispatchTurn routes any further patient messages away from
+		// runInterviewTurn (the double-draft guard task 2.3 completes).
+		return tx.TransitionCarePhase(ctx, tenantID, conv.ID, fromPhase, store.CarePhaseAwaitingReview)
 	}); err != nil {
 		return err
 	}
@@ -596,6 +659,19 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 		"data": map[string]any{
 			"recommendation_id": recID.String(),
 			"conversation_id":   conv.ID.String(),
+		},
+	}))
+
+	// Push the acknowledgement to the patient over WS AFTER the successful
+	// commit, mirroring deliverInterviewQuestion: the payload carries
+	// identifiers only (never message content), and the client can never
+	// receive a reference to a message that does not yet exist in the
+	// database.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      ackMsgID.String(),
 		},
 	}))
 

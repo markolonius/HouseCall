@@ -16,6 +16,17 @@ package agent
 // server-internal protocol token, not a clinical message.
 const ReadyForNoteMarker = "<READY_FOR_NOTE>"
 
+// ReviewPendingAckMessage is the fixed, non-clinical assistant message
+// persisted to the patient's conversation the moment a SOAP note draft is
+// committed (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/
+// spec.md, "Review-Pending Acknowledgement"). It is static text — NOT model
+// output — deliberately: once a conversation reaches AWAITING_REVIEW there is
+// no physician gate ahead of anything the model might say, so nothing free-
+// text is shown to the patient until a physician has reviewed the draft. The
+// wording must never reveal any drafted Subjective/Objective/Assessment/Plan
+// content.
+const ReviewPendingAckMessage = "Thanks — I've gathered what I need and sent it to your physician for review. I'll let you know as soon as they respond."
+
 // InterviewSystemPrompt instructs the model to act as a clinician conducting a
 // focused history-taking interview. It is used as the system message in every
 // interview turn; the full conversation history follows so the model can track

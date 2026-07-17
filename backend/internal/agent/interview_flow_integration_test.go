@@ -211,7 +211,8 @@ func TestInterviewFlow_EndToEnd(t *testing.T) {
 	//   call 2 (draftSOAPNote):         wellFormedSOAPText
 	//
 	// Expected: PENDING_REVIEW soap_note recommendation persisted; physician
-	// queue.updated fired; patient notifier NOT called this turn.
+	// queue.updated fired; patient notifier called once for the fixed
+	// review-pending acknowledgement (task 2.2) — never for clinical content.
 	// -----------------------------------------------------------------------
 
 	physNotifier2 := &captureNotifier{}
@@ -283,10 +284,42 @@ func TestInterviewFlow_EndToEnd(t *testing.T) {
 		t.Errorf("scenario 2: event type = %q, want %q", physEvt["type"], "queue.updated")
 	}
 
-	// 2d. Patient notifier must NOT have been called this turn — clinical content
-	// (Assessment & Plan) must go through physician review before reaching the patient.
-	if patNotifier2.count() != 0 {
-		t.Errorf("scenario 2: expected 0 patient notifications for SOAP draft turn, got %d", patNotifier2.count())
+	// 2d. Patient notifier must have been called exactly once — for the fixed
+	// review-pending acknowledgement, not clinical content. Assessment & Plan
+	// must go through physician review before reaching the patient.
+	if patNotifier2.count() != 1 {
+		t.Errorf("scenario 2: expected 1 patient notification (the ack) for SOAP draft turn, got %d", patNotifier2.count())
+	}
+
+	// 2e. The conversation's care phase must have moved INTAKE → AWAITING_REVIEW
+	// atomically with the recommendation commit.
+	convAfterDraft, err := s.GetConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("scenario 2: GetConversation: %v", err)
+	}
+	if convAfterDraft.CarePhase != store.CarePhaseAwaitingReview {
+		t.Errorf("scenario 2: care_phase = %q, want %q", convAfterDraft.CarePhase, store.CarePhaseAwaitingReview)
+	}
+
+	// 2f. A second assistant message (the ack) must now be persisted — in
+	// addition to scenario 1's interview question — and it must be the fixed
+	// text, not the drafted SOAP content.
+	msgs2, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
+	if err != nil {
+		t.Fatalf("scenario 2: list messages: %v", err)
+	}
+	var assistantMsgs2 []store.Message
+	for _, m := range msgs2 {
+		if m.Role == "assistant" {
+			assistantMsgs2 = append(assistantMsgs2, m)
+		}
+	}
+	if len(assistantMsgs2) != 2 {
+		t.Fatalf("scenario 2: expected 2 assistant messages (scenario 1's question + the ack), got %d", len(assistantMsgs2))
+	}
+	ackMsg2 := assistantMsgs2[len(assistantMsgs2)-1]
+	if ackMsg2.Content != ReviewPendingAckMessage {
+		t.Errorf("scenario 2: ack message content = %q, want the fixed ReviewPendingAckMessage", ackMsg2.Content)
 	}
 
 	// -----------------------------------------------------------------------
@@ -388,10 +421,12 @@ func TestInterviewFlow_TurnCapForcesSOAPDraft(t *testing.T) {
 		t.Errorf("expected 1 queue.updated event for forced SOAP draft, got %d", physNotifier.count())
 	}
 
-	// Patient notifier must NOT have fired — no interview question delivered;
-	// clinical content requires physician review before reaching the patient.
-	if patNotifier.count() != 0 {
-		t.Errorf("expected 0 patient notifications for forced SOAP draft turn, got %d", patNotifier.count())
+	// Patient notifier must have fired exactly once — for the fixed
+	// review-pending acknowledgement (task 2.2), not an interview question or
+	// any clinical content, which still requires physician review before
+	// reaching the patient.
+	if patNotifier.count() != 1 {
+		t.Errorf("expected 1 patient notification (the ack) for forced SOAP draft turn, got %d", patNotifier.count())
 	}
 }
 

@@ -510,6 +510,22 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 	return err
 }
 
+// CreateMessage inserts a message within tx. Use this when the message
+// insert must be atomic with other writes in the same transaction — e.g. the
+// SOAP draft commit, which persists the fixed patient-facing acknowledgement
+// message atomically with the recommendation and the INTAKE→AWAITING_REVIEW
+// care-phase transition (task 2.2).
+func (ts *TxStore) CreateMessage(ctx context.Context, tenant TenantID, conversationID uuid.UUID, role, content string) (Message, error) {
+	var m Message
+	err := ts.tx.QueryRow(ctx,
+		`INSERT INTO messages (tenant_id, conversation_id, role, content)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, tenant_id, conversation_id, role, content, idempotency_key, created_at`,
+		tenant.UUID(), conversationID, role, content,
+	).Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.IdempotencyKey, &m.CreatedAt)
+	return m, err
+}
+
 // ErrInvalidCarePhaseTransition is returned by TransitionCarePhase when the
 // requested (from, to) pair is not one of the edges the care-phase state
 // machine allows. No row is mutated when this error is returned.

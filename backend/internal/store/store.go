@@ -403,6 +403,31 @@ func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, c
 	return reason, true, nil
 }
 
+// GetLatestDeliveredRecommendation returns the most recently reviewed
+// DELIVERED recommendation for a conversation — the grounding source for the
+// PLAN_DELIVERED relay turn (task 4.2; see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). Returns ErrNotFound if no DELIVERED
+// recommendation exists for the conversation in this tenant.
+func (s *Store) GetLatestDeliveredRecommendation(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (Recommendation, error) {
+	var r Recommendation
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
+		        draft_content, final_content, reviewed_by, reviewed_at, created_at
+		   FROM recommendations
+		  WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
+		  ORDER BY reviewed_at DESC
+		  LIMIT 1`,
+		tenant.UUID(), conversationID,
+	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Recommendation{}, ErrNotFound
+	}
+	return r, err
+}
+
 // --- recommendations (additional) ---
 
 // ListRecommendationsByPhysician returns recommendations in the given state

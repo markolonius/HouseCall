@@ -59,10 +59,10 @@
 
 ## Phase 5 — Red-flag triage
 
-- [ ] 5.1 Triage prompt + strict `EMERGENT`/`ROUTINE` parser; unit tests
+- [x] 5.1 Triage prompt + strict `EMERGENT`/`ROUTINE` parser; unit tests
       including robustness to small-model formatting (see soap_robustness
       pattern).
-- [ ] 5.2 Drafter: run triage before `INTAKE` interview turns. Emergent:
+- [x] 5.2 Drafter: run triage before `INTAKE` interview turns. Emergent:
       fixed emergency-referral message, urgent `queue.updated` variant,
       audit event, suppress interview turn. Failure: fail open +
       `ai_interaction_failed`. Integration tests for both.

@@ -7,7 +7,7 @@
       `INTAKE`) with CHECK constraint; backfill existing rows from
       recommendation history (delivered → `PLAN_DELIVERED`, pending →
       `AWAITING_REVIEW`, else `INTAKE`). Migration test on seeded data.
-- [ ] 1.2 Migration: add `rejection_reason` (nullable text) to
+- [x] 1.2 Migration: add `rejection_reason` (nullable text) to
       `recommendations`.
 - [ ] 1.3 Store: read/write `care_phase` on conversation CRUD; add
       `TransitionCarePhase` helper that enforces the allowed edges and runs

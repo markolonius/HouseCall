@@ -33,6 +33,83 @@ const ReadyForNoteMarker = "<READY_FOR_NOTE>"
 // (tolerant strings.Contains match) rather than inventing a divergent one.
 const NewComplaintMarker = "<NEW_COMPLAINT>"
 
+// EmergentMarker is the sentinel token the triage model emits — and nothing
+// else for that turn — when it classifies the patient's most recent message
+// as an emergency presentation warranting immediate emergency care (see
+// TriageSystemPrompt and
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Red-Flag Triage"). The agent runtime detects this marker server-side
+// (parseTriageTurn), suppresses the normal interview turn, and delivers a
+// fixed emergency-referral message instead. Like ReadyForNoteMarker and
+// NewComplaintMarker, it is a server-internal protocol token, never
+// forwarded to the patient. It intentionally follows the same bracketed,
+// all-caps convention so parseTriageTurn can reuse the same tolerant
+// strings.Contains detection discipline as parseInterviewTurn and
+// parseRelayTurn.
+const EmergentMarker = "<EMERGENT>"
+
+// RoutineMarker is the sentinel token the triage model emits — and nothing
+// else for that turn — when it classifies the patient's most recent message
+// as NOT an emergency presentation, so the normal interview turn should
+// proceed. See EmergentMarker for the shared marker-parsing rationale.
+const RoutineMarker = "<ROUTINE>"
+
+// TriageSystemPrompt instructs the model to act as a cheap, single-purpose
+// classifier: given the full conversation so far, decide whether the
+// patient's MOST RECENT message describes an emergency presentation. This is
+// a separate model call from the interview turn (see design.md, "Triage is a
+// separate cheap classification call") and its output is never shown to the
+// patient — it is parsed exclusively by parseTriageTurn. The full
+// conversation is supplied as context (not just the latest message) so the
+// model can resolve anaphora such as "it's gotten worse" or "still happening"
+// against what was said earlier in the conversation.
+//
+// Output format contract (MUST be preserved so parseTriageTurn can parse it):
+// the model's ENTIRE response for this turn must be exactly one of
+// EmergentMarker or RoutineMarker, and nothing else — no explanation, no
+// punctuation, no surrounding prose. This is a strict, programmatic contract:
+// unlike InterviewSystemPrompt and RelaySystemPrompt (whose free-text is
+// patient-facing and merely needs a marker detected within it),
+// TriageSystemPrompt's output is consumed ONLY by the parser, so there is no
+// reason to tolerate — let alone encourage — surrounding text. The parser
+// remains tolerant of incidental formatting variance (whitespace, markdown
+// wrapping) a small model might add despite this instruction, but any output
+// containing neither marker, or both markers, is treated as unparseable.
+const TriageSystemPrompt = `You are a clinical triage classifier. You are NOT conducting an interview and you are NOT writing a reply the patient will see. Your only job is to decide whether the patient's MOST RECENT message, read in the context of the full conversation above it, describes a medical emergency.
+
+## Classify as emergent if the most recent message describes (or, in context, confirms/escalates) any of the following — this list is illustrative, not exhaustive:
+
+- Chest pain or pressure, especially with shortness of breath, sweating, or pain radiating to the arm/jaw
+- Difficulty breathing or shortness of breath at rest
+- Signs of stroke: sudden face drooping, arm weakness, slurred or garbled speech, sudden confusion
+- Severe or uncontrolled bleeding
+- Signs of anaphylaxis: throat swelling/tightness, widespread hives with difficulty breathing, sudden severe allergic reaction
+- Suicidal ideation, intent, or a plan to harm oneself or someone else
+- Loss of consciousness, fainting, or unresponsiveness
+- Signs of a severe allergic drug reaction, poisoning, or overdose
+- Seizure, especially a first-time or prolonged seizure
+- Severe abdominal pain with rigidity, or signs of a ruptured appendix
+- Any symptom the patient or a reasonable clinician would consider a "call 911 now" situation
+
+## Classify as routine if the most recent message:
+
+- Describes symptoms that are uncomfortable or concerning but not immediately life-threatening (e.g. a headache, a mild fever, a cough, a rash, joint pain, fatigue)
+- Is a question, an answer to a prior interview question, or general conversation that does not itself describe an emergency
+- Describes a worsening of a routine symptom that has not crossed into one of the emergent categories above
+
+## Context and anaphora
+
+Read the ENTIRE conversation above before deciding. The patient's most recent message may use pronouns or short phrases that only make sense with that context — for example "it's gotten a lot worse" or "now I can't breathe either" refers back to whatever was discussed earlier. Resolve these references using the full conversation before classifying.
+
+## Output format — MANDATORY, read carefully
+
+Your entire response for this turn must be EXACTLY ONE of the following two tokens, and absolutely nothing else — no punctuation, no explanation, no acknowledgment, no markdown:
+
+` + EmergentMarker + `
+` + RoutineMarker + `
+
+Do not output both. Do not output any other text before, after, or instead of the single token. This response is read only by a server-side program, never by the patient.`
+
 // ReviewPendingAckMessage is the fixed, non-clinical assistant message
 // persisted to the patient's conversation the moment a SOAP note draft is
 // committed (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/

@@ -169,20 +169,20 @@ func (s *Store) CreateConversation(ctx context.Context, tenant TenantID, patient
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO conversations (tenant_id, patient_id, title)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, tenant_id, patient_id, title, created_at, updated_at`,
+		 RETURNING id, tenant_id, patient_id, title, care_phase, created_at, updated_at`,
 		tenant.UUID(), patientID, title,
-	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
 func (s *Store) GetConversation(ctx context.Context, tenant TenantID, id uuid.UUID) (Conversation, error) {
 	var c Conversation
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, patient_id, title, created_at, updated_at
+		`SELECT id, tenant_id, patient_id, title, care_phase, created_at, updated_at
 		   FROM conversations
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id,
-	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Conversation{}, ErrNotFound
 	}
@@ -191,7 +191,7 @@ func (s *Store) GetConversation(ctx context.Context, tenant TenantID, id uuid.UU
 
 func (s *Store) ListConversationsByPatient(ctx context.Context, tenant TenantID, patientID uuid.UUID) ([]Conversation, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tenant_id, patient_id, title, created_at, updated_at
+		`SELECT id, tenant_id, patient_id, title, care_phase, created_at, updated_at
 		   FROM conversations
 		  WHERE tenant_id = $1 AND patient_id = $2
 		  ORDER BY updated_at DESC`,
@@ -204,7 +204,7 @@ func (s *Store) ListConversationsByPatient(ctx context.Context, tenant TenantID,
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -508,6 +508,53 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 		tenant.UUID(), id, state, reviewedBy, finalContent,
 	)
 	return err
+}
+
+// ErrInvalidCarePhaseTransition is returned by TransitionCarePhase when the
+// requested (from, to) pair is not one of the edges the care-phase state
+// machine allows. No row is mutated when this error is returned.
+var ErrInvalidCarePhaseTransition = errors.New("store: invalid care phase transition")
+
+// allowedCarePhaseTransitions enumerates every legal care-phase edge (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Conversation Care Phase State Machine"). Any (from, to) pair not present
+// here — including same-state pairs like INTAKE→INTAKE — is disallowed.
+var allowedCarePhaseTransitions = map[CarePhase]map[CarePhase]bool{
+	CarePhaseIntake:         {CarePhaseAwaitingReview: true},
+	CarePhaseAwaitingReview: {CarePhasePlanDelivered: true, CarePhaseIntake: true},
+	CarePhasePlanDelivered:  {CarePhaseIntake: true},
+}
+
+// TransitionCarePhase moves a conversation's care_phase from `from` to `to`
+// within tx, atomically with whatever other writes the caller composes in the
+// same transaction (e.g. SOAP draft commit, recommendation delivery,
+// rejection). The edge is validated against allowedCarePhaseTransitions
+// before any query runs, so a disallowed edge returns
+// ErrInvalidCarePhaseTransition without touching the database.
+//
+// The UPDATE is additionally scoped by `WHERE care_phase = from`, a
+// compare-and-swap guard: if the row's current phase has already moved on
+// (e.g. a racing writer), zero rows are affected and ErrNotFound is
+// returned instead of silently overwriting a phase the caller didn't
+// observe. The WHERE clause is also tenant-scoped, so a call made under the
+// wrong tenant id matches zero rows and leaves the row untouched.
+func (ts *TxStore) TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error {
+	if !allowedCarePhaseTransitions[from][to] {
+		return ErrInvalidCarePhaseTransition
+	}
+	tag, err := ts.tx.Exec(ctx,
+		`UPDATE conversations
+		    SET care_phase = $4
+		  WHERE tenant_id = $1 AND id = $2 AND care_phase = $3`,
+		tenant.UUID(), conversationID, string(from), string(to),
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CreateAuditEvent writes an audit event within tx. PHI must not appear in

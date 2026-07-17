@@ -75,6 +75,6 @@
 - [x] 6.2 Manual smoke on iOS simulator + web portal against compose stack;
       confirm acknowledgement and relay messages render through existing
       message sync with no iOS changes.
-- [ ] 6.3 `openspec validate add-agent-care-loop --strict`; file follow-up
+- [x] 6.3 `openspec validate add-agent-care-loop --strict`; file follow-up
       beads for anything deferred (relay treatment for prescription
       payloads, portal auto-refresh).

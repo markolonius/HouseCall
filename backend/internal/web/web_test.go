@@ -64,8 +64,8 @@ type fakeStore struct {
 	txnErr        error                              // if set, Txn returns this error
 
 	// care-phase transition support (task 2.4)
-	carePhaseErr   error            // if set, TransitionCarePhase returns this error instead of recording
-	carePhaseCalls []carePhaseCall  // every TransitionCarePhase call, in order
+	carePhaseErr   error           // if set, TransitionCarePhase returns this error instead of recording
+	carePhaseCalls []carePhaseCall // every TransitionCarePhase call, in order
 }
 
 // carePhaseCall records one TransitionCarePhase invocation for assertions.

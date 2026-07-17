@@ -27,6 +27,22 @@ type reviewFakeStore struct {
 	rec     *store.Recommendation // nil → GetRecommendationForPhysician returns ErrNotFound
 	phys    *store.Physician      // nil → GetPhysician returns ErrNotFound
 	patient *store.Patient        // nil → GetPatient returns ErrNotFound
+
+	// carePhaseErr, when non-nil, is returned by every TransitionCarePhase
+	// call the fake TxWriter makes — used to simulate a CAS miss
+	// (store.ErrNotFound) or an unexpected DB error.
+	carePhaseErr error
+	// carePhaseCalls records every TransitionCarePhase invocation so tests
+	// can assert it was (or wasn't) called, and with which from/to.
+	carePhaseCalls []carePhaseCall
+	// auditEvents records every audit event written inside the transaction
+	// (including the recommendation.delivered_phase_mismatch event).
+	auditEvents []store.AuditEvent
+}
+
+type carePhaseCall struct {
+	conversationID uuid.UUID
+	from, to       store.CarePhase
 }
 
 func (f *reviewFakeStore) GetRecommendationForPhysician(_ context.Context, _ store.TenantID, _, _ uuid.UUID) (store.Recommendation, error) {
@@ -55,26 +71,39 @@ func (f *reviewFakeStore) CreateAuditEvent(_ context.Context, _ store.TenantID, 
 }
 
 func (f *reviewFakeStore) TxnW(_ context.Context, fn func(store.TxWriter) error) error {
-	return fn(&noopTxWriter{})
+	return fn(&noopTxWriter{f: f})
 }
 
-// noopTxWriter satisfies store.TxWriter for tests that only need TxnW to succeed.
-type noopTxWriter struct{}
+// noopTxWriter satisfies store.TxWriter for tests that only need TxnW to
+// succeed. TransitionCarePhase and CreateAuditEvent are recorded on the
+// owning reviewFakeStore so tests can assert on them.
+type noopTxWriter struct{ f *reviewFakeStore }
 
 func (n *noopTxWriter) UpdateRecommendationState(_ context.Context, _ store.TenantID, _ uuid.UUID, _ string, _ *uuid.UUID, _ *string) error {
 	return nil
 }
-func (n *noopTxWriter) CreateAuditEvent(_ context.Context, _ store.TenantID, _ store.AuditEvent) error {
+func (n *noopTxWriter) CreateAuditEvent(_ context.Context, _ store.TenantID, e store.AuditEvent) error {
+	if n.f != nil {
+		n.f.auditEvents = append(n.f.auditEvents, e)
+	}
+	return nil
+}
+func (n *noopTxWriter) TransitionCarePhase(_ context.Context, _ store.TenantID, conversationID uuid.UUID, from, to store.CarePhase) error {
+	if n.f != nil {
+		n.f.carePhaseCalls = append(n.f.carePhaseCalls, carePhaseCall{conversationID: conversationID, from: from, to: to})
+		return n.f.carePhaseErr
+	}
 	return nil
 }
 
 // ---- tests ---------------------------------------------------------------------
 
 var (
-	testTenant    = store.TenantID(uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000001"))
+	testTenant      = store.TenantID(uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000001"))
 	testPhysicianID = uuid.MustParse("bbbbbbbb-0000-0000-0000-000000000002")
 	testPatientID   = uuid.MustParse("cccccccc-0000-0000-0000-000000000003")
 	testRecID       = uuid.MustParse("dddddddd-0000-0000-0000-000000000004")
+	testConvID      = uuid.MustParse("eeeeeeee-0000-0000-0000-000000000005")
 )
 
 // TestExecute_RecommendationNotFound verifies that when the care-relationship
@@ -124,11 +153,12 @@ func TestExecute_PhysicianNotFound(t *testing.T) {
 // PENDING_REVIEW → DELIVERED when the physician is licensed in the patient's state.
 func TestExecute_ApproveDelivers(t *testing.T) {
 	rec := &store.Recommendation{
-		ID:           testRecID,
-		TenantID:     testTenant,
-		PatientID:    testPatientID,
-		State:        domain.StatePendingReview,
-		DraftContent: "drink water",
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
 	}
 	phys := &store.Physician{
 		ID:             testPhysicianID,
@@ -149,5 +179,177 @@ func TestExecute_ApproveDelivers(t *testing.T) {
 	}
 	if result.FinalState != domain.StateDelivered {
 		t.Fatalf("want DELIVERED, got %q", result.FinalState)
+	}
+
+	// The care-phase move must be part of the same transaction as the
+	// DELIVERED write (task 2.4).
+	if len(s.carePhaseCalls) != 1 {
+		t.Fatalf("want exactly 1 TransitionCarePhase call, got %d", len(s.carePhaseCalls))
+	}
+	call := s.carePhaseCalls[0]
+	if call.conversationID != testConvID {
+		t.Errorf("conversationID: want %s, got %s", testConvID, call.conversationID)
+	}
+	if call.from != store.CarePhaseAwaitingReview || call.to != store.CarePhasePlanDelivered {
+		t.Errorf("transition: want AWAITING_REVIEW -> PLAN_DELIVERED, got %s -> %s", call.from, call.to)
+	}
+}
+
+// TestExecute_ModifyDelivers_TransitionsCarePhase mirrors
+// TestExecute_ApproveDelivers for the modify path, which also reaches
+// DELIVERED and must move the conversation to PLAN_DELIVERED.
+func TestExecute_ModifyDelivers_TransitionsCarePhase(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
+
+	result, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionModify, "take ibuprofen")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.FinalState != domain.StateDelivered {
+		t.Fatalf("want DELIVERED, got %q", result.FinalState)
+	}
+	if len(s.carePhaseCalls) != 1 {
+		t.Fatalf("want exactly 1 TransitionCarePhase call, got %d", len(s.carePhaseCalls))
+	}
+	if got := s.carePhaseCalls[0]; got.from != store.CarePhaseAwaitingReview || got.to != store.CarePhasePlanDelivered {
+		t.Errorf("transition: want AWAITING_REVIEW -> PLAN_DELIVERED, got %s -> %s", got.from, got.to)
+	}
+}
+
+// TestExecute_Reject_DoesNotTouchCarePhase verifies that a rejection never
+// calls TransitionCarePhase — Phase 3 owns AWAITING_REVIEW -> INTAKE on
+// rejection, and this task must not touch care_phase for that path.
+func TestExecute_Reject_DoesNotTouchCarePhase(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient}
+
+	result, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionReject, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.FinalState != domain.StateRejected {
+		t.Fatalf("want REJECTED, got %q", result.FinalState)
+	}
+	if len(s.carePhaseCalls) != 0 {
+		t.Fatalf("reject must not call TransitionCarePhase, got %d calls", len(s.carePhaseCalls))
+	}
+}
+
+// TestExecute_DeliverTolerates_CarePhaseMismatch verifies the deliberate
+// tolerate-on-mismatch decision (task 2.4): when the conversation is not
+// observed in AWAITING_REVIEW at delivery time (TransitionCarePhase returns
+// store.ErrNotFound — a CAS miss), Execute does NOT fail the delivery. The
+// recommendation still reaches DELIVERED and an audit event records the
+// mismatch. Rationale: care_phase is agent-behaviour routing, not a gate on
+// a physician's clinical decision — delivering physician-approved content
+// must never be blocked by an internal phase-tracking inconsistency.
+func TestExecute_DeliverTolerates_CarePhaseMismatch(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: store.ErrNotFound}
+
+	result, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionApprove, "")
+	if err != nil {
+		t.Fatalf("delivery must not fail on a care-phase CAS miss: %v", err)
+	}
+	if result.FinalState != domain.StateDelivered {
+		t.Fatalf("want DELIVERED despite the care-phase mismatch, got %q", result.FinalState)
+	}
+
+	found := false
+	for _, e := range s.auditEvents {
+		if e.EventType == "recommendation.delivered_phase_mismatch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("want a recommendation.delivered_phase_mismatch audit event")
+	}
+}
+
+// TestExecute_DeliverFails_OnUnexpectedCarePhaseError verifies that a
+// TransitionCarePhase error OTHER than store.ErrNotFound (e.g. a real DB
+// error) fails the whole transaction — only the specific CAS-miss case is
+// tolerated.
+func TestExecute_DeliverFails_OnUnexpectedCarePhaseError(t *testing.T) {
+	rec := &store.Recommendation{
+		ID:             testRecID,
+		TenantID:       testTenant,
+		ConversationID: testConvID,
+		PatientID:      testPatientID,
+		State:          domain.StatePendingReview,
+		DraftContent:   "drink water",
+	}
+	phys := &store.Physician{
+		ID:             testPhysicianID,
+		TenantID:       testTenant,
+		StatesLicensed: []string{"CA"},
+	}
+	patient := &store.Patient{
+		ID:       testPatientID,
+		TenantID: testTenant,
+		State:    "CA",
+	}
+	wantErr := errors.New("boom: connection reset")
+	s := &reviewFakeStore{rec: rec, phys: phys, patient: patient, carePhaseErr: wantErr}
+
+	_, err := review.Execute(context.Background(), s, testTenant,
+		testPhysicianID, testRecID, domain.ActionApprove, "")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("want %v, got %v", wantErr, err)
 	}
 }

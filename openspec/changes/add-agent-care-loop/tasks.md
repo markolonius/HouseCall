@@ -29,7 +29,7 @@
       "report is with your physician" message, no model call, no new
       recommendation. Test reproduces the 2026-07-15 double-draft bug and
       proves it fixed. Close bead `HouseCall-lkzs` when this lands.
-- [ ] 2.4 Recommendation delivery (`web.go` review handler + `Transition`
+- [x] 2.4 Recommendation delivery (`web.go` review handler + `Transition`
       call site): transition conversation to `PLAN_DELIVERED` in the delivery
       transaction. Integration test: approve → phase `PLAN_DELIVERED`.
 

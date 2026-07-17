@@ -62,6 +62,16 @@ type fakeStore struct {
 	auditEvents   []store.AuditEvent                 // captured audit events
 	updatedStates map[uuid.UUID]string               // final state per recommendation (set by Txn)
 	txnErr        error                              // if set, Txn returns this error
+
+	// care-phase transition support (task 2.4)
+	carePhaseErr   error            // if set, TransitionCarePhase returns this error instead of recording
+	carePhaseCalls []carePhaseCall  // every TransitionCarePhase call, in order
+}
+
+// carePhaseCall records one TransitionCarePhase invocation for assertions.
+type carePhaseCall struct {
+	conversationID uuid.UUID
+	from, to       store.CarePhase
 }
 
 func (f *fakeStore) GetPhysicianByEmail(_ context.Context, tenant store.TenantID, email string) (store.Physician, error) {
@@ -207,6 +217,14 @@ func (t *fakeTxWriter) UpdateRecommendationState(_ context.Context, _ store.Tena
 
 func (t *fakeTxWriter) CreateAuditEvent(_ context.Context, _ store.TenantID, e store.AuditEvent) error {
 	t.f.auditEvents = append(t.f.auditEvents, e)
+	return nil
+}
+
+func (t *fakeTxWriter) TransitionCarePhase(_ context.Context, _ store.TenantID, conversationID uuid.UUID, from, to store.CarePhase) error {
+	if t.f.carePhaseErr != nil {
+		return t.f.carePhaseErr
+	}
+	t.f.carePhaseCalls = append(t.f.carePhaseCalls, carePhaseCall{conversationID: conversationID, from: from, to: to})
 	return nil
 }
 

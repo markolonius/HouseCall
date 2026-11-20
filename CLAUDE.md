@@ -824,22 +824,23 @@ For issues not covered in this guide:
 
 ## Automated Phase Workflow
 
-Implementation is driven by an OpenSpec → beads → worktree → coder/tester/reviewer
-→ PR loop. See [`docs/WORKFLOW.md`](docs/WORKFLOW.md) for the full description.
+Implementation is driven by an OpenSpec → beads → worktree → coder → test
+script + reviewer → PR loop. See [`docs/WORKFLOW.md`](docs/WORKFLOW.md).
 
-- To implement a phase of an approved OpenSpec change, run the single command
-  `/run-phase <change-id> <phase>` (e.g. `/run-phase add-cloud-platform-mvp 3`).
-  The main session acts as the orchestrator and dispatches the
-  `coder`/`tester`/`reviewer` subagents itself.
-- **Do not invoke the `coder`, `tester`, or `reviewer` subagents directly**, and
-  do not implement phase tasks by hand — go through `/run-phase` so beads, the
-  GitHub mirror, the worktree, and the per-phase PR stay consistent.
-- The orchestrator may push its phase branch and open one PR, but never pushes
-  to `main` and never force-pushes.
+- To implement a phase of an approved OpenSpec change, run
+  `/run-phase <change-id> <phase>`. The main session is the orchestrator: it
+  dispatches the `coder` subagent per task, then gates the phase once with
+  `scripts/test.sh` and one `reviewer` pass over the whole phase diff.
+- **Do not invoke the `coder` or `reviewer` subagents directly** for phase
+  work, and do not implement phase tasks by hand — go through `/run-phase` so
+  beads, the worktree, and the per-phase PR stay consistent.
+- Each phase PR targets `main` and must be merged before the next phase starts.
+  The orchestrator never pushes to `main` and never force-pushes.
+- Small standalone fixes do not need the pipeline: a plain branch and PR.
+- Run tests with `scripts/test.sh` (`--all` for both suites).
 - One-time machine setup is `scripts/dev-bootstrap.sh` (macOS/Homebrew).
 
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.

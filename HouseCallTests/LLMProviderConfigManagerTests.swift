@@ -11,6 +11,13 @@ import Foundation
 @testable import HouseCall
 
 struct LLMProviderConfigManagerTests {
+    /// Fixed build config for tests that assert build-config behaviour, so the
+    /// result does not depend on the developer's local Secrets.xcconfig.
+    /// Mirrors Base.xcconfig: provider = openai, no key, no custom endpoint.
+    private static let baseBuildConfig: (String) -> Any? = { key in
+        ["LLMDefaultProvider": "openai"][key]
+    }
+
     // MARK: - Provider Selection Tests
 
     @Test("Default provider is OpenAI")
@@ -21,7 +28,8 @@ struct LLMProviderConfigManagerTests {
         let keychainManager = KeychainManager()
         let manager = LLMProviderConfigManager(
             keychainManager: keychainManager,
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
 
         #expect(manager.getActiveProvider() == .openai)
@@ -39,7 +47,8 @@ struct LLMProviderConfigManagerTests {
         let keychainManager = KeychainManager()
         let manager = LLMProviderConfigManager(
             keychainManager: keychainManager,
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
 
         manager.setActiveProvider(.claude)
@@ -62,14 +71,16 @@ struct LLMProviderConfigManagerTests {
         // First instance attempts to set provider
         let manager1 = LLMProviderConfigManager(
             keychainManager: keychainManager,
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
         manager1.setActiveProvider(.custom)
 
         // Second instance: build-config default still wins over the persisted value.
         let manager2 = LLMProviderConfigManager(
             keychainManager: keychainManager,
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
 
         #expect(manager2.getActiveProvider() == .openai)
@@ -259,7 +270,8 @@ struct LLMProviderConfigManagerTests {
 
         let manager = LLMProviderConfigManager(
             keychainManager: KeychainManager(),
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
 
         let config = manager.loadCustomProviderConfig()
@@ -308,7 +320,8 @@ struct LLMProviderConfigManagerTests {
 
         let manager = LLMProviderConfigManager(
             keychainManager: KeychainManager(),
-            userDefaults: userDefaults
+            userDefaults: userDefaults,
+            buildConfigValue: Self.baseBuildConfig
         )
 
         let provider = manager.createProvider(type: .custom)

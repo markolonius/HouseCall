@@ -24,3 +24,5 @@ HouseCall/Config/Secrets.xcconfig
 *.db
 .beads-credential-key
 .beads/proxieddb/
+# code-review-graph local index (tool retired; directory may still exist)
+.code-review-graph/

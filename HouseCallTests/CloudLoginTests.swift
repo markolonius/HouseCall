@@ -340,4 +340,50 @@ struct CloudLoginTests {
         )
         #expect(service.isCoreAPIConfigured == true)
     }
+
+    // MARK: - Re-sign-in locked to the current patient
+
+    @Test("Re-sign-in with a different server patient id ends the session and stores no token")
+    func testResignInPatientMismatch() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        let currentId = UUID()
+        let otherId = UUID()
+        _ = try makeRepo(context: context).createUser(
+            email: "patient@example.com",
+            password: "SecurePassword123!",
+            passcode: nil,
+            fullName: "Jane Smith",
+            authMethod: .password,
+            id: currentId
+        )
+        let fake = FakeCoreAPIAuthClient()
+        fake.seed(email: "patient@example.com", patientId: currentId)
+        let service = makeService(context: context, keychain: keychain, stubClient: fake, tenantId: "t-1")
+        _ = try await service.login(email: "patient@example.com", credential: "SecurePassword123!", authMethod: .password)
+        try keychain.delete(key: KeychainManager.Keys.coreAPIJWT)
+        await Task.yield()
+        #expect(service.isAuthenticated)
+
+        // Server now resolves the email to a different patient.
+        fake.seed(email: "patient@example.com", patientId: otherId)
+        var message = ""
+        do {
+            _ = try await service.login(
+                email: "patient@example.com",
+                credential: "SecurePassword123!",
+                authMethod: .password,
+                expectedUserId: currentId
+            )
+            Issue.record("mismatched patient id must be rejected")
+        } catch {
+            message = error.localizedDescription
+        }
+
+        #expect(!message.contains(currentId.uuidString) && !message.contains(otherId.uuidString)
+                && !message.contains("patient@example.com"), "error must not leak ids or email")
+        #expect(try keychain.get(key: KeychainManager.Keys.coreAPIJWT) == nil, "no token stored")
+        #expect(service.currentSession == nil, "local session is ended")
+        #expect(!service.isAuthenticated)
+    }
 }

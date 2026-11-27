@@ -326,7 +326,8 @@ class AuthenticationService: ObservableObject {
         email: String,
         credential: String,
         authMethod: AuthMethod,
-        useBiometric: Bool = false
+        useBiometric: Bool = false,
+        expectedUserId: UUID? = nil
     ) async throws -> User {
         // Biometric pre-check (preserved from original behaviour).
         // Runs regardless of cloud/local path: biometric gates device-local session
@@ -349,7 +350,8 @@ class AuthenticationService: ObservableObject {
             tenantId: tenantId,
             email: email,
             credential: credential,
-            authMethod: authMethod
+            authMethod: authMethod,
+            expectedUserId: expectedUserId
         )
     }
 
@@ -361,7 +363,8 @@ class AuthenticationService: ObservableObject {
         tenantId: String,
         email: String,
         credential: String,
-        authMethod: AuthMethod
+        authMethod: AuthMethod,
+        expectedUserId: UUID?
     ) async throws -> User {
         // Step 1: Authenticate against Core API (Core API is authoritative).
         let authResult: CoreAPIAuthResult
@@ -415,6 +418,14 @@ class AuthenticationService: ObservableObject {
         // Step 2: Parse the server-canonical patient UUID.
         guard let patientId = UUID(uuidString: authResult.patientId) else {
             throw AuthenticationError.loginFailed("Invalid patient id from server")
+        }
+
+        // Re-sign-in guard: when re-authenticating on top of an existing local
+        // session, the server identity must be the same patient. Otherwise do
+        // not store the token or create a session, and end the local session.
+        if let expectedUserId, expectedUserId != patientId {
+            try? await logout()
+            throw AuthenticationError.loginFailed("Sign-in did not match the current account.")
         }
 
         // Step 3: Ensure the local cache user exists for the canonical patientId.

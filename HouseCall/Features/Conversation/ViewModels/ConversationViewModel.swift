@@ -44,6 +44,15 @@ class ConversationViewModel: ObservableObject {
 
     var isReadOnly: Bool { cloudState == .signInRequired }
 
+    /// True while waiting for the agent's reply: the cloud session is active and
+    /// the newest message is the patient's own (sent or pending send) with no
+    /// assistant message after it. Computed from the message list so it
+    /// survives relaunch and clears when any assistant message arrives.
+    var isAwaitingReply: Bool {
+        guard cloudState == .active, let last = messages.last else { return false }
+        return last.role == MessageRole.user.rawValue && last.syncState != "failed"
+    }
+
     // MARK: - Dependencies
 
     let conversationRepository: ConversationRepositoryProtocol

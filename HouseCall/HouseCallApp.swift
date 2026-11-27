@@ -240,10 +240,17 @@ private struct AutoLaunchChatView: View {
             let msgRepo = messageRepository
             let auth = authService
             let cloudSignIn: ConversationViewModel.CloudSignIn = { password in
-                guard let email = auth.getCurrentUser()?.email else {
+                guard let current = auth.getCurrentUser(), let email = current.email else {
                     throw AuthenticationError.noActiveSession
                 }
-                _ = try await auth.login(email: email, credential: password, authMethod: .password)
+                // Locked to the current patient: a different server identity
+                // is rejected and ends the local session.
+                _ = try await auth.login(
+                    email: email,
+                    credential: password,
+                    authMethod: .password,
+                    expectedUserId: current.id
+                )
                 guard let fresh = buildCloudSyncCoordinator(
                     conversationRepository: convRepo,
                     messageRepository: msgRepo

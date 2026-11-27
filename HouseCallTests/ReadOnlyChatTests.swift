@@ -200,4 +200,38 @@ struct ReadOnlyChatTests {
         let second = try messages.first { try f.messageRepo.decryptMessageContent($0) == "second" }
         #expect(second?.syncState == "synced")
     }
+
+    @Test("isAwaitingReply follows the message list and the read-only state")
+    func awaitingReplyIndicator() async throws {
+        let f = try makeFixture()
+        let sid = UUID().uuidString
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+        let coordinator = try makeCoordinator(f, status: 201, sessionID: sid)
+        let vm = makeViewModel(f, coordinator: coordinator, cloudSignIn: nil)
+        #expect(!vm.isAwaitingReply, "empty chat is not waiting")
+
+        await vm.sendMessage(content: "I have a headache")
+        try await waitUntil { vm.messages.count == 1 }
+        #expect(vm.isAwaitingReply, "patient message with no reply is awaiting")
+
+        // An assistant message (e.g. via message.created) clears it.
+        _ = try f.messageRepo.createMessage(
+            conversationId: f.conversationId, role: .assistant,
+            content: "How long?", streamingComplete: true)
+        vm.loadMessages()
+        try await waitUntil { vm.messages.count == 2 }
+        #expect(!vm.isAwaitingReply)
+
+        // Read-only forces it false even with an unanswered patient message.
+        _ = try f.messageRepo.createMessage(
+            conversationId: f.conversationId, role: .user,
+            content: "Two days", streamingComplete: true)
+        vm.loadMessages()
+        try await waitUntil { vm.messages.count == 3 }
+        #expect(vm.isAwaitingReply)
+        let readOnly = makeViewModel(f, coordinator: nil, cloudSignIn: nil)
+        readOnly.loadMessages()
+        try await waitUntil { readOnly.messages.count == 3 }
+        #expect(readOnly.isReadOnly && !readOnly.isAwaitingReply)
+    }
 }

@@ -44,11 +44,19 @@ struct ChatView: View {
                             RecommendationCard(model: card)
                                 .id("rec-\(card.id)")
                         }
+
+                        if viewModel.isAwaitingReply {
+                            WaitingForReplyIndicator()
+                                .id("awaiting-reply")
+                        }
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 16)
                 }
                 .onChange(of: viewModel.messages.count) {
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: viewModel.isAwaitingReply) {
                     scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: viewModel.recommendationCards.count) {
@@ -236,6 +244,43 @@ struct ChatView: View {
     }
 }
 
+// MARK: - Waiting indicator
+
+/// Typing dots shown between sending a message and the agent's reply.
+private struct WaitingForReplyIndicator: View {
+    @State private var animate = false
+
+    var body: some View {
+        HStack {
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color.gray)
+                        .frame(width: 8, height: 8)
+                        .opacity(animate ? 1.0 : 0.3)
+                        .animation(
+                            .easeInOut(duration: 0.6)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(index) * 0.2),
+                            value: animate
+                        )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(Color(.systemGray5))
+            .cornerRadius(20)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .onAppear { animate = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Waiting for a reply")
+        .accessibilityIdentifier("chatAwaitingReplyIndicator")
+    }
+}
+
 // MARK: - Sign-in sheet
 
 /// Asks for the password (email prefilled from the current session) and
@@ -249,9 +294,10 @@ private struct CloudSignInSheet: View {
         NavigationStack {
             Form {
                 Section {
+                    // Display only: sign-in is locked to the current patient.
                     Text(viewModel.signInEmail)
                         .foregroundColor(.secondary)
-                        .accessibilityLabel("Email \(viewModel.signInEmail)")
+                        .accessibilityLabel("Email \(viewModel.signInEmail), cannot be changed")
                     SecureField("Password", text: $password)
                         .textContentType(.password)
                         .accessibilityIdentifier("chatSignInPassword")

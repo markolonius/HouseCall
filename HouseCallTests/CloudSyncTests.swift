@@ -92,6 +92,36 @@ private func seedConversation(
     return conversation
 }
 
+// MARK: - Async wait helpers
+
+/// Polls `condition` every 20 ms until it is true or `timeout` passes.
+///
+/// Replaces fixed sleeps that raced the coordinator's async handlers on slower
+/// CI runners. On timeout it returns without failing, so the test's own
+/// `#expect` assertions report what is missing.
+@MainActor
+private func waitUntil(
+    timeout: Duration = .seconds(5),
+    _ condition: () throws -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while try !condition() {
+        if clock.now >= deadline { return }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+/// True once the conversation has an assistant message marked `synced`.
+@MainActor
+private func hasSyncedAssistantMessage(
+    _ repo: CoreDataMessageRepository,
+    conversationId: UUID
+) throws -> Bool {
+    try repo.fetchAllMessages(conversationId: conversationId)
+        .contains { $0.role == "assistant" && $0.syncState == "synced" }
+}
+
 // MARK: - CloudSyncTests
 
 @Suite("CloudSync 6.3 Tests")
@@ -393,8 +423,11 @@ struct CloudSyncTests {
         )
         syncClient.eventPublisher.send(wsEvent)
 
-        // Give the async handler a moment to complete.
-        try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        // Wait for the async handler to publish the card and persist the message.
+        try await waitUntil {
+            try coordinator.deliveredCards.count >= 1
+                && hasSyncedAssistantMessage(messageRepo, conversationId: convLocalId)
+        }
 
         // 1. The coordinator should have published a card model.
         let cards = coordinator.deliveredCards
@@ -1044,8 +1077,11 @@ struct CloudSyncTests {
         )
         onlineSyncClient.eventPublisher.send(wsEvent)
 
-        // Allow the async WS handler to complete.
-        try await Task.sleep(nanoseconds: 300_000_000) // 300 ms
+        // Wait for the async WS handler to publish the card and persist the message.
+        try await waitUntil {
+            try onlineCoordinator.deliveredCards.count >= 1
+                && hasSyncedAssistantMessage(messageRepo, conversationId: convLocalId)
+        }
 
         let cards = onlineCoordinator.deliveredCards
         #expect(cards.count == 1, "Step 3: exactly one guidance card should be published")
@@ -1143,8 +1179,11 @@ struct CloudSyncTests {
         )
         syncClient.eventPublisher.send(wsEvent)
 
-        // Allow the async handler to complete.
-        try await Task.sleep(nanoseconds: 200_000_000) // 200 ms
+        // Wait for the async handler to persist the message and update the count.
+        try await waitUntil {
+            try hasSyncedAssistantMessage(messageRepo, conversationId: convLocalId)
+                && coordinator.syncedMessageCount >= 1
+        }
 
         // 1. An assistant message should be persisted in Core Data.
         let messages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
@@ -1329,8 +1368,11 @@ struct CloudSyncTests {
         )
         syncClient.eventPublisher.send(wsEvent)
 
-        // Give the async handler time to complete.
-        try await Task.sleep(nanoseconds: 200_000_000) // 200 ms
+        // Wait for the async handler to publish the card and persist the message.
+        try await waitUntil {
+            try coordinator.deliveredCards.count >= 1
+                && hasSyncedAssistantMessage(messageRepo, conversationId: convLocalId)
+        }
 
         // 1. coordinator.deliveredCards must contain exactly one soap_note card.
         let cards = coordinator.deliveredCards
@@ -1445,8 +1487,12 @@ struct CloudSyncTests {
         syncClient.eventPublisher.send(wsEvent)
         syncClient.eventPublisher.send(wsEvent)
 
-        // Allow both handlers to complete.
-        try await Task.sleep(nanoseconds: 300_000_000) // 300 ms
+        // Wait for the first insert, then give a possible duplicate insert time
+        // to land before asserting there is exactly one.
+        try await waitUntil {
+            try hasSyncedAssistantMessage(messageRepo, conversationId: convLocalId)
+        }
+        try await Task.sleep(for: .milliseconds(300))
 
         // Exactly ONE assistant message must be present — not two.
         let messages = try messageRepo.fetchAllMessages(conversationId: convLocalId)

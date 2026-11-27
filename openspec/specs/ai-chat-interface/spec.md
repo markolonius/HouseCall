@@ -27,38 +27,6 @@ messaging interface, with assistant responses rendered as Markdown.
 - **AND** AI messages are left-aligned in gray bubbles
 - **AND** each message shows a timestamp
 
-### Requirement: Stream AI responses in real-time
-
-AI responses SHALL stream token-by-token to the user interface, with the
-visible message bubble updating incrementally as each Server-Sent Events chunk
-arrives, providing immediate feedback and reducing perceived latency.
-
-#### Scenario: Long AI response streams smoothly
-
-- **GIVEN** the user asks "What could cause chronic fatigue?"
-- **WHEN** the AI generates a 500-token response
-- **THEN** tokens appear incrementally in the message bubble as chunks arrive
-- **AND** the scroll view auto-scrolls to keep the latest text visible
-- **AND** the UI remains responsive (60fps) during streaming
-- **AND** the user can read earlier parts of the response while it completes
-
-#### Scenario: Streamed text updates before completion
-
-- **GIVEN** the assistant has begun streaming a response
-- **WHEN** the first SSE chunks have arrived but the stream is not complete
-- **THEN** the partial text is already visible in the bubble
-- **AND** the bubble continues to update as further chunks arrive
-- **AND** the input remains disabled until the stream completes
-
-#### Scenario: Streaming is interrupted by network loss
-
-- **GIVEN** the AI is streaming a response (50% complete)
-- **WHEN** the network connection is lost
-- **THEN** the partial response remains visible in the chat
-- **AND** an error indicator shows "Connection lost"
-- **AND** a "Retry" button appears below the partial message
-- **AND** tapping Retry resends the user's last message
-
 ### Requirement: Enable message input and sending
 
 Users SHALL be able to compose and send text messages to the AI assistant through an intuitive input interface.
@@ -165,8 +133,9 @@ conversation without an intermediate conversation list or a "New Chat" step.
 
 - **GIVEN** the patient has no existing conversations
 - **WHEN** the patient finishes logging in
-- **THEN** a new conversation is created automatically using the default provider
+- **THEN** a new conversation is created automatically and registered with the Core API
 - **AND** the chat screen opens on that empty conversation ready for input
+- **AND** the app does not select a model provider for it (the legacy `llmProvider` field keeps its schema default)
 
 ### Requirement: Access profile from the chat toolbar
 

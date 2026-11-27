@@ -45,7 +45,7 @@ func TestParseRelayTurn_Explain_NoMarker_TextReturned(t *testing.T) {
 // deferral sentence the prompt instructs the model to use is returned as
 // plain Text — deferral is not a separate RelayOutcome state.
 func TestParseRelayTurn_Defer_NoMarker_TextReturned(t *testing.T) {
-	const wantText = "That's a question for your physician — I can pass it along."
+	const wantText = "The plan does not cover that. Please send any new or changed concerns as a new message so your care team can review it."
 	got := parseRelayTurn(wantText)
 	if got.NewComplaint {
 		t.Errorf("NewComplaint = true, want false for a deferral reply")
@@ -216,5 +216,19 @@ func TestParseRelayTurn_NoMarker_WhitespaceTrimmed(t *testing.T) {
 	}
 	if got.Text != inner {
 		t.Errorf("Text = %q, want %q (whitespace not trimmed)", got.Text, inner)
+	}
+}
+
+// TestRelaySystemPrompt_NoForwardingPromiseOrClinicianRole guards two honesty
+// properties: nothing forwards a relay question to a physician, so the prompt
+// must not promise it; and the relay assistant is not a clinician.
+func TestRelaySystemPrompt_NoForwardingPromiseOrClinicianRole(t *testing.T) {
+	for _, bad := range []string{"pass it along", "licensed clinician"} {
+		if strings.Contains(RelaySystemPrompt, bad) {
+			t.Errorf("RelaySystemPrompt must not contain %q", bad)
+		}
+	}
+	if !strings.Contains(RelaySystemPrompt, "new message") {
+		t.Error("RelaySystemPrompt must tell the patient to raise new concerns as a new message")
 	}
 }

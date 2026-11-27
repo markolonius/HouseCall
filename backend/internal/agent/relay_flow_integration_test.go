@@ -161,7 +161,7 @@ func TestRunPlanDeliveredTurn_DeferralReply_PersistedNoTransition(t *testing.T) 
 		t.Fatalf("create patient message: %v", err)
 	}
 
-	const deferralText = "That's a question for your physician — I can pass it along."
+	const deferralText = "The plan does not cover that. Please send any new or changed concerns as a new message so your care team can review it."
 	physNotifier := &captureNotifier{}
 	patNotifier := &spyPatientNotifier{}
 	d := NewDrafter(&spyClient{text: deferralText}, s, physNotifier, patNotifier)

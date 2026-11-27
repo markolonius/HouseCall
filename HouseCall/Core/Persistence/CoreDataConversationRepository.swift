@@ -30,7 +30,7 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
 
     func createConversation(
         userId: UUID,
-        provider: LLMProviderType,
+        provider: LLMProviderType?,
         title: String? = nil
     ) throws -> Conversation {
         // Create conversation entity
@@ -40,7 +40,10 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
         conversation.createdAt = Date()
         conversation.updatedAt = Date()
         conversation.isActive = true
-        conversation.llmProvider = provider.rawValue
+        // nil leaves llmProvider at the Core Data schema default.
+        if let provider = provider {
+            conversation.llmProvider = provider.rawValue
+        }
 
         // Encrypt title if provided
         if let title = title, !title.isEmpty {
@@ -65,13 +68,14 @@ class CoreDataConversationRepository: ConversationRepositoryProtocol {
         }
 
         // Log audit event
+        var info = ["conversationId": conversation.id!.uuidString]
+        if let provider = provider {
+            info["provider"] = provider.rawValue
+        }
         try? auditLogger.log(
             event: .conversationCreated,
             userId: userId,
-            details: AuditEventDetails(additionalInfo: [
-                "conversationId": conversation.id!.uuidString,
-                "provider": provider.rawValue
-            ])
+            details: AuditEventDetails(additionalInfo: info)
         )
 
         return conversation

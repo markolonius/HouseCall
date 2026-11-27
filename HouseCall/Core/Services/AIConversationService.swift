@@ -84,29 +84,27 @@ class AIConversationService: ObservableObject {
     // MARK: - Conversation Management
 
     /// Creates a new conversation.
-    /// - Parameter provider: Stored provider value (placeholder; the server picks the model)
+    /// - Parameter provider: Optional legacy provider tag. Normally nil: the app does not
+    ///   choose a provider, so `llmProvider` keeps its Core Data schema default.
     /// - Returns: Created Conversation entity
     /// - Throws: ConversationRepositoryError or other errors
     func createConversation(provider: LLMProviderType? = nil) async throws -> Conversation {
-        let selectedProvider = provider ?? .claude
-
         // Create conversation in repository
         let conversation = try conversationRepository.createConversation(
             userId: userId,
-            provider: selectedProvider,
+            provider: provider,
             title: nil
         )
 
         // Log conversation creation
+        var info = ["conversationId": conversation.id!.uuidString]
+        if let provider = provider {
+            info["provider"] = provider.rawValue
+        }
         try? auditLogger.log(
             event: .conversationCreated,
             userId: userId,
-            details: AuditEventDetails(
-                additionalInfo: [
-                    "conversationId": conversation.id!.uuidString,
-                    "provider": selectedProvider.rawValue
-                ]
-            )
+            details: AuditEventDetails(additionalInfo: info)
         )
 
         // Set as current conversation

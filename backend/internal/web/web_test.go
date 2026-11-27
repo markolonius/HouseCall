@@ -1830,3 +1830,44 @@ func TestQueue_SOAPNote_ModifyTextareaPreFilled(t *testing.T) {
 // Prevent unused import error — errors is used in fakeStore implementations.
 var _ = errors.New
 var _ = fmt.Sprintf
+
+func TestQueue_ShowsDraftProvenance(t *testing.T) {
+	model, prompt := "medgemma-27b-text-it", "soap-draft/2026-11-27"
+	with := store.Recommendation{
+		ID:            uuid.MustParse("88888888-0000-0000-0000-000000000008"),
+		TenantID:      testTenantID,
+		PatientID:     testPatientID,
+		State:         "PENDING_REVIEW",
+		PayloadType:   "guidance",
+		DraftContent:  "With provenance",
+		ModelName:     &model,
+		PromptVersion: &prompt,
+	}
+	without := store.Recommendation{
+		ID:           uuid.MustParse("99999999-0000-0000-0000-000000000009"),
+		TenantID:     testTenantID,
+		PatientID:    testPatientID,
+		State:        "PENDING_REVIEW",
+		PayloadType:  "guidance",
+		DraftContent: "Legacy draft",
+	}
+	fs := &fakeStore{
+		physicians: map[string]store.Physician{},
+		queueRecs:  []store.Recommendation{with, without},
+	}
+	h := buildHandler(t, fs)
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/web/queue", nil)
+	req.AddCookie(makeCookie(t, testTenantID, testPhysID, "physician"))
+	h.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, model) || !strings.Contains(body, prompt) {
+		t.Error("queue must show model name and prompt version")
+	}
+	if got := strings.Count(body, "Provenance unknown"); got != 1 {
+		t.Errorf("want exactly one 'Provenance unknown', got %d", got)
+	}
+}

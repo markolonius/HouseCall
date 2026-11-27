@@ -404,6 +404,10 @@ func (h *Handler) handlePanel(w http.ResponseWriter, r *http.Request) {
 type recommendationView struct {
 	store.Recommendation
 	SOAP *domain.SOAPPayload
+	// Provenance is the physician-facing "drafted by" line; "" when either
+	// the model name or prompt version was not recorded.
+	ModelName     string
+	PromptVersion string
 }
 
 // toRecommendationViews converts raw store recommendations into view models.
@@ -413,6 +417,9 @@ func toRecommendationViews(recs []store.Recommendation) []recommendationView {
 	views := make([]recommendationView, len(recs))
 	for i, r := range recs {
 		v := recommendationView{Recommendation: r}
+		if r.ModelName != nil && r.PromptVersion != nil && *r.ModelName != "" && *r.PromptVersion != "" {
+			v.ModelName, v.PromptVersion = *r.ModelName, *r.PromptVersion
+		}
 		if r.PayloadType == domain.PayloadTypeSOAPNote && len(r.Payload) > 0 {
 			var sp domain.SOAPPayload
 			if err := json.Unmarshal(r.Payload, &sp); err == nil {

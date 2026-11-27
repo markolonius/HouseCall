@@ -2,7 +2,7 @@
 name: coder
 description: Implements a single beads task for an OpenSpec change, runs scripts/test.sh, and commits. Invoked by the /run-phase orchestrator with one bead's id, number, and title. Never pushes or opens PRs.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: claude-opus-5-5
+model: claude-sonnet-5-5
 effort: medium
 ---
 

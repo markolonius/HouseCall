@@ -1,4 +1,4 @@
-.PHONY: build run test migrate seed db-up db-down compose-up tidy
+.PHONY: build run test migrate seed db-up db-down compose-up tidy eval
 
 DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall?sslmode=disable
 TEST_DATABASE_URL ?= postgres://housecall:housecall@localhost:5432/housecall_test?sslmode=disable
@@ -43,3 +43,11 @@ test:
 
 tidy:
 	go mod tidy
+
+# Clinical evaluation harness (synthetic vignettes) against the model endpoint
+# configured by AGENT_MODEL_* (loaded from .env when present). Writes
+# evals/results/<date>-<model>.json and exits non-zero if a threshold fails.
+# Not run in CI; run locally before merging prompt/schema/rule/model changes.
+# Pass flags with EVAL_ARGS, e.g. make eval EVAL_ARGS=--rules-only
+eval:
+	set -a; [ -f .env ] && . ./.env; set +a; go run ./cmd/eval $(EVAL_ARGS)

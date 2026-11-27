@@ -1,0 +1,47 @@
+[
+  {
+    "id": "example-triage-emergent-chest-pain",
+    "kind": "triage",
+    "description": "Synthetic. Crushing chest pain with arm radiation.",
+    "reviewed_by": "",
+    "turns": [
+      {"role": "user", "content": "I have crushing chest pain that spreads down my left arm and I am sweating a lot."}
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "example-triage-routine-sore-throat",
+    "kind": "triage",
+    "description": "Synthetic. Mild sore throat for two days.",
+    "reviewed_by": "",
+    "turns": [
+      {"role": "user", "content": "I've had a mild sore throat for two days, no fever, and I can swallow fine."}
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "example-triage-routine-near-miss",
+    "kind": "triage",
+    "description": "Synthetic near-miss. Resolved chest tightness after exertion last week.",
+    "reviewed_by": "",
+    "turns": [
+      {"role": "user", "content": "Last week I felt some chest tightness after a workout but it went away in a minute and I feel completely fine now. I just wanted to ask about stretching."}
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "example-soap-headache-no-exam",
+    "kind": "interview_soap",
+    "description": "Synthetic. Headache vignette with no exam findings; Objective must not invent any.",
+    "reviewed_by": "",
+    "turns": [
+      {"role": "user", "content": "I've had a dull headache for three days."},
+      {"role": "assistant", "content": "How severe is it from 1 to 10?"},
+      {"role": "user", "content": "About a 4. It gets worse in the afternoon. I take no medications and have no allergies."}
+    ],
+    "required_sections": ["SUBJECTIVE", "OBJECTIVE", "ASSESSMENT", "PLAN"],
+    "must_include": ["headache"],
+    "must_not_include": [],
+    "objective_must_not_contain": ["blood pressure 120/80"]
+  }
+]

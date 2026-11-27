@@ -1,0 +1,7 @@
+{
+  "emergent_recall_min": 1.0,
+  "false_emergent_rate_max": 0.15,
+  "structured_output_validity_min": 1.0,
+  "soap_objective_fidelity_min": 1.0,
+  "rules_only_emergent_recall_min": 0.9
+}

@@ -1,0 +1,389 @@
+[
+  {
+    "id": "soap-diabetes-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Type 2 diabetes follow-up with high home readings.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 54 and have type 2 diabetes. My morning sugars have been running high lately."
+      },
+      {
+        "role": "assistant",
+        "content": "What numbers are you seeing, and what are you taking for it?"
+      },
+      {
+        "role": "user",
+        "content": "Fasting is usually 170 to 190. I take metformin 1000 mg twice a day."
+      },
+      {
+        "role": "assistant",
+        "content": "Any increased thirst, urination, or blurry vision?"
+      },
+      {
+        "role": "user",
+        "content": "I'm thirsty and urinating more at night, maybe three times. No blurry vision. No allergies to any medications."
+      },
+      {
+        "role": "assistant",
+        "content": "Any recent changes in diet or weight?"
+      },
+      {
+        "role": "user",
+        "content": "I've had more takeout this month and gained about 5 pounds. Nobody else in my family has diabetes except my mother."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "metformin",
+      "170",
+      "thirst"
+    ],
+    "must_not_include": [
+      "insulin",
+      "glipizide",
+      "retinopathy"
+    ],
+    "objective_must_not_contain": [
+      "hba1c",
+      "foot exam",
+      "monofilament"
+    ]
+  },
+  {
+    "id": "soap-diabetes-002",
+    "kind": "interview_soap",
+    "description": "Synthetic. New-onset symptoms suggestive of hyperglycemia, no known diabetes.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 47 and I've been peeing constantly and drinking water all day for about three weeks."
+      },
+      {
+        "role": "assistant",
+        "content": "Any weight change or fatigue?"
+      },
+      {
+        "role": "user",
+        "content": "I've lost about 8 pounds without trying and I'm tired all the time."
+      },
+      {
+        "role": "assistant",
+        "content": "Any medical conditions, medications, or family history?"
+      },
+      {
+        "role": "user",
+        "content": "No medications, no conditions. My father has diabetes. I don't smoke and I drink a beer on weekends."
+      },
+      {
+        "role": "assistant",
+        "content": "Any vomiting, abdominal pain, or breathing changes?"
+      },
+      {
+        "role": "user",
+        "content": "No, nothing like that."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "thirst",
+      "weight",
+      "father"
+    ],
+    "must_not_include": [
+      "metformin",
+      "insulin",
+      "hypertension"
+    ],
+    "objective_must_not_contain": [
+      "glucose of",
+      "ketones in"
+    ]
+  },
+  {
+    "id": "soap-hypertension-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Hypertension with self-measured home readings and an ACE inhibitor cough.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 61 with high blood pressure. I take lisinopril 20 mg and lately I have a dry cough that won't quit."
+      },
+      {
+        "role": "assistant",
+        "content": "How long has the cough been going on, and any fever or sputum?"
+      },
+      {
+        "role": "user",
+        "content": "About six weeks. No fever, no phlegm. It's worse at night."
+      },
+      {
+        "role": "assistant",
+        "content": "What have your home blood pressure readings been?"
+      },
+      {
+        "role": "user",
+        "content": "Around 128 over 78 most mornings with my home cuff."
+      },
+      {
+        "role": "assistant",
+        "content": "Any chest pain, shortness of breath, or leg swelling? Allergies?"
+      },
+      {
+        "role": "user",
+        "content": "None of that. I'm allergic to penicillin, it gave me a rash."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "lisinopril",
+      "cough",
+      "128",
+      "penicillin"
+    ],
+    "must_not_include": [
+      "amlodipine",
+      "asthma",
+      "heart failure"
+    ],
+    "objective_must_not_contain": [
+      "lungs",
+      "heart rate of"
+    ]
+  },
+  {
+    "id": "soap-hypertension-002",
+    "kind": "interview_soap",
+    "description": "Synthetic. Elevated home readings with headaches, taking medication inconsistently.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My home blood pressure readings have been high, like 158 over 96, for the past week."
+      },
+      {
+        "role": "assistant",
+        "content": "Are you on any medication for blood pressure?"
+      },
+      {
+        "role": "user",
+        "content": "I'm supposed to take amlodipine 5 mg but I've missed it about half the days."
+      },
+      {
+        "role": "assistant",
+        "content": "Any symptoms with it, like headaches, vision changes, chest pain?"
+      },
+      {
+        "role": "user",
+        "content": "Mild headaches in the morning. No vision changes, no chest pain. I've also been eating a lot of salty food and I've been stressed at work."
+      },
+      {
+        "role": "assistant",
+        "content": "Any allergies or other medical history?"
+      },
+      {
+        "role": "user",
+        "content": "No allergies. I'm 49 and have high cholesterol too, no medication for it."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "amlodipine",
+      "158",
+      "headache",
+      "cholesterol"
+    ],
+    "must_not_include": [
+      "diabetes",
+      "lisinopril"
+    ],
+    "objective_must_not_contain": [
+      "on examination",
+      "fundoscopic"
+    ]
+  },
+  {
+    "id": "soap-lipids-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Elevated cholesterol, family history, asking about starting treatment.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My recent lab results showed my LDL is 168 and my doctor suggested a follow-up. I'm 52."
+      },
+      {
+        "role": "assistant",
+        "content": "Do you have any family history of heart disease?"
+      },
+      {
+        "role": "user",
+        "content": "My father had a heart attack at 55. My brother also has high cholesterol."
+      },
+      {
+        "role": "assistant",
+        "content": "Any symptoms such as chest pain, or shortness of breath with exertion?"
+      },
+      {
+        "role": "user",
+        "content": "No, none. I walk 30 minutes most days without any problem."
+      },
+      {
+        "role": "assistant",
+        "content": "Do you take any medications or supplements, and do you smoke?"
+      },
+      {
+        "role": "user",
+        "content": "I take a daily multivitamin and nothing else. I quit smoking eight years ago. No allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "168",
+      "father",
+      "heart attack",
+      "multivitamin"
+    ],
+    "must_not_include": [
+      "statin",
+      "diabetes",
+      "chest pain on exertion"
+    ],
+    "objective_must_not_contain": [
+      "lipid panel shows",
+      "cardiac exam"
+    ]
+  },
+  {
+    "id": "soap-lipids-002",
+    "kind": "interview_soap",
+    "description": "Synthetic. Statin intolerance with muscle aches.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Since I started rosuvastatin two months ago my thighs and calves ache."
+      },
+      {
+        "role": "assistant",
+        "content": "How bad is the pain, and does it limit you?"
+      },
+      {
+        "role": "user",
+        "content": "It's about a 4 out of 10. I can still walk and climb stairs. My urine is normal."
+      },
+      {
+        "role": "assistant",
+        "content": "Do you have other conditions or medications?"
+      },
+      {
+        "role": "user",
+        "content": "I have type 2 diabetes on metformin and I'm 58. I take nothing else, no known drug allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "rosuvastatin",
+      "thigh",
+      "metformin"
+    ],
+    "must_not_include": [
+      "atorvastatin",
+      "kidney disease",
+      "hypothyroid"
+    ],
+    "objective_must_not_contain": [
+      "muscle tenderness",
+      "strength"
+    ]
+  },
+  {
+    "id": "soap-cardiac-risk-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Atypical exertional fatigue and mild breathlessness in a patient with risk factors, stable and non-emergent.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 63 with diabetes and high blood pressure. Over the last month I get winded walking up a hill that didn't bother me before."
+      },
+      {
+        "role": "assistant",
+        "content": "Does it come with chest pain, pressure, or sweating?"
+      },
+      {
+        "role": "user",
+        "content": "No chest pain at all. I just get short of breath and need to stop for a minute, then I'm okay."
+      },
+      {
+        "role": "assistant",
+        "content": "Any swelling in your legs, palpitations, or waking up breathless at night?"
+      },
+      {
+        "role": "user",
+        "content": "No swelling. No palpitations. I sleep on one pillow and sleep fine."
+      },
+      {
+        "role": "assistant",
+        "content": "What medicines do you take?"
+      },
+      {
+        "role": "user",
+        "content": "Metformin and lisinopril. No allergies. I smoked for 20 years, quit five years ago."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "hill",
+      "short of breath",
+      "metformin",
+      "lisinopril"
+    ],
+    "must_not_include": [
+      "insulin",
+      "asthma"
+    ],
+    "objective_must_not_contain": [
+      "jugular",
+      "edema on"
+    ]
+  }
+]

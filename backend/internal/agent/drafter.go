@@ -263,17 +263,7 @@ func (d *Drafter) generateTriageTurn(ctx context.Context, tenantID store.TenantI
 		return "", err
 	}
 
-	modelMsgs := make([]Message, 0, len(msgs)+1)
-	modelMsgs = append(modelMsgs, Message{
-		Role:    "system",
-		Content: TriageSystemPrompt,
-	})
-	for _, m := range msgs {
-		modelMsgs = append(modelMsgs, Message{
-			Role:    m.Role,
-			Content: m.Content,
-		})
-	}
+	modelMsgs := triageModelMessages(storeMessagesToModel(msgs))
 
 	return completeFor(ctx, d.client, TurnTriage, modelMsgs)
 }
@@ -966,46 +956,11 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 	// message, followed by the full conversation history so the model has
 	// the complete interview context to write from.
 	// Content goes to the model call only — never written to logs or audit.
-	modelMsgs := make([]Message, 0, len(msgs)+1)
-	modelMsgs = append(modelMsgs, Message{
-		Role:    "system",
-		Content: SOAPDraftSystemPrompt,
-	})
-	for _, m := range msgs {
-		modelMsgs = append(modelMsgs, Message{
-			Role:    m.Role,
-			Content: m.Content,
-		})
-	}
+	modelMsgs := soapModelMessages(storeMessagesToModel(msgs))
 
-	// Small models (e.g. medgemma:4b) format the SOAP headers correctly only
-	// intermittently, so a single bad generation must not sink the whole draft.
-	// Retry the generate→parse→validate cycle a few times; only a fresh model
-	// generation can fix a malformed one, so we re-call Complete each attempt.
-	// Transport/model errors are NOT retried here (they surface immediately).
-	var text string
-	var soapPayload domain.SOAPPayload
-	var parseErr error
-	for attempt := 0; attempt < soapDraftMaxAttempts; attempt++ {
-		text, err = completeFor(ctx, d.client, TurnSOAP, modelMsgs)
-		if err != nil {
-			// Non-nil error means no valid model output — do NOT persist.
-			return err
-		}
-		soapPayload, parseErr = parseSOAPSections(text)
-		if parseErr == nil {
-			// Domain validation: all four sections must be non-empty.
-			if vErr := soapPayload.Validate(); vErr != nil {
-				parseErr = vErr
-			}
-		}
-		if parseErr == nil {
-			break
-		}
-		// Malformed output — try a fresh generation (unless this was the last attempt).
-	}
-	if parseErr != nil {
-		return parseErr
+	text, soapPayload, err := generateSOAPPayload(ctx, d.client, modelMsgs)
+	if err != nil {
+		return err
 	}
 
 	// Marshal the structured payload for storage.

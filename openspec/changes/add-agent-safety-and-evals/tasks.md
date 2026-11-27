@@ -19,7 +19,7 @@ Prerequisite: `add-agent-care-loop` merged and archived.
 
 ## Phase 2 — Evaluation harness
 
-- [ ] 2.1 Eval case format and runner
+- [x] 2.1 Eval case format and runner
   - `backend/evals/cases/` JSON format; `cmd/eval` runs cases against the configured endpoint; `make eval`.
   - Writes `backend/evals/results/<date>-<model>.json` and prints a summary; non-zero exit when a threshold fails.
   - Unit tests run the runner against a fake model server.

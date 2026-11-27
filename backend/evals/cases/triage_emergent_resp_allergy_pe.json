@@ -1,0 +1,88 @@
+[
+  {
+    "id": "triage-emergent-resp-allergy-pe-001",
+    "kind": "triage",
+    "description": "Synthetic. Anaphylaxis after peanuts: throat tightness and hives.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I ate a cookie that must have had peanuts. My throat feels like it's closing, my lips are swelling and I've got hives all over. I'm wheezing."
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "triage-emergent-resp-allergy-pe-002",
+    "kind": "triage",
+    "description": "Synthetic. Anaphylaxis after bee sting, lay language and typos.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "got stung by a wasp and now my tongue is swolen, my whole body is itchy and red and i feel dizzy and cant swallow right"
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "triage-emergent-resp-allergy-pe-003",
+    "kind": "triage",
+    "description": "Synthetic. Severe shortness of breath at rest, COPD history.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I have COPD and I can't get a full sentence out. My inhaler isn't helping at all, my lips look blue and I'm struggling for every breath."
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "triage-emergent-resp-allergy-pe-004",
+    "kind": "triage",
+    "description": "Synthetic. Severe dyspnea, minimisation.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Probably just anxiety but I suddenly can't breathe, I'm gasping, and it's been getting worse for the past 20 minutes even sitting still."
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "triage-emergent-resp-allergy-pe-005",
+    "kind": "triage",
+    "description": "Synthetic. PE signs: leg swelling then sudden pleuritic chest pain and dyspnea.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Four days after my long flight my right calf has been swollen and sore."
+      },
+      {
+        "role": "assistant",
+        "content": "Has anything else changed?"
+      },
+      {
+        "role": "user",
+        "content": "Yes, just now I got a sharp stabbing pain in my chest when I breathe in, I'm really short of breath and I coughed up a bit of blood."
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  },
+  {
+    "id": "triage-emergent-resp-allergy-pe-006",
+    "kind": "triage",
+    "description": "Synthetic. PE signs after surgery.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I had knee surgery two weeks ago and today I suddenly feel like I can't get air, my heart is pounding and I feel faint. My leg has been swollen."
+      }
+    ],
+    "expected_triage": "EMERGENT"
+  }
+]

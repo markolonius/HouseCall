@@ -1,0 +1,132 @@
+[
+  {
+    "id": "triage-routine-cardiometabolic-001",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Chest wall pain reproducible on pressure after lifting.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I helped a friend move a couch two days ago and now I have a sore spot on the left side of my chest. It hurts when I press on it or twist, and it's fine when I'm resting or walking. No shortness of breath or sweating."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-002",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Exertional tightness last week, resolved, asking about stretching.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Last week I felt some tightness in my chest after a run but it went away within a minute and I've felt completely fine since. I wanted to ask whether I should stretch more before running."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-003",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Explicitly no chest pain, stuffy nose.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "No chest pain, no trouble breathing, just a stuffy nose and a scratchy throat for three days."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-004",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Mild well-controlled hypertension check-in.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My home blood pressure has been around 132 over 82 on my lisinopril. I feel fine, no headaches or chest pain, I just wanted to know how often I should check it."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-005",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Heartburn after spicy meal, relieved by antacid.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I get burning behind my breastbone after spicy food, it's gone with an antacid within a few minutes. It's happened a few times this month. No sweating or arm pain, and it doesn't come with exercise."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-006",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Palpitations briefly after coffee, resolved, no fainting.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "After a strong coffee yesterday my heart fluttered for maybe ten seconds. It passed on its own and I feel normal now. No dizziness or chest pain. Should I cut back on caffeine?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-007",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Past-tense: emergency-sounding history, currently well.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Three years ago I had a heart stent put in after a heart attack. I'm doing fine now, no symptoms, and I just want to understand my cholesterol numbers from my last lab report."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-008",
+    "kind": "triage",
+    "description": "Synthetic. Type 2 diabetes check-in, slightly high fasting sugar.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My fasting sugars have been 140 to 160 this month on metformin. I'm not sick or thirsty, I'd like advice on diet changes."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-009",
+    "kind": "triage",
+    "description": "Synthetic. Lipids question about statin muscle aches, mild.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Since starting atorvastatin I've had mild achy thighs. It's not severe, I can walk fine and my urine is normal colour. Should I be worried?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-cardiometabolic-010",
+    "kind": "triage",
+    "description": "Synthetic. Mild ankle swelling in evening, long standing, no breathlessness.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My ankles puff up a bit by evening after long days on my feet at work. It has been like this for months, no shortness of breath and no pain."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  }
+]

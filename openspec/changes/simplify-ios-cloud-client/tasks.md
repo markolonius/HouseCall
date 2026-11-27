@@ -2,7 +2,7 @@
 
 ## Phase 1 — Remove the direct model path
 
-- [ ] 1.1 Remove the legacy send path from `AIConversationService`
+- [x] 1.1 Remove the legacy send path from `AIConversationService`
   - `sendMessage` always routes through `CloudSyncCoordinator`; the service no longer takes an `LLMProviderConfigManager`.
   - When no coordinator is available, sending fails with a sign-in-required error and nothing leaves the device.
   - Unit test: with no coordinator, `sendMessage` makes no network call and surfaces the sign-in error.

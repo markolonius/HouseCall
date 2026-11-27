@@ -38,7 +38,9 @@ Prerequisite: `add-agent-care-loop` merged and archived.
   - Replace `parseInterviewTurn` and SOAP text parsing; delete `ReadyForNoteMarker`.
 - [ ] 3.3 Triage and relay turns use schemas
   - Replace `parseTriageTurn` and the new-complaint marker parser; delete `EmergentMarker`; `reason_code` lands in audit metadata.
-- [ ] 3.4 Re-run `make eval`; no metric below the Phase 2 baseline; commit the result file.
+- [ ] 3.4 SOAP revision uses the rejection reason
+  - After a rejection, the SOAP draft prompt includes the physician's rejection reason as reviewer guidance (today only the interview turn sees it); the reason never reaches the patient or audit metadata.
+- [ ] 3.5 Re-run `make eval`; no metric below the Phase 2 baseline; commit the result file.
 
 ## Phase 4 — Deterministic red-flag pre-screen
 
@@ -47,9 +49,12 @@ Prerequisite: `add-agent-care-loop` merged and archived.
 - [ ] 4.2 Wire rules before model triage
   - Rule hit is emergent without a model call; model failure without a rule hit keeps current behaviour; rule version logged with each emergent event.
   - Integration test: endpoint forced to fail, emergent message still produces the emergency message and urgent notification.
-- [ ] 4.3 Eval: rules-only mode
+- [ ] 4.3 Screen every care phase
+  - Rules and model triage run before the normal turn in `AWAITING_REVIEW` and `PLAN_DELIVERED` too (today triage runs only in `INTAKE`); an emergent result replaces the review reminder or relay reply with the referral and notifies physicians.
+  - Integration tests for an emergency message in each phase.
+- [ ] 4.4 Eval: rules-only mode
   - `make eval --rules-only` (model forced to fail) reports rules-only recall; thresholds from `design.md` pass; commit the result file.
-- [ ] 4.4 Physician sign-off recorded in the rule file (version + reviewer).
+- [ ] 4.5 Physician sign-off recorded in the rule file (version + reviewer).
 
 ## Phase 5 — Verification
 

@@ -75,8 +75,11 @@ no patient-facing message and writes an `ai_interaction_failed` audit event.
 
 ### Requirement: Deterministic Red-Flag Pre-Screen
 
-Before model triage in `INTAKE`, the AI Agent Runtime SHALL screen each patient
-message against a versioned, physician-reviewed red-flag rule set. A rule match
+The AI Agent Runtime SHALL screen every patient message against a versioned,
+physician-reviewed red-flag rule set before any other processing, in every care
+phase (`INTAKE`, `AWAITING_REVIEW` and `PLAN_DELIVERED`), and, when no rule
+matches, SHALL run model triage before the phase's normal turn (interview,
+review reminder or plan relay). A rule match
 SHALL be treated as emergent without consulting the model, and SHALL produce
 the emergency-referral message, the urgent physician notification and an audit
 event recording the rule-set version and category, even when the model endpoint
@@ -95,6 +98,13 @@ is unavailable. The model SHALL NOT be able to downgrade a rule match.
 **Given** the model endpoint is unreachable
 **When** a patient message matches a red-flag rule
 **Then** the emergency-referral message and urgent notification are still produced
+
+#### Scenario: Emergencies are caught after the interview
+
+**Given** a conversation in `AWAITING_REVIEW` or `PLAN_DELIVERED`
+**When** the patient reports crushing chest pain
+**Then** the patient receives the emergency-referral message instead of the review reminder or a plan explanation
+**And** physicians receive an urgent notification
 
 #### Scenario: An explicitly negated phrase does not match
 

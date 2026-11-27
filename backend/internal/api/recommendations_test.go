@@ -517,3 +517,108 @@ func TestHandler_RejectWithReason_Returns200(t *testing.T) {
 		t.Fatalf("reject with reason: state = %q, want %q", got.State, domain.StateRejected)
 	}
 }
+
+// TestHandler_GetRecommendation_PatientDTOHidesDraft verifies a patient
+// fetching a modified-then-delivered recommendation sees only the approved
+// content and none of the draft/payload/reviewer/provenance fields, while a
+// physician still receives the full record.
+func TestHandler_GetRecommendation_PatientDTOHidesDraft(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+
+	tid, patient, physician, rec := newRecommendationFixture(t, s)
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	docToken := signedJWT(apiTestSecret, tid.String(), physician.ID.String(), "physician")
+	patToken := signedJWT(apiTestSecret, tid.String(), patient.ID.String(), "patient")
+
+	const approved = "physician-approved text"
+	body, _ := json.Marshal(map[string]string{"action": domain.ActionModify, "final_content": approved})
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/recommendations/%s/review", rec.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+docToken)
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("modify: HTTP %d (%s)", rw.Code, rw.Body.String())
+	}
+
+	get := func(token string) map[string]json.RawMessage {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/recommendations/%s", rec.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rw := httptest.NewRecorder()
+		r.ServeHTTP(rw, req)
+		if rw.Code != http.StatusOK {
+			t.Fatalf("get: HTTP %d (%s)", rw.Code, rw.Body.String())
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(rw.Body.Bytes(), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return m
+	}
+
+	pat := get(patToken)
+	for _, k := range []string{"DraftContent", "Payload", "ReviewedBy", "ModelName", "PromptVersion", "PatientID"} {
+		if _, ok := pat[k]; ok {
+			t.Errorf("patient response leaks %s", k)
+		}
+	}
+	var fc string
+	if err := json.Unmarshal(pat["FinalContent"], &fc); err != nil || fc != approved {
+		t.Errorf("patient FinalContent = %q (err %v), want %q", fc, err, approved)
+	}
+	for _, k := range []string{"ID", "ConversationID", "State", "PayloadType", "ReviewedAt", "CreatedAt"} {
+		if _, ok := pat[k]; !ok {
+			t.Errorf("patient response missing %s", k)
+		}
+	}
+
+	doc := get(docToken)
+	for _, k := range []string{"DraftContent", "Payload", "ReviewedBy", "ModelName", "PromptVersion"} {
+		if _, ok := doc[k]; !ok {
+			t.Errorf("physician response missing %s", k)
+		}
+	}
+}
+
+// TestHandler_GetRecommendation_PhysicianScopedToPanel verifies a physician in
+// the same tenant with no care relationship to the patient cannot read the
+// recommendation, while the treating physician can.
+func TestHandler_GetRecommendation_PhysicianScopedToPanel(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tid, _, physician, rec := newRecommendationFixture(t, s)
+	other, err := s.CreatePhysician(ctx, tid, store.Physician{
+		Email:          "other-" + uuid.NewString() + "@apihandler.test",
+		FullName:       "Other Doc",
+		StatesLicensed: []string{"CA"},
+		PasswordHash:   "hash",
+	})
+	if err != nil {
+		t.Fatalf("create other physician: %v", err)
+	}
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	get := func(actorID uuid.UUID) int {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/recommendations/%s", rec.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+signedJWT(apiTestSecret, tid.String(), actorID.String(), "physician"))
+		rw := httptest.NewRecorder()
+		r.ServeHTTP(rw, req)
+		return rw.Code
+	}
+	if code := get(physician.ID); code != http.StatusOK {
+		t.Errorf("treating physician: HTTP %d, want 200", code)
+	}
+	if code := get(other.ID); code != http.StatusNotFound {
+		t.Errorf("physician without care relationship: HTTP %d, want 404", code)
+	}
+}

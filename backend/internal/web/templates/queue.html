@@ -49,6 +49,9 @@
         {{else}}
         {{.DraftContent}}
         {{end}}
+        <div style="margin-top:.5rem;font-size:.75rem;color:#6b7280;">
+          {{if and .ModelName .PromptVersion}}Drafted by {{.ModelName}} &middot; prompt {{.PromptVersion}}{{else}}Provenance unknown{{end}}
+        </div>
       </td>
       <td style="padding:.65rem 1rem;font-size:.85rem;color:#6b7280;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
       <td style="padding:.65rem 1rem;">

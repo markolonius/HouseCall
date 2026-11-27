@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -69,13 +70,25 @@ type ClientConfig struct {
 }
 
 // String returns a safe representation suitable for log lines. The API key is
-// replaced with a redaction marker.
+// replaced with a redaction marker, and the base URL is reduced to scheme +
+// host + path (user info and query string, which may carry credentials, are
+// dropped).
 func (c ClientConfig) String() string {
 	key := "<none>"
 	if c.APIKey != "" {
 		key = "<redacted>"
 	}
-	return fmt.Sprintf("ClientConfig{BaseURL:%q Model:%q APIKey:%s}", c.BaseURL, c.Model, key)
+	return fmt.Sprintf("ClientConfig{BaseURL:%q Model:%q APIKey:%s}", safeURL(c.BaseURL), c.Model, key)
+}
+
+// safeURL strips user info, query and fragment from raw. An unparseable URL
+// is not echoed at all.
+func safeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<invalid>"
+	}
+	return u.Scheme + "://" + u.Host + u.Path
 }
 
 // ClientConfigFromEnv builds a ClientConfig from environment variables:
@@ -109,17 +122,20 @@ type Message struct {
 //
 // The zero value is not valid; construct via NewClient.
 type Client struct {
-	cfg  ClientConfig
-	http *http.Client
+	cfg      ClientConfig
+	http     *http.Client
+	timeouts Timeouts
 }
 
 // NewClient creates a Client. If httpClient is nil a default client with
 // DefaultTimeout is used.
 func NewClient(cfg ClientConfig, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout}
+		// No client-level timeout: per-call deadlines come from the context
+		// (see CompleteFor), so long turns such as SOAP drafts are not capped.
+		httpClient = &http.Client{}
 	}
-	return &Client{cfg: cfg, http: httpClient}
+	return &Client{cfg: cfg, http: httpClient, timeouts: TimeoutsFromEnv()}
 }
 
 // chatRequest is the subset of the OpenAI Chat Completions request body used
@@ -174,6 +190,16 @@ func (e *ParseError) Error() string {
 // transport / context error. The caller MUST NOT treat a non-nil error as
 // clinical content — see the package-level failure contract.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
+	return c.CompleteFor(ctx, TurnDefault, messages)
+}
+
+// CompleteFor is Complete with the per-turn-type timeout applied. The timeout
+// is always applied; context.WithTimeout keeps the sooner of it and any
+// parent deadline, so a turn's cap holds under a longer caller deadline. An
+// unset turn type uses DefaultTimeout.
+func (c *Client) CompleteFor(ctx context.Context, turn TurnType, messages []Message) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeouts.For(turn))
+	defer cancel()
 	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: messages})
 	if err != nil {
 		// json.Marshal failure is a programming error; wrap for context.

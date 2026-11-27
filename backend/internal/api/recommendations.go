@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -46,22 +47,64 @@ func (rt *Router) handleGetRecommendation(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid recommendation id", http.StatusBadRequest)
 		return
 	}
-	rec, err := rt.store.GetRecommendation(r.Context(), claims.TenantID, recID)
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	// Patients may only read their own DELIVERED recommendations.
-	if claims.ActorType == "patient" {
+	switch claims.ActorType {
+	case "patient":
+		rec, err := rt.store.GetRecommendation(r.Context(), claims.TenantID, recID)
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		// Patients may only read their own DELIVERED recommendations.
 		if rec.PatientID != claims.ActorID || rec.State != domain.StateDelivered {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		writeJSON(w, http.StatusOK, toPatientRecommendation(rec))
+	case "physician":
+		// Physicians may only read recommendations for patients on their own
+		// panel (active care relationship); anything else is indistinguishable
+		// from not found.
+		rec, err := rt.store.GetRecommendationForPhysician(r.Context(), claims.TenantID, claims.ActorID, recID)
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, rec)
+	default:
+		http.Error(w, "forbidden", http.StatusForbidden)
 	}
-	writeJSON(w, http.StatusOK, rec)
+}
+
+// patientRecommendation is the only shape of a recommendation a patient may
+// see: the physician-approved content, never the unapproved AI draft, raw
+// payload, reviewer identity, or model/prompt provenance. Keys stay
+// PascalCase (no json tags on store.Recommendation) to match the iOS client.
+type patientRecommendation struct {
+	ID             uuid.UUID
+	ConversationID uuid.UUID
+	State          string
+	PayloadType    string
+	FinalContent   *string
+	ReviewedAt     *time.Time
+	CreatedAt      time.Time
+}
+
+func toPatientRecommendation(r store.Recommendation) patientRecommendation {
+	return patientRecommendation{
+		ID:             r.ID,
+		ConversationID: r.ConversationID,
+		State:          r.State,
+		PayloadType:    r.PayloadType,
+		FinalContent:   r.FinalContent,
+		ReviewedAt:     r.ReviewedAt,
+		CreatedAt:      r.CreatedAt,
+	}
 }
 
 func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Request) {

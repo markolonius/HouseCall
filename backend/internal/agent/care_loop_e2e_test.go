@@ -179,7 +179,7 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 		{step: "7c interview turn on reopened intake", text: newComplaintQ},
 	})
 
-	d := NewDrafter(client, s, physNotifier, patNotifier)
+	d := NewDrafter(client, s, physNotifier, patNotifier).WithModel("test-model")
 
 	// =========================================================================
 	// STEP 1: intake -> ack. Two patient messages drive two INTAKE dispatchTurn
@@ -237,6 +237,12 @@ func TestCareLoop_EndToEnd(t *testing.T) {
 	}
 	if rec1.PayloadType != domain.PayloadTypeSOAPNote {
 		t.Errorf("step1: payload_type = %q, want %q", rec1.PayloadType, domain.PayloadTypeSOAPNote)
+	}
+	if rec1.ModelName == nil || *rec1.ModelName != "test-model" {
+		t.Errorf("step1: model_name = %v, want test-model", rec1.ModelName)
+	}
+	if rec1.PromptVersion == nil || *rec1.PromptVersion != SOAPDraftSystemPromptVersion {
+		t.Errorf("step1: prompt_version = %v, want %q", rec1.PromptVersion, SOAPDraftSystemPromptVersion)
 	}
 
 	// Assertion: the ack message is persisted — the LAST assistant message —

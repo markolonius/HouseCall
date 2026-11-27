@@ -50,7 +50,12 @@ services:
     environment:
       DATABASE_URL: postgres://housecall:housecall@postgres:5432/housecall?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-in-production}
-      AGENT_MODEL_BASE_URL: http://host.docker.internal:11434/v1
+      AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      APP_ENV: ${APP_ENV:-development}
+      AGENT_TIMEOUT_TRIAGE: ${AGENT_TIMEOUT_TRIAGE:-}
+      AGENT_TIMEOUT_INTERVIEW: ${AGENT_TIMEOUT_INTERVIEW:-}
+      AGENT_TIMEOUT_SOAP: ${AGENT_TIMEOUT_SOAP:-}
+      AGENT_TIMEOUT_RELAY: ${AGENT_TIMEOUT_RELAY:-}
       AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-medgemma:4b}
       AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
     ports:

@@ -54,6 +54,10 @@ const EmergentMarker = "<EMERGENT>"
 // proceed. See EmergentMarker for the shared marker-parsing rationale.
 const RoutineMarker = "<ROUTINE>"
 
+// TriageSystemPromptVersion identifies the current text of TriageSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const TriageSystemPromptVersion = "triage/2026-11-27"
+
 // TriageSystemPrompt instructs the model to act as a cheap, single-purpose
 // classifier: given the full conversation so far, decide whether the
 // patient's MOST RECENT message describes an emergency presentation. This is
@@ -146,6 +150,10 @@ const ReviewPendingAckMessage = "Thanks — I've gathered what I need and sent i
 // openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
 // "A message during AWAITING_REVIEW does not draft again".
 const ReviewPendingReminderMessage = "Your report is with your physician for review right now — I'll notify you the moment they respond. If anything urgent changes, please seek care right away."
+
+// InterviewSystemPromptVersion identifies the current text of InterviewSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const InterviewSystemPromptVersion = "interview/2026-11-27"
 
 // InterviewSystemPrompt instructs the model to act as a clinician conducting a
 // focused history-taking interview. It is used as the system message in every
@@ -248,6 +256,10 @@ func rejectionGuidanceMessage(reason string) string {
 	return fmt.Sprintf(rejectionGuidanceTemplate, reason)
 }
 
+// SOAPDraftSystemPromptVersion identifies the current text of SOAPDraftSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const SOAPDraftSystemPromptVersion = "soap-draft/2026-11-27"
+
 // SOAPDraftSystemPrompt instructs the model to synthesise a structured SOAP
 // note from a completed patient history interview. It is used as the system
 // message in draftSOAPNote; the full conversation history follows.
@@ -297,6 +309,10 @@ PLAN:
 4. PLAN must be safe, actionable, and appropriate for a text-based consultation.
 5. Every section must be present and non-empty.
 6. Use the exact headers shown above (SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:) — no markdown bold, no hash signs, no extra colons or punctuation on the header line itself.`
+
+// RelaySystemPromptVersion identifies the current text of RelaySystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const RelaySystemPromptVersion = "relay/2026-11-27"
 
 // RelaySystemPrompt instructs the model to explain a plan that a physician has
 // ALREADY reviewed and approved, during the PLAN_DELIVERED care phase (see

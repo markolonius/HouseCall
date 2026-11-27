@@ -68,12 +68,21 @@ type Drafter struct {
 	store           *store.Store
 	notifier        PhysicianNotifier
 	patientNotifier PatientNotifier
+	model           string // model name recorded as recommendation provenance; empty → NULL
 	onComplete      func() // optional; called (via defer) when the goroutine exits — tests use this for synchronisation
 }
 
 // NewDrafter constructs a Drafter. All four arguments are required.
 func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier, patientNotifier PatientNotifier) *Drafter {
 	return &Drafter{client: client, store: s, notifier: notifier, patientNotifier: patientNotifier}
+}
+
+// WithModel returns a shallow copy of d that records name as the model_name
+// provenance on every recommendation it drafts.
+func (d *Drafter) WithModel(name string) *Drafter {
+	cp := *d
+	cp.model = name
+	return &cp
 }
 
 // WithOnComplete returns a shallow copy of d with the onComplete hook set.
@@ -266,7 +275,7 @@ func (d *Drafter) generateTriageTurn(ctx context.Context, tenantID store.TenantI
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnTriage, modelMsgs)
 }
 
 // writeTriageFailureAudit records a triage classification failure — either a
@@ -523,7 +532,7 @@ func (d *Drafter) generateRelayTurn(ctx context.Context, tenantID store.TenantID
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnRelay, modelMsgs)
 }
 
 // deliverRelayReply persists a PLAN_DELIVERED relay reply — an explanation
@@ -769,7 +778,7 @@ func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.Tena
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnInterview, modelMsgs)
 }
 
 // interviewTurnCapReached reports whether the number of assistant-role turns
@@ -978,7 +987,7 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 	var soapPayload domain.SOAPPayload
 	var parseErr error
 	for attempt := 0; attempt < soapDraftMaxAttempts; attempt++ {
-		text, err = d.client.Complete(ctx, modelMsgs)
+		text, err = completeFor(ctx, d.client, TurnSOAP, modelMsgs)
 		if err != nil {
 			// Non-nil error means no valid model output — do NOT persist.
 			return err
@@ -1047,6 +1056,8 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 			PayloadType:    domain.PayloadTypeSOAPNote,
 			Payload:        payloadJSON,
 			DraftContent:   strings.TrimSpace(text),
+			ModelName:      nilIfEmpty(d.model),
+			PromptVersion:  nilIfEmpty(SOAPDraftSystemPromptVersion),
 		})
 		if err != nil {
 			return err
@@ -1195,4 +1206,11 @@ func (d *Drafter) deliverInterviewQuestion(ctx context.Context, tenantID store.T
 func mustMarshalJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

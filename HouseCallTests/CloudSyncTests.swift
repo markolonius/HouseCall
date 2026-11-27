@@ -369,15 +369,10 @@ struct CloudSyncTests {
             let json = """
             {
               "ID": "\(recId)",
-              "TenantID": "t1",
               "ConversationID": "\(convServerIdString)",
-              "PatientID": "patient-1",
               "State": "DELIVERED",
               "PayloadType": "guidance",
-              "Payload": null,
-              "DraftContent": "draft",
               "FinalContent": "\(guidanceText)",
-              "ReviewedBy": "physician-1",
               "ReviewedAt": "2026-06-03T10:05:00Z",
               "CreatedAt": "2026-06-03T10:00:00Z"
             }
@@ -1098,15 +1093,10 @@ struct CloudSyncTests {
             let json = """
             {
               "ID": "\(recId)",
-              "TenantID": "t1",
               "ConversationID": "\(convServerId)",
-              "PatientID": "p1",
               "State": "DELIVERED",
               "PayloadType": "guidance",
-              "Payload": null,
-              "DraftContent": "draft",
               "FinalContent": "\(guidanceText)",
-              "ReviewedBy": "dr-1",
               "ReviewedAt": "2026-06-03T11:05:00Z",
               "CreatedAt": "2026-06-03T10:00:00Z"
             }
@@ -1382,15 +1372,10 @@ struct CloudSyncTests {
             let json = """
             {
               "ID": "\(recId)",
-              "TenantID": "t1",
               "ConversationID": "\(convServerIdString)",
-              "PatientID": "patient-soap-1",
               "State": "DELIVERED",
               "PayloadType": "soap_note",
-              "Payload": null,
-              "DraftContent": "draft soap",
               "FinalContent": "\(soapContent)",
-              "ReviewedBy": "physician-soap-1",
               "ReviewedAt": "2026-06-26T09:00:00Z",
               "CreatedAt": "2026-06-26T08:00:00Z"
             }

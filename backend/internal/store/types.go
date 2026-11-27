@@ -81,13 +81,13 @@ type Conversation struct {
 }
 
 type Message struct {
-	ID              uuid.UUID
-	TenantID        TenantID
-	ConversationID  uuid.UUID
-	Role            string
-	Content         string
-	IdempotencyKey  *string
-	CreatedAt       time.Time
+	ID             uuid.UUID
+	TenantID       TenantID
+	ConversationID uuid.UUID
+	Role           string
+	Content        string
+	IdempotencyKey *string
+	CreatedAt      time.Time
 }
 
 type Recommendation struct {
@@ -103,6 +103,11 @@ type Recommendation struct {
 	ReviewedBy     *uuid.UUID
 	ReviewedAt     *time.Time
 	CreatedAt      time.Time
+	// ModelName and PromptVersion record the provenance of an agent draft.
+	// Nil for rows that pre-date migration 0006. Physician/auditor-facing
+	// only; never exposed to patients.
+	ModelName     *string
+	PromptVersion *string
 }
 
 type AuditEvent struct {

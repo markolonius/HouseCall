@@ -9,7 +9,7 @@ Prerequisite: `add-agent-care-loop` merged and archived.
   - Startup `GET /models` check logs host-only warnings; `APP_ENV=production` refuses non-HTTPS endpoints.
   - Per-turn-type timeouts with env overrides.
   - Unit tests for the guard and the timeout selection.
-- [ ] 1.2 Recommendation provenance
+- [x] 1.2 Recommendation provenance
   - Migration adds `model_name` and `prompt_version` to `recommendations`.
   - Prompt version constants next to each prompt; a test fails if a prompt's text changes without its version.
   - Drafter writes both fields; store round-trip test.

@@ -1,15 +1,14 @@
 # HouseCall User Guide
 
-Welcome to HouseCall, your HIPAA-compliant AI health assistant app. This guide will help you get started and make the most of the app's features.
+Welcome to HouseCall, your health assistant app, designed with HIPAA compliance in mind. This guide will help you get started and make the most of the app's features.
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
-2. [Setting Up AI Providers](#setting-up-ai-providers)
-3. [Using the Chat Interface](#using-the-chat-interface)
-4. [Managing Conversations](#managing-conversations)
-5. [Privacy & Security](#privacy--security)
-6. [Frequently Asked Questions](#frequently-asked-questions)
-7. [Troubleshooting](#troubleshooting)
+2. [Using the Chat Interface](#using-the-chat-interface)
+3. [Your Conversation](#your-conversation)
+4. [Privacy & Security](#privacy--security)
+5. [Frequently Asked Questions](#frequently-asked-questions)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -28,105 +27,42 @@ Welcome to HouseCall, your HIPAA-compliant AI health assistant app. This guide w
 
 1. Open HouseCall
 2. Enter your email address
-3. Enter your password or passcode
+3. Enter your password
 4. (Optional) Enable Face ID or Touch ID for faster login
 5. Tap **Log In**
 
-The app will automatically log you out after 5 minutes of inactivity for security.
+Face ID or Touch ID opens the app on your phone, but it does not sign you in to HouseCall's servers. After a Face ID or Touch ID login you can read your conversations, but chat is usually read-only until you enter your password (see below).
 
----
+The app will automatically log you out after 5 minutes of inactivity for security. Logging out, or the inactivity timeout, ends your sign-in with HouseCall's servers, so you will need your password to send messages again.
 
-## Setting Up AI Providers
+### Signing In Again When Chat Is Read-Only
 
-HouseCall supports three types of AI providers to power your health assistant:
+Sometimes you can read your earlier conversations but cannot send new messages. This happens when:
+- you signed in with Face ID or Touch ID. Chat is usually read-only after this; if the app was force-quit, an earlier sign-in may still be active.
+- your sign-in with HouseCall expired or was rejected
+- you signed in while your phone could not reach the internet
 
-### Option 1: OpenAI (ChatGPT)
+The chat then shows a **Sign in to send messages** banner with a **Sign in** button.
 
-OpenAI provides GPT-4 and GPT-3.5 models for conversational AI.
-
-**Steps to Set Up:**
-1. Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-   - Sign up for an OpenAI account
-   - Navigate to API Keys section
-   - Click "Create new secret key"
-   - Copy the key (it starts with `sk-`)
-2. In HouseCall, go to **Profile** tab → **AI Provider Settings**
-3. Select **OpenAI** as your provider
-4. Paste your API key in the "API Key" field
-5. Choose your preferred model:
-   - **GPT-4**: Most capable, slower, higher cost
-   - **GPT-4-Turbo**: Faster than GPT-4, good balance
-   - **GPT-3.5-Turbo**: Fastest, lowest cost
-6. Tap **Test Configuration** to verify
-7. Tap **Save Settings**
-
-**Cost**: OpenAI charges per token used. Typical conversation costs $0.01-0.10 depending on length.
-
-### Option 2: Anthropic Claude
-
-Anthropic provides Claude models known for helpful, harmless, and honest responses.
-
-**Steps to Set Up:**
-1. Get an API key from [Anthropic Console](https://console.anthropic.com/)
-   - Sign up for an Anthropic account
-   - Navigate to API Keys
-   - Create a new key
-   - Copy the key (it starts with `sk-ant-`)
-2. In HouseCall, go to **Profile** tab → **AI Provider Settings**
-3. Select **Claude** as your provider
-4. Paste your API key in the "API Key" field
-5. Choose your preferred model:
-   - **Claude 3.7 Sonnet**: Best balance of intelligence and speed
-   - **Claude 3 Opus**: Most capable
-   - **Claude 3 Haiku**: Fastest, most affordable
-6. Tap **Test Configuration** to verify
-7. Tap **Save Settings**
-
-**Cost**: Anthropic charges per token used. Pricing varies by model.
-
-### Option 3: Custom/Self-Hosted
-
-Use your own AI server running locally or on a private server.
-
-**Supported Platforms:**
-- Ollama
-- llama.cpp server
-- Any OpenAI-compatible API
-
-**Steps to Set Up:**
-1. Start your AI server (e.g., `ollama serve` for Ollama)
-2. In HouseCall, go to **Profile** tab → **AI Provider Settings**
-3. Select **Custom** as your provider
-4. Enter the base URL (e.g., `http://localhost:11434`)
-5. Enter model name (e.g., `llama3`, `mistral`)
-6. (Optional) Enter API key if your server requires authentication
-7. Tap **Test Configuration** to verify
-8. Tap **Save Settings**
-
-**Cost**: Free if self-hosted, but requires running your own server.
-
-### Advanced Settings
-
-- **Temperature** (0.0 - 2.0): Controls randomness
-  - Lower (0.3-0.7): More focused, consistent responses
-  - Higher (0.8-1.5): More creative, varied responses
-- **Max Tokens** (100 - 4000): Maximum response length
-  - Shorter: Faster, cheaper, more concise
-  - Longer: More detailed explanations
+1. Make sure your phone has an internet connection
+2. Tap **Sign in** in the banner
+3. Enter your password
+4. Your messages start syncing again right away. You do not need to restart the app.
 
 ---
 
 ## Using the Chat Interface
 
-### Starting a New Conversation
+### Starting a Conversation
 
 1. Open HouseCall and log in
-2. Tap the **Chat** tab at the bottom
-3. Tap the **+ New Chat** button (top right or center if no conversations)
-4. Type your message in the text field at the bottom
-5. Tap the **Send** button (blue arrow)
+2. Your conversation opens automatically
+3. Type your message in the text field at the bottom
+4. Tap the **Send** button (blue arrow)
 
-Your message will appear on the right in a blue bubble. The AI's response will stream in from the left in a gray bubble.
+Your message will appear on the right in a blue bubble. While the HouseCall assistant is working on its answer, you will see a "waiting for a reply" indicator. The reply then appears all at once on the left in a gray bubble.
+
+Replies come from the HouseCall assistant. The assistant asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them, so that part may take longer to arrive. The assistant is instructed to tell you to call 911 if you describe an emergency, but do not wait for it. If you think you are having an emergency, call 911 yourself now.
 
 ### Sending Messages
 
@@ -142,20 +78,18 @@ Your message will appear on the right in a blue bubble. The AI's response will s
 - "I have chest pain when I breathe deeply. Started an hour ago."
 
 **Important Notes:**
-- The AI assistant provides general health information, NOT medical diagnoses
+- The HouseCall assistant is not a doctor and does NOT give medical diagnoses
 - For emergencies (chest pain, difficulty breathing, severe bleeding), call 911 immediately
 - Always consult a healthcare provider for medical advice
 
-### Understanding AI Responses
+### Understanding Assistant Responses
 
-The AI will:
-- ✅ Ask clarifying questions about your symptoms
-- ✅ Provide general health information
-- ✅ Suggest when to see a doctor
-- ✅ Recommend over-the-counter remedies (when appropriate)
-- ✅ Explain medical terms in simple language
+The assistant will:
+- ✅ Ask you questions about your symptoms, one at a time
+- ✅ Be instructed to tell you to call 911 if you describe an emergency (but do not rely on it; call 911 yourself)
+- ✅ Prepare an assessment and care plan, which a physician reviews and approves before you see it
 
-The AI will NOT:
+The assistant will NOT:
 - ❌ Provide definitive diagnoses
 - ❌ Prescribe medications
 - ❌ Replace professional medical advice
@@ -165,65 +99,14 @@ The AI will NOT:
 
 - Scroll up to see older messages in the conversation
 - Tap on any message to see its timestamp
-- For long conversations, tap "Load earlier messages" at the top
-
-### Switching AI Providers
-
-You can change which AI provider handles your conversation:
-
-1. While in a conversation, tap the **menu icon** (three dots) in the top right
-2. Select **Switch Provider**
-3. Choose a different provider (OpenAI, Claude, or Custom)
-4. Confirm the switch
-
-The conversation history is maintained when you switch. A system message will indicate the provider change.
-
-**Why switch?**
-- Try different AI models for better responses
-- Reduce costs by using a cheaper provider
-- Access a faster provider for quicker responses
-- Fallback if one provider is down
 
 ---
 
-## Managing Conversations
+## Your Conversation
 
-### Viewing All Conversations
+HouseCall opens a single conversation for you automatically, titled "Chat". Your earlier messages load when you open it, and you can continue from where you left off.
 
-1. Tap the **Chat** tab
-2. Your conversations are listed newest first
-3. Each conversation shows:
-   - Title (based on first message)
-   - Time of last message
-   - AI provider badge (OpenAI, Claude, or Custom)
-
-### Opening a Conversation
-
-- Tap any conversation in the list to open it
-- All previous messages will load
-- Continue chatting from where you left off
-
-### Deleting a Conversation
-
-**Method 1: Swipe to Delete**
-1. In the conversation list, swipe left on a conversation
-2. Tap the red **Delete** button
-3. Confirm deletion
-
-**Method 2: In-Conversation Delete**
-1. Open the conversation
-2. Tap the menu icon (three dots)
-3. Select **Delete Conversation**
-4. Confirm deletion
-
-**Note**: Deleted conversations cannot be recovered. All messages are permanently erased.
-
-### Organizing Conversations
-
-Conversations are automatically sorted by last activity:
-- Most recent conversations appear at the top
-- Sending a message moves that conversation to the top
-- No manual sorting needed
+The app does not currently let you create, delete, or switch between conversations. Account deletion is also not yet available in the app (see [Deleting Your Data](#deleting-your-data)).
 
 ---
 
@@ -234,19 +117,18 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 ### How Your Data is Protected
 
 #### 1. Encryption at Rest
-- **All conversation data is encrypted** on your device using AES-256-GCM encryption
-- Message content is never stored in plaintext
-- Conversation titles are encrypted
-- Even if someone accesses your device storage, they cannot read your conversations
+- **The copy of your conversation on your device is encrypted** using AES-256-GCM encryption
+- Message content and conversation titles are never stored in plaintext on your device
+- Even if someone accesses your device storage, they cannot read the local copy
+- Messages are also stored on HouseCall's servers so your care team can see them
 
 #### 2. Encryption in Transit
-- All communications with AI providers use **TLS 1.2+ encryption**
-- Your messages are encrypted during transmission to OpenAI, Anthropic, or custom servers
-- Network traffic cannot be intercepted and read
+- All communications with HouseCall's servers use **TLS 1.2+ encryption**
+- Your messages are protected from being read in transit
 
 #### 3. Session Management
 - Automatic logout after **5 minutes of inactivity**
-- Re-authentication required when app returns from background
+- If the app has been in the background longer than the 5-minute inactivity timeout, you will need to sign in again
 - Session tokens are securely stored in iOS Keychain
 
 #### 4. Screen Protection
@@ -257,11 +139,11 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 #### 5. Biometric Authentication
 - Enable **Face ID or Touch ID** for quick, secure access
 - Your biometric data never leaves your device
-- Fallback to password/passcode if biometrics unavailable
+- Fallback to your password if biometrics are unavailable
 
 #### 6. Audit Logging
-- Every action is logged for HIPAA compliance
-- Logs include: logins, conversation access, AI interactions, deletions
+- Key events are logged for HIPAA compliance
+- Logs include: logins, conversation access, and assistant interactions (including failures)
 - Logs contain NO personal health information (PHI)
 - Logs are encrypted and stored securely
 
@@ -270,50 +152,22 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 **On your iPhone:**
 - Encrypted conversations and messages
 - Your account information (encrypted)
-- API keys (in iOS Keychain)
 - Audit logs (encrypted)
-- Provider settings
 
-**NOT stored (unless you configure custom providers):**
-- HouseCall does NOT sync data to iCloud
-- Conversations stay on your device only
-- No automatic cloud backups
+HouseCall does NOT sync data to iCloud and does not make automatic iCloud backups.
 
-### What Data is Sent to AI Providers
+### What Data is Sent to HouseCall
 
 When you send a message:
-- Your message content is sent to the selected AI provider (OpenAI, Anthropic, or custom)
-- Previous conversation messages (for context)
-- Your API key for authentication
+- Your message is sent to HouseCall's servers, where the HouseCall assistant prepares a reply
+- The assessment and care plan are reviewed and approved by a physician before you see them
+- Replies are sent back to your phone and stored encrypted on your device
 
-**Important:**
-- HouseCall recommends using AI providers with **Business Associate Agreements (BAAs)** for HIPAA compliance
-- OpenAI and Anthropic offer BAAs for enterprise customers
-- For self-hosted providers, you control all data
-
-### API Keys Security
-
-Your API keys are stored in the **iOS Keychain** with:
-- `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` protection
-- No iCloud sync
-- Automatic deletion when app is uninstalled
-- Never logged or exposed in error messages
+The app only talks to HouseCall's servers, and you do not need to set up any AI accounts or keys.
 
 ### Deleting Your Data
 
-**To delete all your data:**
-1. Log into HouseCall
-2. Go to **Profile** tab
-3. Scroll down to **Delete Account**
-4. Confirm deletion
-
-This will permanently delete:
-- All conversations and messages
-- Your user account
-- All audit logs
-- API keys from Keychain
-
-**Note**: This action cannot be undone.
+Account deletion is not yet available in the app. To ask about your data, contact support.
 
 ---
 
@@ -322,127 +176,92 @@ This will permanently delete:
 ### General Usage
 
 **Q: How much does HouseCall cost?**
-A: HouseCall is free to download. You pay for AI provider usage (OpenAI, Anthropic) based on their pricing, or use a free self-hosted provider like Ollama.
+A: HouseCall is free to download. There is nothing to set up for AI access; the assistant is part of the service.
 
 **Q: Can I use HouseCall without an internet connection?**
-A: You can view existing conversations offline, but sending new messages requires an internet connection to reach the AI provider.
+A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline but still signed in, chat stays active, and your message is saved and sent automatically once you're back online. If your sign-in has expired, or you signed in while offline, the chat is read-only until you sign in again.
 
 **Q: How long are my conversations stored?**
-A: Conversations are stored indefinitely on your device until you delete them. There are no automatic expiration or deletion policies.
+A: Your messages are stored encrypted on your device and also on HouseCall's servers. The app does not currently let you delete conversations. Contact support with questions about your data.
 
 **Q: Can I use HouseCall on multiple devices?**
-A: Currently, HouseCall is iPhone-only and does not sync between devices. Each device has separate conversations.
+A: Currently, HouseCall is iPhone-only.
 
 **Q: Is HouseCall HIPAA compliant?**
-A: Yes, HouseCall is designed with HIPAA compliance in mind. All data is encrypted at rest and in transit, with comprehensive audit logging. However, HIPAA compliance also depends on your choice of AI provider and whether they have signed a Business Associate Agreement (BAA).
+A: HouseCall is designed with HIPAA compliance in mind. The copy on your device is encrypted at rest, data is sent over TLS, and key events are audit-logged.
 
-### AI Provider Questions
+### Assistant Questions
 
-**Q: Which AI provider is best?**
-A: It depends on your needs:
-- **OpenAI GPT-4**: Best for complex medical questions, most expensive
-- **Claude**: Great balance of quality and cost, known for empathetic responses
-- **Custom/Ollama**: Free and private, but requires technical setup
+**Q: Who writes the replies?**
+A: Replies come from the HouseCall assistant, which runs on HouseCall's servers. It asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them. It is instructed to tell you to call 911 if you describe an emergency, but do not wait for it. If you think you are having an emergency, call 911 yourself now.
 
-**Q: Can I use multiple providers?**
-A: Yes! You can configure all three providers and switch between them at any time.
-
-**Q: What if my API key stops working?**
-A: This usually means:
-- Your API key was revoked or expired
-- You ran out of credits with the provider
-- There's a typo in the key
-
-Solution: Check your provider's dashboard, ensure you have credits, and re-enter the key in HouseCall settings.
-
-**Q: Are my API keys shared with anyone?**
-A: No. Your API keys are stored locally in your device's secure Keychain and are never sent to HouseCall servers (there are no HouseCall servers). They are only used to communicate directly with your chosen AI provider.
+**Q: Why is the chat read-only?**
+A: You signed in with Face ID or Touch ID (usually read-only afterwards), your sign-in has expired, or you signed in while offline. Tap **Sign in** in the banner and enter your password to continue. See [Signing In Again When Chat Is Read-Only](#signing-in-again-when-chat-is-read-only).
 
 ### Privacy & Security Questions
 
 **Q: Can anyone else see my conversations?**
-A: No. Conversations are encrypted with a key unique to your account. Only you can decrypt and view them when logged in.
+A: You can see them, and so can the clinicians and staff caring for you, since your messages are stored on HouseCall's servers and reviewed in the physician portal. The copy on your device is encrypted with a key unique to your account.
 
 **Q: What happens if I lose my phone?**
-A: Your conversations are encrypted and cannot be accessed without your password/passcode. Use iOS "Find My" to remotely wipe your device if needed.
+A: The copy of your conversations on your device is encrypted and cannot be read without signing in. Use iOS "Find My" to remotely wipe your device if needed.
 
 **Q: Does HouseCall collect my health information?**
-A: HouseCall does not operate any servers or collect any data. All conversations stay on your device. The AI provider (OpenAI, Anthropic, or your custom server) receives your messages to generate responses.
+A: Your messages are sent to HouseCall's servers so the assistant and your physician can respond. They are encrypted in transit and stored encrypted on your device.
 
 **Q: Can my employer/insurance see my conversations?**
-A: No. HouseCall does not share any data with third parties. Your conversations are private and encrypted on your device.
+A: A privacy policy will be published before HouseCall is available to patients.
 
 **Q: Is it safe to screenshot my conversations?**
 A: Screenshots are detected and logged for audit purposes. Avoid sharing screenshots that contain sensitive health information, as they are not encrypted outside the app.
 
 ### Technical Questions
 
-**Q: Why is the AI response slow?**
+**Q: Why is the reply slow?**
 A: Response speed depends on:
-- Your AI provider (GPT-4 is slower than GPT-3.5-Turbo)
 - Your internet connection speed
-- The length of your conversation history
-- The max_tokens setting (longer = slower)
+- Whether a physician is still reviewing the assessment and care plan
+- How busy the service is
 
 **Q: Why did my message fail to send?**
 A: Common causes:
 - No internet connection
-- Invalid or expired API key
-- Provider is down (check status pages)
-- Rate limit exceeded (wait 60 seconds)
+- Your sign-in expired or you used Face ID / Touch ID (tap **Sign in** in the banner)
+- HouseCall's service is temporarily unavailable
 
 **Q: How do I report a bug?**
-A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issues
+A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issues. Do not include personal or health information in GitHub issues.
 
 ---
 
 ## Troubleshooting
 
-### "Unable to connect to AI service"
+### "Sign in to send messages"
+
+**Problem**: You can read your conversations, but you cannot send messages.
+
+**Solutions**:
+1. Check your internet connection (WiFi or cellular)
+2. Tap **Sign in** in the banner and enter your password
+3. If signing in fails, try again in a few minutes or restart the app
+
+### "Unable to connect"
 
 **Problem**: Your message won't send, and you see a connection error.
 
 **Solutions**:
 1. Check your internet connection (WiFi or cellular)
-2. Verify your API key is entered correctly in Settings
-3. Check if the AI provider is experiencing downtime:
-   - OpenAI: https://status.openai.com
-   - Anthropic: https://status.anthropic.com
-4. Try switching to a different AI provider
-5. Restart the app
+2. Try again in a few minutes in case the service is temporarily unavailable
+3. Restart the app
 
-### "API authentication failed"
+### Waiting for a reply for a long time
 
-**Problem**: The AI provider rejected your API key.
+**Problem**: The "waiting for a reply" indicator stays on screen.
 
 **Solutions**:
-1. Go to **Profile** → **AI Provider Settings**
-2. Double-check your API key is correct:
-   - OpenAI keys start with `sk-`
-   - Claude keys start with `sk-ant-`
-3. Verify you have credits/quota with the provider
-4. Re-enter the API key and tap **Save Settings**
-5. Tap **Test Configuration** to verify
-
-### "Rate limit exceeded"
-
-**Problem**: You've sent too many messages too quickly.
-
-**Solutions**:
-1. Wait for the countdown timer to complete (usually 60 seconds)
-2. Upgrade to a higher tier with your AI provider for more quota
-3. Switch to a different AI provider temporarily
-
-### Messages appear slowly or stuttering
-
-**Problem**: AI responses are choppy or laggy.
-
-**Solutions**:
-1. Check your internet connection speed
-2. Close other apps to free memory
-3. Delete old conversations to reduce app data size
-4. Reduce max_tokens in AI Provider Settings for shorter responses
-5. Switch to a faster model (e.g., GPT-3.5-Turbo instead of GPT-4)
+1. Check your internet connection
+2. The assessment and care plan are reviewed by a physician, which can take extra time
+3. Close and reopen the app to refresh your conversation
 
 ### "Unable to decrypt conversation"
 
@@ -451,8 +270,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 **Solutions**:
 1. Logout and login again to refresh encryption keys
 2. Verify you're logged in with the correct account
-3. If the conversation is corrupted, you may need to delete it
-4. Contact support if the issue persists
+3. Contact support if the issue persists
 
 ### App crashes when sending message
 
@@ -462,26 +280,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 1. Check your device has enough free storage
 2. Restart your iPhone
 3. Update to the latest version of HouseCall
-4. Delete unused conversations to free up space
-5. If crashes continue, report the issue with device logs
-
-### Custom provider not working
-
-**Problem**: Your self-hosted AI server isn't responding.
-
-**Solutions**:
-1. Verify your server is running:
-   - For Ollama: Run `ollama serve` in terminal
-   - Check server logs for errors
-2. Ensure the base URL is correct:
-   - Include full path: `http://localhost:11434/v1/chat/completions`
-   - Use `http://` for local servers (not `https://`)
-3. Test your server with curl:
-   ```bash
-   curl http://localhost:11434/v1/models
-   ```
-4. Check firewall settings if using remote server
-5. Verify the model name is correct and available
+4. If crashes continue, report the issue (do not include logs or screenshots that contain personal or health information)
 
 ---
 
@@ -489,11 +288,11 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 **IMPORTANT: HouseCall is NOT a substitute for professional medical advice, diagnosis, or treatment.**
 
-- The AI assistant provides general health information only
+- The HouseCall assistant is not a doctor and does not give medical diagnoses
 - Always consult a qualified healthcare provider for medical concerns
 - For emergencies, call 911 or go to the nearest emergency room immediately
-- Do not delay seeking medical care based on AI responses
-- The AI cannot diagnose conditions, prescribe medications, or provide treatment
+- Do not delay seeking medical care based on assistant responses
+- The assistant cannot diagnose conditions, prescribe medications, or provide treatment
 
 **Emergency Warning Signs** (call 911):
 - Chest pain or pressure
@@ -509,26 +308,9 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 ## Support & Contact
 
-**App Issues**: Report bugs on [GitHub Issues](https://github.com/markolonius/HouseCall/issues)
+**App Issues**: Report bugs on [GitHub Issues](https://github.com/markolonius/HouseCall/issues). Do not include personal or health information in GitHub issues.
 
-**Provider Support**:
-- OpenAI: https://help.openai.com
-- Anthropic: https://support.anthropic.com
-- Custom providers: Contact your server administrator
-
-**Privacy Policy**: See PRIVACY.md in the app repository
-
-**License**: MIT License - See LICENSE file
-
----
-
-## Version Information
-
-**Current Version**: 1.0.0 (Phase 9: Documentation & Handoff)
-
-**Last Updated**: November 23, 2025
-
-**Compatibility**: iOS 17.0+
+**Privacy Policy**: A privacy policy will be published before HouseCall is available to patients.
 
 ---
 

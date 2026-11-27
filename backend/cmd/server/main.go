@@ -114,7 +114,7 @@ func runServe(dsn, addr string) error {
 		log.Print(warn)
 	}
 	cancelCheck()
-	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt, rt)
+	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt, rt).WithModel(agentCfg.Model)
 
 	// 3. Wire the drafter into the Router before the server starts accepting
 	//    requests.

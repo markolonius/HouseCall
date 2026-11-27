@@ -312,13 +312,16 @@ func (s *Store) ListMessagesByConversation(ctx context.Context, tenant TenantID,
 func (s *Store) CreateRecommendation(ctx context.Context, tenant TenantID, r Recommendation) (Recommendation, error) {
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO recommendations
-		   (tenant_id, conversation_id, patient_id, state, payload_type, payload, draft_content)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		   (tenant_id, conversation_id, patient_id, state, payload_type, payload, draft_content,
+		    model_name, prompt_version)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
-		           draft_content, final_content, reviewed_by, reviewed_at, created_at`,
+		           draft_content, final_content, reviewed_by, reviewed_at, created_at,
+		        model_name, prompt_version`,
 		tenant.UUID(), r.ConversationID, r.PatientID, r.State, r.PayloadType, r.Payload, r.DraftContent,
+		r.ModelName, r.PromptVersion,
 	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
-		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion)
 	return r, err
 }
 
@@ -326,12 +329,13 @@ func (s *Store) GetRecommendation(ctx context.Context, tenant TenantID, id uuid.
 	var r Recommendation
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
-		        draft_content, final_content, reviewed_by, reviewed_at, created_at
+		        draft_content, final_content, reviewed_by, reviewed_at, created_at,
+		        model_name, prompt_version
 		   FROM recommendations
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id,
 	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
-		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Recommendation{}, ErrNotFound
 	}
@@ -341,7 +345,8 @@ func (s *Store) GetRecommendation(ctx context.Context, tenant TenantID, id uuid.
 func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID, state string) ([]Recommendation, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
-		        draft_content, final_content, reviewed_by, reviewed_at, created_at
+		        draft_content, final_content, reviewed_by, reviewed_at, created_at,
+		        model_name, prompt_version
 		   FROM recommendations
 		  WHERE tenant_id = $1 AND state = $2
 		  ORDER BY created_at`,
@@ -355,7 +360,7 @@ func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID,
 	for rows.Next() {
 		var r Recommendation
 		if err := rows.Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
-			&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt); err != nil {
+			&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -457,14 +462,15 @@ func (s *Store) GetLatestDeliveredRecommendation(ctx context.Context, tenant Ten
 	var r Recommendation
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
-		        draft_content, final_content, reviewed_by, reviewed_at, created_at
+		        draft_content, final_content, reviewed_by, reviewed_at, created_at,
+		        model_name, prompt_version
 		   FROM recommendations
 		  WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
 		  ORDER BY reviewed_at DESC
 		  LIMIT 1`,
 		tenant.UUID(), conversationID,
 	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
-		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Recommendation{}, ErrNotFound
 	}
@@ -480,7 +486,8 @@ func (s *Store) ListRecommendationsByPhysician(ctx context.Context, tenant Tenan
 	rows, err := s.pool.Query(ctx,
 		`SELECT r.id, r.tenant_id, r.conversation_id, r.patient_id, r.state,
 		        r.payload_type, r.payload, r.draft_content, r.final_content,
-		        r.reviewed_by, r.reviewed_at, r.created_at
+		        r.reviewed_by, r.reviewed_at, r.created_at,
+		        r.model_name, r.prompt_version
 		   FROM recommendations r
 		   JOIN care_relationships cr
 		     ON cr.tenant_id = r.tenant_id
@@ -501,7 +508,7 @@ func (s *Store) ListRecommendationsByPhysician(ctx context.Context, tenant Tenan
 		var r Recommendation
 		if err := rows.Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State,
 			&r.PayloadType, &r.Payload, &r.DraftContent, &r.FinalContent,
-			&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt); err != nil {
+			&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -522,7 +529,8 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 	err := s.pool.QueryRow(ctx,
 		`SELECT r.id, r.tenant_id, r.conversation_id, r.patient_id, r.state,
 		        r.payload_type, r.payload, r.draft_content, r.final_content,
-		        r.reviewed_by, r.reviewed_at, r.created_at
+		        r.reviewed_by, r.reviewed_at, r.created_at,
+		        r.model_name, r.prompt_version
 		   FROM recommendations r
 		   JOIN care_relationships cr
 		     ON cr.tenant_id = r.tenant_id
@@ -534,7 +542,7 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 		tenant.UUID(), id, physicianID,
 	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State,
 		&r.PayloadType, &r.Payload, &r.DraftContent, &r.FinalContent,
-		&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+		&r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Recommendation{}, ErrNotFound
 	}
@@ -590,13 +598,16 @@ func (s *Store) TxnW(ctx context.Context, fn func(TxWriter) error) error {
 func (ts *TxStore) CreateRecommendation(ctx context.Context, tenant TenantID, r Recommendation) (Recommendation, error) {
 	err := ts.tx.QueryRow(ctx,
 		`INSERT INTO recommendations
-		   (tenant_id, conversation_id, patient_id, state, payload_type, payload, draft_content)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		   (tenant_id, conversation_id, patient_id, state, payload_type, payload, draft_content,
+		    model_name, prompt_version)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
-		           draft_content, final_content, reviewed_by, reviewed_at, created_at`,
+		           draft_content, final_content, reviewed_by, reviewed_at, created_at,
+		        model_name, prompt_version`,
 		tenant.UUID(), r.ConversationID, r.PatientID, r.State, r.PayloadType, r.Payload, r.DraftContent,
+		r.ModelName, r.PromptVersion,
 	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
-		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt, &r.ModelName, &r.PromptVersion)
 	return r, err
 }
 

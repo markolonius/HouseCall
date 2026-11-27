@@ -68,12 +68,21 @@ type Drafter struct {
 	store           *store.Store
 	notifier        PhysicianNotifier
 	patientNotifier PatientNotifier
+	model           string // model name recorded as recommendation provenance; empty → NULL
 	onComplete      func() // optional; called (via defer) when the goroutine exits — tests use this for synchronisation
 }
 
 // NewDrafter constructs a Drafter. All four arguments are required.
 func NewDrafter(client ModelClient, s *store.Store, notifier PhysicianNotifier, patientNotifier PatientNotifier) *Drafter {
 	return &Drafter{client: client, store: s, notifier: notifier, patientNotifier: patientNotifier}
+}
+
+// WithModel returns a shallow copy of d that records name as the model_name
+// provenance on every recommendation it drafts.
+func (d *Drafter) WithModel(name string) *Drafter {
+	cp := *d
+	cp.model = name
+	return &cp
 }
 
 // WithOnComplete returns a shallow copy of d with the onComplete hook set.
@@ -1047,6 +1056,8 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 			PayloadType:    domain.PayloadTypeSOAPNote,
 			Payload:        payloadJSON,
 			DraftContent:   strings.TrimSpace(text),
+			ModelName:      nilIfEmpty(d.model),
+			PromptVersion:  nilIfEmpty(SOAPDraftSystemPromptVersion),
 		})
 		if err != nil {
 			return err
@@ -1195,4 +1206,11 @@ func (d *Drafter) deliverInterviewQuestion(ctx context.Context, tenantID store.T
 func mustMarshalJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

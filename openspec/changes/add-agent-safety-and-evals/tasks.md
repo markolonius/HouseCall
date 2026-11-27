@@ -4,7 +4,7 @@ Prerequisite: `add-agent-care-loop` merged and archived.
 
 ## Phase 1 — Remote model endpoint and provenance
 
-- [ ] 1.1 Configurable remote endpoint with startup check and production guard
+- [x] 1.1 Configurable remote endpoint with startup check and production guard
   - Compose reads `AGENT_MODEL_BASE_URL` from `.env` with no hardcoded `host.docker.internal`; `.env.example` documents the LAN inference host and MedGemma 27B model name.
   - Startup `GET /models` check logs host-only warnings; `APP_ENV=production` refuses non-HTTPS endpoints.
   - Per-turn-type timeouts with env overrides.

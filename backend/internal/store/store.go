@@ -388,7 +388,7 @@ func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, c
 		      ORDER BY reviewed_at DESC
 		      LIMIT 1
 		 )
-		 SELECT lr.rejection_reason
+		 SELECT COALESCE(lr.rejection_reason, '')
 		   FROM latest_rejected lr
 		   LEFT JOIN latest_delivered ld ON true
 		  WHERE ld.reviewed_at IS NULL OR lr.reviewed_at > ld.reviewed_at`,
@@ -399,6 +399,11 @@ func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, c
 	}
 	if err != nil {
 		return "", false, err
+	}
+	// Legacy REJECTED rows (pre-migration 0005) have a NULL reason, read as
+	// ''. Empty means there is no reviewer guidance to inject.
+	if reason == "" {
+		return "", false, nil
 	}
 	return reason, true, nil
 }
@@ -587,16 +592,26 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 // deliberately left untouched (stays nil) — a REJECTED recommendation is
 // never patient-visible.
 func (ts *TxStore) UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error {
-	_, err := ts.tx.Exec(ctx,
+	tag, err := ts.tx.Exec(ctx,
 		`UPDATE recommendations
 		    SET state            = 'REJECTED',
 		        reviewed_by      = $3,
 		        reviewed_at      = NOW(),
 		        rejection_reason = $4
-		  WHERE tenant_id = $1 AND id = $2`,
+		  WHERE tenant_id = $1 AND id = $2 AND state = 'PENDING_REVIEW'`,
 		tenant.UUID(), id, reviewedBy, reason,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// No row matched: the recommendation does not exist for this tenant or has
+	// already left PENDING_REVIEW (e.g. a concurrent approve). Surfacing
+	// ErrNotFound rolls back the surrounding transaction so a REJECTED row can
+	// never carry approved final_content.
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CreateMessage inserts a message within tx. Use this when the message

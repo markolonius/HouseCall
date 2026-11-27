@@ -451,3 +451,46 @@ func TestSchemaRejectsCrossTenantParent(t *testing.T) {
 		t.Fatalf("schema accepted a conversation whose patient belongs to a different tenant")
 	}
 }
+
+// TestUpdateRecommendationRejection_Conflict verifies a recommendation that
+// has already left PENDING_REVIEW cannot be rejected: ErrNotFound is returned
+// and the row (state, final_content) is untouched.
+func TestUpdateRecommendationRejection_Conflict(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	f := setupFixture(t, s)
+	ctx := context.Background()
+	tid := TenantID(f.A.Tenant.ID)
+
+	rec, err := s.CreateRecommendation(ctx, tid, Recommendation{
+		ConversationID: f.A.Conversation.ID,
+		PatientID:      f.A.Patient.ID,
+		State:          "PENDING_REVIEW",
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"x"}`),
+		DraftContent:   "x",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+	final := "approved text"
+	if err := s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationState(ctx, tid, rec.ID, "DELIVERED", &f.A.Physician.ID, &final)
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	err = s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationRejection(ctx, tid, rec.ID, f.A.Physician.ID, "late reject")
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reject after approve: got %v, want ErrNotFound", err)
+	}
+	after, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if after.State != "DELIVERED" || after.FinalContent == nil || *after.FinalContent != final {
+		t.Errorf("row mutated by failed rejection: state=%s final=%v", after.State, after.FinalContent)
+	}
+}

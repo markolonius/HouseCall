@@ -205,3 +205,25 @@ func TestGetLatestRejectionReason_TenantIsolation(t *testing.T) {
 		t.Errorf("tenant A query returned tenant B's rejection: ok = true, reason = %q", got)
 	}
 }
+
+// TestGetLatestRejectionReason_NullReason verifies a REJECTED row created
+// before migration 0005 (NULL rejection_reason) does not error and yields
+// "no guidance".
+func TestGetLatestRejectionReason_NullReason(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	f := setupFixture(t, s)
+	ctx := context.Background()
+	tid := TenantID(f.A.Tenant.ID)
+
+	rgSetReviewed(t, s, pool, tid, f.A.Conversation.ID, f.A.Patient.ID,
+		domain.StateRejected, nil, time.Now())
+
+	reason, ok, err := s.GetLatestRejectionReason(ctx, tid, f.A.Conversation.ID)
+	if err != nil {
+		t.Fatalf("GetLatestRejectionReason with NULL reason: %v", err)
+	}
+	if ok || reason != "" {
+		t.Errorf("got (%q, %v), want (\"\", false)", reason, ok)
+	}
+}

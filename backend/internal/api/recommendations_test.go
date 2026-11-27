@@ -584,3 +584,41 @@ func TestHandler_GetRecommendation_PatientDTOHidesDraft(t *testing.T) {
 		}
 	}
 }
+
+// TestHandler_GetRecommendation_PhysicianScopedToPanel verifies a physician in
+// the same tenant with no care relationship to the patient cannot read the
+// recommendation, while the treating physician can.
+func TestHandler_GetRecommendation_PhysicianScopedToPanel(t *testing.T) {
+	pool := apiTestPool(t)
+	s := store.New(pool)
+	ctx := context.Background()
+
+	tid, _, physician, rec := newRecommendationFixture(t, s)
+	other, err := s.CreatePhysician(ctx, tid, store.Physician{
+		Email:          "other-" + uuid.NewString() + "@apihandler.test",
+		FullName:       "Other Doc",
+		StatesLicensed: []string{"CA"},
+		PasswordHash:   "hash",
+	})
+	if err != nil {
+		t.Fatalf("create other physician: %v", err)
+	}
+
+	router := api.New(s, apiTestSecret)
+	r := chi.NewRouter()
+	router.Mount(r)
+
+	get := func(actorID uuid.UUID) int {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/recommendations/%s", rec.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+signedJWT(apiTestSecret, tid.String(), actorID.String(), "physician"))
+		rw := httptest.NewRecorder()
+		r.ServeHTTP(rw, req)
+		return rw.Code
+	}
+	if code := get(physician.ID); code != http.StatusOK {
+		t.Errorf("treating physician: HTTP %d, want 200", code)
+	}
+	if code := get(other.ID); code != http.StatusNotFound {
+		t.Errorf("physician without care relationship: HTTP %d, want 404", code)
+	}
+}

@@ -8,8 +8,10 @@ tags: [openspec, beads, orchestrator, worktree]
 You are the **orchestrator**. The user has invoked `/run-phase $ARGUMENTS`.
 
 Parse the arguments as: `<change-id> <phase-number>`
-- `$1` = change-id (e.g. `add-cloud-platform-mvp`)
-- `$2` = phase number (e.g. `3`)
+- `$0` = change-id (e.g. `add-cloud-platform-mvp`)
+- `$1` = phase number (e.g. `3`)
+
+(Command arguments are numbered from `$0`.)
 
 If either is missing, ask the user for it and stop.
 
@@ -20,19 +22,19 @@ Your job: implement every task in that phase with the coder subagent, gate the p
 - You MUST NOT: force-push, commit or push to `main`/default branches, delete branches other than your own worktree, or rewrite published history.
 
 ## Preconditions
-1. Confirm the change is approved and the phase exists: read `openspec/changes/$1/tasks.md` and locate `## Phase $2`. If the proposal is not approved or the phase doesn't exist, stop and tell the user.
+1. Confirm the change is approved and the phase exists: read `openspec/changes/$0/tasks.md` and locate `## Phase $1`. If the proposal is not approved or the phase doesn't exist, stop and tell the user.
 2. Confirm tooling is present: `command -v bd`, `command -v gh`, `command -v jq`, and `gh auth status`. If anything is missing, tell the user to run `scripts/dev-bootstrap.sh` and stop.
 3. Confirm Postgres is up (tests need it). Run `scripts/doctor.sh`; if it reports Postgres unreachable, start it with `cd backend && make db-up` and re-check. If Docker itself isn't running, tell the user to start Docker Desktop and stop.
 4. Working tree must be clean. If not, stop and report.
-5. The previous phase must be merged. Run `git fetch origin`. If `$2` > 1 and `origin/claude/$1-phase-$(($2-1))` exists but is not an ancestor of `origin/main` (`git merge-base --is-ancestor`), stop and tell the user to merge that PR first. Phases are not stacked: every phase branches from `main` and its PR targets `main`, so CI runs on each one.
+5. The previous phase must be merged. Run `git fetch origin`. If `$1` > 1 and `origin/claude/$0-phase-$(($1-1))` exists but is not an ancestor of `origin/main` (`git merge-base --is-ancestor`), stop and tell the user to merge that PR first. Phases are not stacked: every phase branches from `main` and its PR targets `main`, so CI runs on each one.
 
 ## Setup
 6. Seed/refresh the beads graph (idempotent):
-   `scripts/openspec-to-beads.sh $1`
+   `scripts/openspec-to-beads.sh $0`
 7. Create the phase worktree + branch from up-to-date `main` (guard if it already exists), then `cd` into it for the rest of the run:
    ```
-   WT="$HOME/housecall-worktrees/$1-phase$2"
-   BR="claude/$1-phase-$2"
+   WT="$HOME/housecall-worktrees/$0-phase$1"
+   BR="claude/$0-phase-$1"
    git worktree add "$WT" -b "$BR" origin/main 2>/dev/null || git worktree add "$WT" "$BR" 2>/dev/null || true
    cd "$WT"
    BASE="$(git merge-base HEAD origin/main)"
@@ -40,23 +42,23 @@ Your job: implement every task in that phase with the coder subagent, gate the p
    All subsequent work — and the path you pass to subagents — is `$WT`.
 
 ## The task loop
-Repeat until no phase-$2 beads remain ready:
-8. Get the next ready task scoped to this phase. A bead belongs to phase $2 if its title starts with `[$1#$2.`:
+Repeat until no phase-$1 beads remain ready:
+8. Get the next ready task scoped to this phase. A bead belongs to phase $1 if its title starts with `[$0#$1.`:
    ```
-   bd ready --json | jq -r --arg p "[$1#$2." '.[] | select(.title|startswith($p)) | .id' | head -n1
+   bd ready --json | jq -r --arg p "[$0#$1." '.[] | select(.title|startswith($p)) | .id' | head -n1
    ```
    If empty, go to "Phase gate".
 9. Claim it: `bd update <id> --claim`. Note its title/number.
-10. **Dispatch the coder** (subagent_type `coder`) with: the bead id, change-id `$1`, the task number + title, and the worktree path `$WT`. The coder implements the task, runs `scripts/test.sh` itself, and commits. Wait for its summary.
+10. **Dispatch the coder** (subagent_type `coder`) with: the bead id, change-id `$0`, the task number + title, and the worktree path `$WT`. The coder implements the task, runs `scripts/test.sh` itself, and commits. Wait for its summary.
     - If the coder reports it could not get `scripts/test.sh` to pass, send it back once with the failure. If it still fails, stop the loop and report to the user.
     - If it reports `BLOCKED` (DB down, no Xcode for an iOS task), report to the user and stop.
-11. Mark the task `- [x]` in `openspec/changes/$1/tasks.md` and commit that edit. Leave the bead open until the phase gate passes. Loop.
+11. Mark the task `- [x]` in `openspec/changes/$0/tasks.md` and commit that edit. Leave the bead open until the phase gate passes. Loop.
 
 There is no per-task tester or reviewer. Do not dispatch one.
 
 ## Phase gate
 12. Run the suites yourself, no subagent: `scripts/test.sh --base "$BASE"`. Exit 0 = pass, 1 = failure, 2 = blocked by environment. On failure, send the printed output to the coder to fix, then re-run. Cap at **3** rounds; if still failing, stop and report to the user.
-13. **Dispatch the reviewer ONCE** (subagent_type `reviewer`) with the worktree path, change-id `$1`, phase `$2`, and base ref `$BASE`. It reviews the whole phase diff.
+13. **Dispatch the reviewer ONCE** (subagent_type `reviewer`) with the worktree path, change-id `$0`, phase `$1`, and base ref `$BASE`. It reviews the whole phase diff.
     - If `REQUEST_CHANGES` with blocking findings, send them to the coder in one batch, re-run step 12, then re-review. Same 3-round cap.
     - Any HIPAA/security/tenant-isolation finding is blocking — never override it autonomously.
 14. When `scripts/test.sh` passes and the reviewer returns `APPROVE`: close every bead for the phase, `bd close <id1> <id2> ... --reason="<phase summary>"`.

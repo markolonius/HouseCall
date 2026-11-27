@@ -84,4 +84,4 @@ while IFS=$'\t' read -r num title; do
 done < <(parse_tasks)
 
 echo "done: $created created, $skipped existing"
-echo "next: scripts/beads-sync-github.sh   # mirror beads -> GitHub issues"
+echo "next: /run-phase $CHANGE_ID <phase>"

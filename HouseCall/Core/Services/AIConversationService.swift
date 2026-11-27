@@ -5,13 +5,13 @@
 //  AI Conversation Service - Business Logic Layer
 //  Orchestrates message persistence and cloud sync (Phase 6.3).
 //
-//  When a CloudSyncCoordinator is injected the send path becomes:
+//  Sending always routes through a CloudSyncCoordinator:
 //    1. Persist user message locally (syncState = "pending")
 //    2. POST to Core API via coordinator — on success: synced + serverId
 //    3. AI reply arrives async via WebSocket (recommendation.delivered)
 //
-//  When no coordinator is supplied the legacy LLM-provider streaming path
-//  is used (offline/dev mode).
+//  With no coordinator (signed out / cloud not configured) sending fails with
+//  AIConversationError.signInRequired and nothing leaves the device.
 //
 
 import Foundation
@@ -56,27 +56,13 @@ class AIConversationService: ObservableObject {
 
     private let conversationRepository: ConversationRepositoryProtocol
     private let messageRepository: MessageRepositoryProtocol
-    private let providerConfigManager: LLMProviderConfigManager
     private let auditLogger: AuditLogger
 
     /// Current user ID (authenticated user)
     private let userId: UUID
 
-    /// Active LLM provider for streaming requests (legacy / offline path only)
-    private var currentProvider: LLMProvider?
-
-    #if DEBUG
-    /// Optional provider override injected by tests.
-    ///
-    /// When non-nil this provider is used unconditionally for every `sendMessage`
-    /// call in the legacy streaming path, bypassing the config-manager lookup and
-    /// the `isProviderConfigured` gate.  Set this ONLY in test code; production
-    /// call sites always leave it nil.  Compiled out of Release builds.
-    var _testProviderOverride: LLMProvider?
-    #endif
-
     /// Cloud sync coordinator injected when the Core API is available.
-    /// `nil` means fall back to the legacy LLM-provider streaming path.
+    /// `nil` means the patient is not signed in; sending fails with `signInRequired`.
     let syncCoordinator: CloudSyncCoordinator?
 
     // MARK: - Initialization
@@ -85,39 +71,24 @@ class AIConversationService: ObservableObject {
         userId: UUID,
         conversationRepository: ConversationRepositoryProtocol,
         messageRepository: MessageRepositoryProtocol,
-        providerConfigManager: LLMProviderConfigManager = .shared,
         auditLogger: AuditLogger = .shared,
         syncCoordinator: CloudSyncCoordinator? = nil
     ) {
         self.userId = userId
         self.conversationRepository = conversationRepository
         self.messageRepository = messageRepository
-        self.providerConfigManager = providerConfigManager
         self.auditLogger = auditLogger
         self.syncCoordinator = syncCoordinator
     }
 
     // MARK: - Conversation Management
 
-    /// Creates a new conversation with the specified provider
-    /// - Parameter provider: LLM provider type to use (defaults to active provider)
+    /// Creates a new conversation.
+    /// - Parameter provider: Stored provider value (placeholder; the server picks the model)
     /// - Returns: Created Conversation entity
     /// - Throws: ConversationRepositoryError or other errors
     func createConversation(provider: LLMProviderType? = nil) async throws -> Conversation {
-        let selectedProvider = provider ?? providerConfigManager.getActiveProvider()
-
-        // Verify provider is configured.
-        // In DEBUG builds a test-provider override bypasses this check so that
-        // tests can exercise conversation / message logic without live API keys.
-        #if DEBUG
-        guard _testProviderOverride != nil || providerConfigManager.isProviderConfigured(selectedProvider) else {
-            throw LLMError.notConfigured
-        }
-        #else
-        guard providerConfigManager.isProviderConfigured(selectedProvider) else {
-            throw LLMError.notConfigured
-        }
-        #endif
+        let selectedProvider = provider ?? .claude
 
         // Create conversation in repository
         let conversation = try conversationRepository.createConversation(
@@ -189,21 +160,19 @@ class AIConversationService: ObservableObject {
 
     // MARK: - Message Handling
 
-    /// Sends a message and either POSTs to the Core API (cloud path) or falls
-    /// back to legacy LLM streaming (offline / dev mode).
+    /// Sends a message by POSTing it to the Core API via the sync coordinator.
     ///
-    /// Cloud path (syncCoordinator != nil):
     ///  1. Persist user message with syncState = "pending"
     ///  2. POST via coordinator → on success: synced + serverId
     ///  3. AI reply arrives async via WebSocket (recommendation.delivered)
     ///
-    /// Legacy path (syncCoordinator == nil):
-    ///  - Streams a response inline from the configured LLM provider.
+    /// With no coordinator the call throws `AIConversationError.signInRequired`
+    /// before anything is persisted or sent.
     ///
     /// - Parameters:
     ///   - conversationId: UUID of the conversation
     ///   - content: User's message content
-    /// - Throws: Various errors from repositories and LLM providers
+    /// - Throws: `AIConversationError.signInRequired` or repository / sync errors
     func sendMessage(conversationId: UUID, content: String) async throws {
         // Clear any previous errors
         errorMessage = nil
@@ -219,6 +188,12 @@ class AIConversationService: ObservableObject {
         }
         guard conversation.userId == userId else {
             throw ConversationRepositoryError.conversationNotFound
+        }
+
+        // No coordinator means the patient is not signed in: nothing may leave the device.
+        guard let coordinator = syncCoordinator else {
+            errorMessage = AIConversationError.signInRequired.localizedDescription
+            throw AIConversationError.signInRequired
         }
 
         // Persist user message with syncState = "pending" so it survives offline.
@@ -255,52 +230,38 @@ class AIConversationService: ObservableObject {
         // Add user message to the UI
         messages.append(userMessage)
 
-        // --- Cloud sync path ---
-        if let coordinator = syncCoordinator {
-            // A server-side conversation (serverId) is required before any
-            // message can be POSTed. Launch-time ensureServerConversation is
-            // best-effort; if it hasn't run or failed, create it on demand here
-            // so the very first send is never silently dropped.
-            var conversationServerId = conversation.serverId ?? ""
-            if conversationServerId.isEmpty {
-                await coordinator.ensureServerConversation(
-                    localConversationId: conversationId,
-                    title: "Consultation"
-                )
-                // Re-fetch to pick up the serverId ensureServerConversation persisted.
-                if let refreshed = try? conversationRepository.fetchConversation(id: conversationId) {
-                    conversationServerId = refreshed.serverId ?? ""
-                }
+        // A server-side conversation (serverId) is required before any
+        // message can be POSTed. Launch-time ensureServerConversation is
+        // best-effort; if it hasn't run or failed, create it on demand here
+        // so the very first send is never silently dropped.
+        var conversationServerId = conversation.serverId ?? ""
+        if conversationServerId.isEmpty {
+            await coordinator.ensureServerConversation(
+                localConversationId: conversationId,
+                title: "Consultation"
+            )
+            // Re-fetch to pick up the serverId ensureServerConversation persisted.
+            if let refreshed = try? conversationRepository.fetchConversation(id: conversationId) {
+                conversationServerId = refreshed.serverId ?? ""
             }
-            if !conversationServerId.isEmpty {
-                try await coordinator.postMessage(
-                    localMessageId: userMessage.id!,
-                    conversationServerId: conversationServerId,
-                    conversationLocalId: conversationId
-                )
-            } else {
-                // Could not establish a server conversation (offline / server
-                // unreachable). Surface an error instead of silently dropping —
-                // the message stays pending and replays on reconnect.
-                errorMessage = "Unable to reach the server. Your message will be sent when the connection is restored."
-            }
-            // AI reply arrives asynchronously via WebSocket; no streaming UI here.
-            return
         }
-
-        // --- Legacy LLM streaming path (no coordinator injected) ---
-        let (provider, providerType) = try resolveProvider(for: conversation)
-        self.currentProvider = provider
-        try await streamAssistantTurn(
-            conversationId: conversationId,
-            provider: provider,
-            providerType: providerType
-        )
+        if !conversationServerId.isEmpty {
+            try await coordinator.postMessage(
+                localMessageId: userMessage.id!,
+                conversationServerId: conversationServerId,
+                conversationLocalId: conversationId
+            )
+        } else {
+            // Could not establish a server conversation (offline / server
+            // unreachable). Surface an error instead of silently dropping —
+            // the message stays pending and replays on reconnect.
+            errorMessage = "Unable to reach the server. Your message will be sent when the connection is restored."
+        }
+        // AI reply arrives asynchronously via WebSocket; no streaming UI here.
     }
 
-    /// Cancels the current streaming request
+    /// Resets streaming UI state (no on-device streaming remains; kept for UI callers)
     func cancelStreaming() {
-        currentProvider?.cancelStreaming()
         isStreaming = false
         streamingMessageId = nil
         streamingText = ""
@@ -318,289 +279,6 @@ class AIConversationService: ObservableObject {
         }
     }
 
-    // MARK: - Private Methods
-
-    /// Resolves the LLM provider instance and type for a given conversation.
-    ///
-    /// Falls back to the active (build-config) provider when the stored provider
-    /// is not configured.  This rescues conversations created under an older
-    /// default provider (e.g. "openai") once the app is pointed at a hardcoded
-    /// provider.  In DEBUG builds, returns the test-injected override when present.
-    ///
-    /// - Parameter conversation: The conversation for which to resolve the provider.
-    /// - Returns: A tuple of the resolved `LLMProvider` instance and its type.
-    /// - Throws: `LLMError.notConfigured` if no usable provider is available.
-    private func resolveProvider(for conversation: Conversation) throws -> (LLMProvider, LLMProviderType) {
-        var providerType = LLMProviderType(rawValue: conversation.llmProvider ?? "openai") ?? .openai
-        if !providerConfigManager.isProviderConfigured(providerType) {
-            providerType = providerConfigManager.getActiveProvider()
-        }
-        // In DEBUG builds use the test-injected provider when present;
-        // otherwise (and always in Release) resolve via the config manager.
-        #if DEBUG
-        if let override = _testProviderOverride {
-            return (override, providerType)
-        }
-        #endif
-        guard let resolved = providerConfigManager.createProvider(type: providerType) else {
-            throw LLMError.notConfigured
-        }
-        guard resolved.isConfigured else {
-            throw LLMError.notConfigured
-        }
-        return (resolved, providerType)
-    }
-
-    /// Creates the AI placeholder message, builds the chat context, and starts
-    /// the streaming turn.  Does NOT create or persist a user message.
-    ///
-    /// On success the streaming session is live; `handleStreamComplete` fires
-    /// asynchronously when the provider closes the stream.
-    /// On a synchronous setup failure the placeholder message is removed and the
-    /// error is rethrown.
-    ///
-    /// - Parameters:
-    ///   - conversationId: UUID of the conversation receiving the turn.
-    ///   - provider:       Resolved `LLMProvider` instance.
-    ///   - providerType:   Provider type used for audit logging.
-    /// - Throws: `MessageRepositoryError`, `LLMError`, or any error thrown by
-    ///   the provider's `streamCompletion` during request setup.
-    private func streamAssistantTurn(
-        conversationId: UUID,
-        provider: LLMProvider,
-        providerType: LLMProviderType
-    ) async throws {
-        // Create placeholder AI message
-        let aiMessage = try messageRepository.createMessage(
-            conversationId: conversationId,
-            role: .assistant,
-            content: "",
-            streamingComplete: false
-        )
-
-        messages.append(aiMessage)
-        streamingMessageId = aiMessage.id
-        streamingText = ""
-        isStreaming = true
-
-        let maxTokens = AIConversationService.gatheringMaxTokens
-        let chatMessages = try buildChatContext(conversationId: conversationId)
-
-        try? auditLogger.log(
-            event: .aiStreamingStarted,
-            userId: userId,
-            details: AuditEventDetails(additionalInfo: [
-                "conversationId": conversationId.uuidString,
-                "provider": providerType.rawValue
-            ])
-        )
-
-        do {
-            try await provider.streamCompletion(
-                messages: chatMessages,
-                maxTokensOverride: maxTokens,
-                onChunk: { [weak self] chunk in
-                    Task { @MainActor in
-                        self?.handleStreamChunk(chunk, messageId: aiMessage.id!)
-                    }
-                },
-                onComplete: { [weak self] result in
-                    Task { @MainActor in
-                        await self?.handleStreamComplete(
-                            result: result,
-                            messageId: aiMessage.id!,
-                            conversationId: conversationId,
-                            providerType: providerType
-                        )
-                    }
-                }
-            )
-        } catch {
-            isStreaming = false
-            streamingMessageId = nil
-
-            try? auditLogger.log(
-                event: .aiInteractionFailed,
-                userId: userId,
-                details: AuditEventDetails(
-                    errorMessage: error.localizedDescription,
-                    additionalInfo: [
-                        "conversationId": conversationId.uuidString,
-                        "provider": providerType.rawValue
-                    ]
-                )
-            )
-
-            if let index = messages.firstIndex(where: { $0.id == aiMessage.id }) {
-                messages.remove(at: index)
-            }
-            try messageRepository.deleteMessage(id: aiMessage.id!)
-
-            throw error
-        }
-    }
-
-    /// Handles a chunk of streamed text
-    private func handleStreamChunk(_ chunk: String, messageId: UUID) {
-        streamingText += chunk
-
-        // Update message in array for UI
-        if let index = messages.firstIndex(where: { $0.id == messageId }) {
-            // Note: We don't update Core Data on every chunk to avoid performance issues
-            // Only the UI is updated incrementally
-        }
-    }
-
-    /// Handles completion of streaming
-    private func handleStreamComplete(
-        result: Result<String, LLMError>,
-        messageId: UUID,
-        conversationId: UUID,
-        providerType: LLMProviderType
-    ) async {
-        // INVARIANT: keep isStreaming = false, streamingMessageId = nil, and
-        // messages[index] = updatedMessage free of any `await` between them so
-        // SwiftUI coalesces all three into a single render pass and avoids a
-        // blank-flash where the streaming overlay disappears before the final
-        // message text appears.
-        isStreaming = false
-        streamingMessageId = nil
-        streamingText = ""
-
-        switch result {
-        case .success(let fullText):
-            do {
-                // Save complete message to Core Data
-                try messageRepository.updateMessageContent(
-                    id: messageId,
-                    content: fullText,
-                    complete: true,
-                    tokenCount: nil // TODO: Extract token count from provider response
-                )
-
-                // Update conversation timestamp
-                try conversationRepository.updateConversationTimestamp(
-                    id: conversationId,
-                    timestamp: Date()
-                )
-
-                // Log successful interaction
-                try? auditLogger.log(
-                    event: .aiStreamingCompleted,
-                    userId: userId,
-                    details: AuditEventDetails(
-                        additionalInfo: [
-                            "conversationId": conversationId.uuidString,
-                            "provider": providerType.rawValue,
-                            "success": "true"
-                        ]
-                    )
-                )
-
-                // Refresh message from Core Data to ensure consistency
-                if let updatedMessage = try messageRepository.fetchMessage(id: messageId) {
-                    if let index = messages.firstIndex(where: { $0.id == messageId }) {
-                        messages[index] = updatedMessage
-                    }
-                }
-
-            } catch {
-                errorMessage = "Failed to save AI response: \(error.localizedDescription)"
-
-                // Log save failure
-                try? auditLogger.log(
-                    event: .aiInteractionFailed,
-                    userId: userId,
-                    details: AuditEventDetails(
-                        errorMessage: "Failed to save streamed response",
-                        additionalInfo: [
-                            "conversationId": conversationId.uuidString,
-                            "error": error.localizedDescription
-                        ]
-                    )
-                )
-            }
-
-        case .failure(let error):
-            errorMessage = error.localizedDescription
-
-            // Log failure
-            try? auditLogger.log(
-                event: .aiInteractionFailed,
-                userId: userId,
-                details: AuditEventDetails(
-                    errorMessage: error.localizedDescription,
-                    additionalInfo: [
-                        "conversationId": conversationId.uuidString,
-                        "provider": providerType.rawValue
-                    ]
-                )
-            )
-
-            // Remove failed message from UI and Core Data
-            if let index = messages.firstIndex(where: { $0.id == messageId }) {
-                messages.remove(at: index)
-            }
-
-            do {
-                try messageRepository.deleteMessage(id: messageId)
-            } catch {
-                // Log deletion failure
-                try? auditLogger.log(
-                    event: .dataDeleted,
-                    userId: userId,
-                    details: AuditEventDetails(
-                        errorMessage: "Failed to delete incomplete message",
-                        additionalInfo: ["messageId": messageId.uuidString]
-                    )
-                )
-            }
-        }
-    }
-
-    /// Builds chat context from conversation messages.
-    /// - Parameters:
-    ///   - conversationId: UUID of the conversation.
-    /// - Returns: Array of ChatMessage for the LLM provider.
-    /// - Throws: MessageRepositoryError
-    private func buildChatContext(conversationId: UUID) throws -> [ChatMessage] {
-        var chatMessages: [ChatMessage] = []
-
-        // Add system prompt first
-        chatMessages.append(ChatMessage(
-            role: .system,
-            content: HealthcareSystemPrompt.interview
-        ))
-
-        // Add all conversation messages (excluding the placeholder we just created)
-        let allMessages = try messageRepository.fetchAllMessages(conversationId: conversationId)
-
-        for message in allMessages {
-            // Skip incomplete streaming messages
-            guard message.streamingComplete else { continue }
-
-            // Decrypt content
-            let content = try messageRepository.decryptMessageContent(message)
-
-            // Map role
-            let role: MessageRole
-            switch message.role {
-            case "user":
-                role = .user
-            case "assistant":
-                role = .assistant
-            case "system":
-                role = .system
-            default:
-                continue // Skip unknown roles
-            }
-
-            chatMessages.append(ChatMessage(role: role, content: content))
-        }
-
-        return chatMessages
-    }
-
     /// Clears the current conversation and messages, resetting all in-memory state.
     func clearCurrentConversation() {
         currentConversation = nil
@@ -609,7 +287,6 @@ class AIConversationService: ObservableObject {
         streamingMessageId = nil
         isStreaming = false
         errorMessage = nil
-        currentProvider = nil
     }
 
     // MARK: - Sync state helpers
@@ -620,5 +297,19 @@ class AIConversationService: ObservableObject {
         message.syncState = state
         let context = message.managedObjectContext
         try? context?.save()
+    }
+}
+
+// MARK: - Errors
+
+/// Errors raised by `AIConversationService` (messages are PHI-free).
+enum AIConversationError: LocalizedError, Equatable {
+    case signInRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .signInRequired:
+            return "Please sign in to send messages."
+        }
     }
 }

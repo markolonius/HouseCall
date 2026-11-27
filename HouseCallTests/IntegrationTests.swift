@@ -541,21 +541,39 @@ struct AIChatIntegrationTests {
             authMethod: .password
         )
 
+        // Offline coordinator: the cloud send path runs end to end without any
+        // live network (every request fails with notConnectedToInternet).
+        let keychain = AIChatTestKeychain()
+        try? keychain.set(key: KeychainManager.Keys.coreAPIJWT, value: "test.jwt.token")
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [SyncOfflineURLProtocol.self]
+        let syncClient = try! SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: URLSession(configuration: sessionConfig),
+            keychainManager: keychain
+        )
+        let coordinator = CloudSyncCoordinator(
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: auditLogger,
+            context: context
+        )
+
         let aiService = AIConversationService(
             userId: user.id!,
             conversationRepository: conversationRepo,
             messageRepository: messageRepo,
-            auditLogger: auditLogger
+            auditLogger: auditLogger,
+            syncCoordinator: coordinator
         )
-        // Inject a stub provider so tests don't need API keys or live network.
-        aiService._testProviderOverride = AIChatStubProvider()
 
         return (context, conversationRepo, messageRepo, userRepo, aiService, user.id!)
     }
 
     // MARK: - End-to-End Message Flow Tests
 
-    @Test("Complete message flow: create conversation → send message → receive response")
+    @Test("Complete message flow: create conversation → send message → persisted as pending")
     @MainActor
     func testCompleteMessageFlow() async throws {
         let components = createChatTestComponents()
@@ -563,7 +581,6 @@ struct AIChatIntegrationTests {
         let userId = components.userId
         let messageRepo = components.messageRepo
 
-        // 1. Create conversation
         let conversation = try await aiService.createConversation(
             provider: .openai
         )
@@ -571,67 +588,24 @@ struct AIChatIntegrationTests {
         #expect(conversation.userId == userId)
         #expect(conversation.llmProvider == "openai")
 
-        // 2. Send user message
-        let userMessage = "I have a headache"
+        // Cloud is unreachable, so the message stays pending locally; the AI
+        // reply only ever arrives via WebSocket.
         try await aiService.sendMessage(
             conversationId: conversation.id!,
-            content: userMessage
+            content: "I have a headache"
         )
 
-        // 3. Wait for AI response to complete
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
-
-        // 4. Fetch all messages
         let messages = try messageRepo.fetchAllMessages(conversationId: conversation.id!)
-
-        // Verify message structure
-        #expect(messages.count >= 2) // User message + AI response
         let userMessages = messages.filter { $0.role == "user" }
         let assistantMessages = messages.filter { $0.role == "assistant" }
 
-        #expect(userMessages.count >= 1)
-        #expect(assistantMessages.count >= 1)
-
-        // Verify user message content
-        let decryptedUserContent = try messageRepo.decryptMessageContent(userMessages[0])
-        #expect(decryptedUserContent.contains("headache"))
-
-        // Verify AI response exists
-        #expect(assistantMessages[0].streamingComplete == true)
-    }
-
-    @Test("Streaming message updates work correctly")
-    @MainActor
-    func testStreamingMessageUpdates() async throws {
-        let components = createChatTestComponents()
-        let aiService = components.aiService
-
-        let conversation = try await aiService.createConversation(
-            provider: .openai
-        )
-
-        var chunkCount = 0
-
-        // Monitor streaming updates
-        let cancellable = aiService.$streamingText
-            .sink { text in
-                if !text.isEmpty {
-                    chunkCount += 1
-                }
-            }
-
-        try await aiService.sendMessage(
-            conversationId: conversation.id!,
-            content: "Tell me about symptoms"
-        )
-
-        // Wait for streaming to complete
-        try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-
-        // Verify service is no longer streaming
+        #expect(userMessages.count == 1)
+        #expect(assistantMessages.isEmpty)
+        #expect(userMessages[0].syncState == "pending")
         #expect(aiService.isStreaming == false)
 
-        cancellable.cancel()
+        let decryptedUserContent = try messageRepo.decryptMessageContent(userMessages[0])
+        #expect(decryptedUserContent.contains("headache"))
     }
 
     @Test("Offline conversation access")
@@ -805,9 +779,6 @@ struct AIChatIntegrationTests {
             content: "Test message"
         )
 
-        // Wait for completion
-        try await Task.sleep(nanoseconds: 100_000_000)
-
         // Verify audit events
         let events = try auditLogger.fetchUserEvents(userId: userId)
 
@@ -823,110 +794,40 @@ struct AIChatIntegrationTests {
         #expect(messageEvents.count >= 1)
     }
 
-    @Test("Error recovery during streaming")
+    @Test("Signed-out send surfaces sign-in error and sends nothing")
     @MainActor
-    func testStreamingErrorRecovery() async throws {
+    func testSignedOutSendRequiresSignIn() async throws {
         let components = createChatTestComponents()
-        let aiService = components.aiService
-
-        // Replace the default stub with one that always fails via onComplete(.failure)
-        // so the service's error-handling path (errorMessage assignment) is exercised.
-        aiService._testProviderOverride = AIChatStubProvider(shouldFail: true)
-
-        let conversation = try await aiService.createConversation(provider: .openai)
-
-        // Sending a message should NOT throw — the failure is delivered via the
-        // onComplete(.failure) callback, which sets errorMessage asynchronously.
-        try await aiService.sendMessage(
-            conversationId: conversation.id!,
-            content: "This should trigger a provider failure"
+        let signedOut = AIConversationService(
+            userId: components.userId,
+            conversationRepository: components.conversationRepo,
+            messageRepository: components.messageRepo,
+            auditLogger: AuditLogger(context: components.context)
         )
 
-        // Give the async completion handler time to run.
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 s
+        let conversation = try await signedOut.createConversation(provider: .openai)
 
-        // Real assertions: the service must have set errorMessage and stopped streaming.
-        #expect(aiService.isStreaming == false)
-        #expect(aiService.errorMessage != nil,
-                "errorMessage must be set after a provider failure")
+        await #expect(throws: AIConversationError.signInRequired) {
+            try await signedOut.sendMessage(
+                conversationId: conversation.id!,
+                content: "This must not leave the device"
+            )
+        }
+
+        #expect(signedOut.isStreaming == false)
+        #expect(signedOut.errorMessage != nil)
+        let stored = try components.messageRepo.fetchAllMessages(conversationId: conversation.id!)
+        #expect(stored.isEmpty)
     }
 }
 
-// MARK: - Mock LLM Provider (kept for reference)
+// MARK: - In-memory Keychain
 
-private class MockLLMProvider: LLMProvider {
-    let providerType: LLMProviderType
-    var isConfigured: Bool = true
-    var shouldFail: Bool = false
-
-    init(type: LLMProviderType) {
-        self.providerType = type
-    }
-
-    func streamCompletion(
-        messages: [ChatMessage],
-        maxTokensOverride: Int?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
-    ) async throws {
-        if shouldFail {
-            onComplete(.failure(.networkError(NSError(domain: "test", code: -1))))
-            return
-        }
-
-        // Simulate streaming chunks
-        let response = "This is a mock response from \(providerType.rawValue) provider."
-        let chunks = response.split(separator: " ").map(String.init)
-
-        for chunk in chunks {
-            onChunk(chunk + " ")
-            try await Task.sleep(nanoseconds: 10_000_000) // 0.01 seconds
-        }
-
-        onComplete(.success(response))
-    }
-
-    func cancelStreaming() {
-        // Mock cancellation
-    }
-}
-
-// MARK: - Stub LLM provider for AIChatIntegrationTests
-
-/// Deterministic provider used as `_testProviderOverride` in `AIChatIntegrationTests`.
-///
-/// - `shouldFail = false` (default): simulates a successful one-chunk streaming
-///   response so tests can exercise the full create/send/receive path offline.
-/// - `shouldFail = true`: calls `onComplete(.failure(...))` to exercise the
-///   service's error-handling path (errorMessage set, isStreaming cleared).
-private class AIChatStubProvider: LLMProvider {
-    let providerType: LLMProviderType = .openai
-    let isConfigured: Bool = true
-    let shouldFail: Bool
-
-    init(shouldFail: Bool = false) {
-        self.shouldFail = shouldFail
-    }
-
-    func streamCompletion(
-        messages: [ChatMessage],
-        maxTokensOverride: Int?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
-    ) async throws {
-        if shouldFail {
-            onComplete(.failure(.networkError(
-                NSError(domain: "AIChatStubProvider", code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Stubbed streaming failure"])
-            )))
-            return
-        }
-        let response = "Stub AI response."
-        onChunk(response)
-        onComplete(.success(response))
-    }
-
-    func cancelStreaming() {}
+private final class AIChatTestKeychain: KeychainManager {
+    private var store: [String: String] = [:]
+    override func set(key: String, value: String) throws { store[key] = value }
+    override func get(key: String) throws -> String? { store[key] }
+    override func delete(key: String) throws { store.removeValue(forKey: key) }
 }
 
 // MARK: - XCTest Compatibility

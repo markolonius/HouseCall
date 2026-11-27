@@ -36,6 +36,10 @@ const NewComplaintMarker = "<NEW_COMPLAINT>"
 // EmergentMarker is the sentinel token the triage model emits — and nothing
 // else for that turn — when it classifies the patient's most recent message
 // as an emergency presentation warranting immediate emergency care (see
+// TriageSystemPromptVersion identifies the current text of TriageSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const TriageSystemPromptVersion = "triage/2026-11-27"
+
 // TriageSystemPrompt and
 // openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
 // "Red-Flag Triage"). The agent runtime detects this marker server-side
@@ -75,10 +79,6 @@ const RoutineMarker = "<ROUTINE>"
 // remains tolerant of incidental formatting variance (whitespace, markdown
 // wrapping) a small model might add despite this instruction, but any output
 // containing neither marker, or both markers, is treated as unparseable.
-// TriageSystemPromptVersion identifies the current text of TriageSystemPrompt. Bump it whenever the
-// prompt text changes; prompt_version_test.go fails otherwise.
-const TriageSystemPromptVersion = "triage/2026-11-27"
-
 const TriageSystemPrompt = `You are a clinical triage classifier. You are NOT conducting an interview and you are NOT writing a reply the patient will see. Your only job is to decide whether the patient's MOST RECENT message, read in the context of the full conversation above it, describes a medical emergency.
 
 ## Classify as emergent if the most recent message describes (or, in context, confirms/escalates) any of the following — this list is illustrative, not exhaustive:
@@ -151,6 +151,10 @@ const ReviewPendingAckMessage = "Thanks — I've gathered what I need and sent i
 // "A message during AWAITING_REVIEW does not draft again".
 const ReviewPendingReminderMessage = "Your report is with your physician for review right now — I'll notify you the moment they respond. If anything urgent changes, please seek care right away."
 
+// InterviewSystemPromptVersion identifies the current text of InterviewSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const InterviewSystemPromptVersion = "interview/2026-11-27"
+
 // InterviewSystemPrompt instructs the model to act as a clinician conducting a
 // focused history-taking interview. It is used as the system message in every
 // interview turn; the full conversation history follows so the model can track
@@ -166,10 +170,6 @@ const ReviewPendingReminderMessage = "Your report is with your physician for rev
 //     physician for serious symptoms; responses are preliminary.
 //   - Completion rule: emit ReadyForNoteMarker on its own line (and nothing
 //     else) when sufficient history has been gathered.
-// InterviewSystemPromptVersion identifies the current text of InterviewSystemPrompt. Bump it whenever the
-// prompt text changes; prompt_version_test.go fails otherwise.
-const InterviewSystemPromptVersion = "interview/2026-11-27"
-
 const InterviewSystemPrompt = `You are a licensed clinician conducting a focused medical history interview with a patient. You are NOT a general health-information service. Your sole purpose in this conversation is to gather the clinical history needed to write a SOAP note; a physician will review your note before any assessment or plan is shared with the patient.
 
 ## Conversational rules — read carefully before every turn
@@ -256,6 +256,10 @@ func rejectionGuidanceMessage(reason string) string {
 	return fmt.Sprintf(rejectionGuidanceTemplate, reason)
 }
 
+// SOAPDraftSystemPromptVersion identifies the current text of SOAPDraftSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const SOAPDraftSystemPromptVersion = "soap-draft/2026-11-27"
+
 // SOAPDraftSystemPrompt instructs the model to synthesise a structured SOAP
 // note from a completed patient history interview. It is used as the system
 // message in draftSOAPNote; the full conversation history follows.
@@ -279,10 +283,6 @@ func rejectionGuidanceMessage(reason string) string {
 //     If none reported, write "None reported".
 //   - Assessment: preliminary clinical impression — NOT a definitive diagnosis.
 //   - Plan: recommended follow-up, monitoring, or referral.
-// SOAPDraftSystemPromptVersion identifies the current text of SOAPDraftSystemPrompt. Bump it whenever the
-// prompt text changes; prompt_version_test.go fails otherwise.
-const SOAPDraftSystemPromptVersion = "soap-draft/2026-11-27"
-
 const SOAPDraftSystemPrompt = `You are a licensed clinician writing a structured clinical SOAP note based on a completed patient history interview. A physician will review and may edit this note before any part of it reaches the patient.
 
 ## Output format — MANDATORY
@@ -310,6 +310,10 @@ PLAN:
 5. Every section must be present and non-empty.
 6. Use the exact headers shown above (SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:) — no markdown bold, no hash signs, no extra colons or punctuation on the header line itself.`
 
+// RelaySystemPromptVersion identifies the current text of RelaySystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const RelaySystemPromptVersion = "relay/2026-11-27"
+
 // RelaySystemPrompt instructs the model to explain a plan that a physician has
 // ALREADY reviewed and approved, during the PLAN_DELIVERED care phase (see
 // openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
@@ -329,10 +333,6 @@ PLAN:
 //   - New-complaint signal: a genuinely new, plan-unrelated complaint must be
 //     flagged with NewComplaintMarker (same bracketed-marker discipline as
 //     ReadyForNoteMarker) so the runtime can reopen INTAKE.
-// RelaySystemPromptVersion identifies the current text of RelaySystemPrompt. Bump it whenever the
-// prompt text changes; prompt_version_test.go fails otherwise.
-const RelaySystemPromptVersion = "relay/2026-11-27"
-
 const RelaySystemPrompt = `You are a care assistant (not a clinician) whose only role is to explain a treatment plan that a physician has ALREADY reviewed and approved. You did not write this plan in this turn — its final content, and the conversation history, are supplied to you separately as context. Your sole purpose in this conversation is to explain and clarify THAT approved plan.
 
 ## Rules — read carefully before every turn

@@ -37,17 +37,6 @@ class AIConversationService: ObservableObject {
     /// read-only until `activateCloud(_:)` is called after a fresh sign-in.
     @Published private(set) var cloudState: CloudSessionState = .signInRequired
 
-    // MARK: - Turn Token Budget
-
-    /// Per-turn token budget for clinical interview turns.
-    ///
-    /// A small budget physically caps turn length, preventing essay-length replies
-    /// even when the model ignores the brevity instruction in the system prompt.
-    /// One short question per gathering turn (~160 tokens).
-    /// Internal (not private) so that unit tests can assert its exact value
-    /// without hard-coding magic numbers.
-    static let gatheringMaxTokens = 160
-
     // MARK: - Dependencies
 
     private let conversationRepository: ConversationRepositoryProtocol

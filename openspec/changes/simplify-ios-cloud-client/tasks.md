@@ -31,6 +31,6 @@
 
 ## Phase 3 — Verification
 
-- [ ] 3.1 Grep check: no reference to `api.openai.com`, `api.anthropic.com`, `LLMProvider`, or `LLM_DEFAULT_` remains in `HouseCall/` or `HouseCallTests/`.
+- [ ] 3.1 Grep check over `HouseCall/` and `HouseCallTests/` comes back empty: `api.openai.com`, `api.anthropic.com`, `LLM_DEFAULT_`, `LLM_CUSTOM_`, `LLMProvider` (excluding the intentionally kept `LLMProviderType` Core Data metadata enum), `streamCompletion`, `SSEParser`, `OpenAIProvider`, `ClaudeProvider`, `CustomProvider`, `providerConfigManager`; `URLSession` is used only by `SyncClient.swift` and `CoreAPIAuthClient.swift`; no `LLM` key in `Info.plist` or `Config/*.xcconfig`.
 - [ ] 3.2 Manual smoke on the iOS 27.2 simulator against the compose stack: register, chat, token expiry (shorten TTL locally), read-only state, sign back in.
 - [ ] 3.3 Update `CLAUDE.md` iOS sections and `docs/USER_GUIDE.md` for the removed settings and passcode; `openspec validate simplify-ios-cloud-client --strict`.

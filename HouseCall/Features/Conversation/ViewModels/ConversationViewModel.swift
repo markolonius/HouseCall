@@ -237,7 +237,7 @@ class ConversationViewModel: ObservableObject {
     }
 
     /// Signs in again with the Core API and activates cloud sync in place.
-    /// Returns true on success. The local session is never touched on failure.
+    /// Returns true on success. On failure the chat stays read-only; a sign-in for a different patient ends the local session.
     @discardableResult
     func signIn(password: String) async -> Bool {
         guard let cloudSignIn, !isSigningIn else { return false }

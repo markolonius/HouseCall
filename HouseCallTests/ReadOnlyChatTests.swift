@@ -79,6 +79,7 @@ struct ReadOnlyChatTests {
             session: URLSession(configuration: config),
             keychainManager: keychain)
         return CloudSyncCoordinator(
+            userId: userId,
             syncClient: client, messageRepository: f.messageRepo,
             conversationRepository: f.conversationRepo,
             auditLogger: AuditLogger(context: f.context), context: f.context)
@@ -172,6 +173,8 @@ struct ReadOnlyChatTests {
         let vm = makeViewModel(f, coordinator: stale, cloudSignIn: { password in
             _ = try await auth.login(tenantId: FakeCoreAPIAuthClient.tenantId,
                                      email: "patient@example.com", password: password)
+            // Mirrors the app's sign-in closure: send what the 401 left pending.
+            await fresh.replayPendingMessages()
             return fresh
         })
         #expect(vm.cloudState == .active)
@@ -197,6 +200,8 @@ struct ReadOnlyChatTests {
 
         await vm.sendMessage(content: "second")
         let messages = try f.messageRepo.fetchAllMessages(conversationId: f.conversationId)
+        let first = try messages.first { try f.messageRepo.decryptMessageContent($0) == "first" }
+        #expect(first?.syncState == "synced", "message left pending by the 401 is replayed after sign-in")
         let second = try messages.first { try f.messageRepo.decryptMessageContent($0) == "second" }
         #expect(second?.syncState == "synced")
     }

@@ -68,6 +68,7 @@ struct AIConversationServiceTests {
                 keychainManager: keychain
             ) {
                 coordinator = CloudSyncCoordinator(
+                    userId: userId,
                     syncClient: syncClient,
                     messageRepository: messageRepo,
                     conversationRepository: conversationRepo,

@@ -496,6 +496,7 @@ struct AIChatIntegrationTests {
             keychainManager: keychain
         )
         let coordinator = CloudSyncCoordinator(
+            userId: user.id!,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,

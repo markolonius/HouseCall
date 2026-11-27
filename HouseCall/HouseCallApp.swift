@@ -220,6 +220,7 @@ private struct AutoLaunchChatView: View {
             // Otherwise pass nil: the service refuses to send and asks the
             // patient to sign in.
             let coordinator = buildCloudSyncCoordinator(
+                userId: userId,
                 conversationRepository: conversationRepository,
                 messageRepository: messageRepository
             )
@@ -230,12 +231,14 @@ private struct AutoLaunchChatView: View {
                 syncCoordinator: coordinator
             )
             coordinator?.start()
+            authService.syncCoordinator = coordinator
 
             // Read-only recovery: with no valid token (missing at launch, or
             // rejected with a 401 later) the chat offers sign-in. A successful
             // Core API login stores a fresh JWT; the coordinator is then built
-            // and started in place, without restarting the app. The local
-            // session is never ended by this path.
+            // and started in place, without restarting the app. A sign-in that
+            // resolves to a different patient is rejected and ends the local
+            // session.
             let convRepo = conversationRepository
             let msgRepo = messageRepository
             let auth = authService
@@ -252,6 +255,7 @@ private struct AutoLaunchChatView: View {
                     expectedUserId: current.id
                 )
                 guard let fresh = buildCloudSyncCoordinator(
+                    userId: userId,
                     conversationRepository: convRepo,
                     messageRepository: msgRepo
                 ) else {
@@ -259,10 +263,13 @@ private struct AutoLaunchChatView: View {
                     throw AuthenticationError.loginFailed("Unable to reach the server.")
                 }
                 fresh.start()
+                auth.syncCoordinator = fresh
                 await fresh.ensureServerConversation(
                     localConversationId: conversationId,
                     title: "Consultation"
                 )
+                // Send anything left pending by the earlier 401.
+                await fresh.replayPendingMessages()
                 return fresh
             }
 
@@ -321,6 +328,7 @@ private struct AutoLaunchChatView: View {
 /// to sign in.
 @MainActor
 private func buildCloudSyncCoordinator(
+    userId: UUID,
     conversationRepository: ConversationRepositoryProtocol,
     messageRepository: MessageRepositoryProtocol
 ) -> CloudSyncCoordinator? {
@@ -340,6 +348,7 @@ private func buildCloudSyncCoordinator(
     // Both gates passed — build the coordinator.
     guard let syncClient = try? SyncClient(baseURL: baseURL) else { return nil }
     return CloudSyncCoordinator(
+        userId: userId,
         syncClient: syncClient,
         messageRepository: messageRepository,
         conversationRepository: conversationRepository

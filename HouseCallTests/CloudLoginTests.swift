@@ -381,5 +381,61 @@ struct CloudLoginTests {
         #expect(try keychain.get(key: KeychainManager.Keys.coreAPIJWT) == nil, "no token stored")
         #expect(service.currentSession == nil, "local session is ended")
         #expect(!service.isAuthenticated)
+
+        // Audit: event recorded with identifiers only, never the email.
+        let events = try AuditLogger(context: context).fetchEvents(eventType: .unauthorizedAccess)
+        #expect(events.count == 1)
+        let details = String(describing: events.first?.details)
+        #expect(!details.contains("patient@example.com"))
+    }
+
+    @Test("Offline re-sign-in for a different cached patient is rejected and ends the session")
+    func testOfflineResignInPatientMismatch() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        let currentId = UUID()
+        let repo = makeRepo(context: context)
+        _ = try repo.createUser(email: "patient@example.com", password: "SecurePassword123!",
+                                fullName: "Jane Smith", authMethod: .password, id: currentId)
+        // Offline service whose cached record for this email is a different patient.
+        let offline = makeService(context: context, keychain: keychain,
+                                  stubClient: StubCoreAPIAuthClient(loginBehaviour: .offline("down")),
+                                  tenantId: "t-1")
+        var failed = false
+        do {
+            _ = try await offline.login(email: "patient@example.com", credential: "SecurePassword123!",
+                                        authMethod: .password, expectedUserId: UUID())
+        } catch {
+            failed = true
+            #expect(!error.localizedDescription.contains("patient@example.com"))
+        }
+        #expect(failed, "cached record id differing from expectedUserId must be rejected")
+        #expect(!offline.isAuthenticated)
+    }
+
+    @Test("Logout stops an attached sync coordinator")
+    func testLogoutStopsAttachedCoordinator() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        let userId = UUID()
+        _ = try makeRepo(context: context).createUser(
+            email: "patient@example.com", password: "SecurePassword123!",
+            fullName: "Jane Smith", authMethod: .password, id: userId)
+        let fake = FakeCoreAPIAuthClient()
+        fake.seed(email: "patient@example.com", patientId: userId)
+        let service = makeService(context: context, keychain: keychain, stubClient: fake, tenantId: "t-1")
+        _ = try await service.login(email: "patient@example.com", credential: "SecurePassword123!", authMethod: .password)
+
+        let coordinator = CloudSyncCoordinator(
+            userId: userId,
+            syncClient: try SyncClient(baseURL: URL(string: "http://localhost:8080")!),
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+        service.syncCoordinator = coordinator
+        #expect(service.syncCoordinator === coordinator)
+        try await service.logout()
+        #expect(service.syncCoordinator == nil, "logout detaches the coordinator after stopping it")
+        withExtendedLifetime(coordinator) {}
     }
 }

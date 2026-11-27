@@ -84,9 +84,15 @@ final class CloudSyncCoordinator: ObservableObject {
     private var wsSubscription: AnyCancellable?
     private var foregroundSubscription: AnyCancellable?
 
+    /// The signed-in patient this coordinator syncs for.
+    private let userId: UUID
+
     // MARK: - Init
 
     /// - Parameters:
+    ///   - userId: The signed-in patient. Pending-message replay is scoped to
+    ///     this patient's conversations so another patient's queued messages
+    ///     are never sent with this patient's token.
     ///   - syncClient: Injected for tests; defaults to the app-level shared instance.
     ///   - messageRepository: Injected; defaults to the shared Core Data repository.
     ///   - conversationRepository: Injected; defaults to the shared Core Data repository.
@@ -94,12 +100,14 @@ final class CloudSyncCoordinator: ObservableObject {
     ///   - context: Managed object context for sync-metadata writes.
     ///     Defaults to the shared view context.
     init(
+        userId: UUID,
         syncClient: SyncClient,
         messageRepository: MessageRepositoryProtocol = CoreDataMessageRepository(),
         conversationRepository: ConversationRepositoryProtocol = CoreDataConversationRepository(),
         auditLogger: AuditLogger = .shared,
         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext
     ) {
+        self.userId = userId
         self.syncClient = syncClient
         self.messageRepository = messageRepository
         self.conversationRepository = conversationRepository
@@ -506,11 +514,24 @@ final class CloudSyncCoordinator: ObservableObject {
         return Set(existing.compactMap { $0.serverId })
     }
 
+    /// Pending messages belonging to the current patient only: messages whose
+    /// conversation's `userId` matches this coordinator's patient.
     private func fetchPendingMessages() throws -> [Message] {
         let request: NSFetchRequest<Message> = Message.fetchRequest()
         request.predicate = NSPredicate(format: "syncState == %@", "pending")
         request.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
-        return try context.fetch(request)
+        let pending = try context.fetch(request)
+        let ownedIds = Set(try fetchOwnedConversationIds())
+        return pending.filter { message in
+            guard let cid = message.conversationId else { return false }
+            return ownedIds.contains(cid)
+        }
+    }
+
+    private func fetchOwnedConversationIds() throws -> [UUID] {
+        let request: NSFetchRequest<Conversation> = Conversation.fetchRequest()
+        request.predicate = NSPredicate(format: "userId == %@", userId as CVarArg)
+        return try context.fetch(request).compactMap { $0.id }
     }
 
     /// Updates `syncState` and optionally `serverId` on a Message without

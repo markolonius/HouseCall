@@ -284,7 +284,7 @@ class AuthenticationService: ObservableObject {
             user = try userRepository.createUser(
                 email: email,
                 password: password,
-                    fullName: fullName,
+                fullName: fullName,
                 authMethod: authMethod,
                 id: patientId
             )
@@ -392,15 +392,13 @@ class AuthenticationService: ObservableObject {
                 // No JWT is obtained; cloud sync stays inactive until a subsequent
                 // online login succeeds and a fresh token is stored.
                 try rejectLegacyAuthMethod(for: email)
+                let localUser: User
                 do {
-                    let localUser = try userRepository.authenticateUser(
+                    localUser = try userRepository.authenticateUser(
                         email: email,
                         credential: credential,
                         authMethod: authMethod
                     )
-                    // Local check succeeded: start a session from the cached record.
-                    try await createSession(for: localUser, authMethod: authMethod)
-                    return localUser
                 } catch {
                     // No cached user for this email, or credential mismatch —
                     // offline access cannot be granted without a valid local record.
@@ -408,6 +406,15 @@ class AuthenticationService: ObservableObject {
                         "Unable to reach the server. Please check your connection."
                     )
                 }
+                // Re-sign-in lock: the cached record must be the same patient.
+                if let expectedUserId, localUser.id != expectedUserId {
+                    auditIdentityMismatch(expected: expectedUserId, actual: localUser.id)
+                    try? await logout()
+                    throw AuthenticationError.loginFailed("Sign-in did not match the current account.")
+                }
+                // Local check succeeded: start a session from the cached record.
+                try await createSession(for: localUser, authMethod: authMethod)
+                return localUser
             default:
                 throw AuthenticationError.loginFailed(syncErr.localizedDescription ?? "Server error")
             }
@@ -424,6 +431,7 @@ class AuthenticationService: ObservableObject {
         // session, the server identity must be the same patient. Otherwise do
         // not store the token or create a session, and end the local session.
         if let expectedUserId, expectedUserId != patientId {
+            auditIdentityMismatch(expected: expectedUserId, actual: patientId)
             try? await logout()
             throw AuthenticationError.loginFailed("Sign-in did not match the current account.")
         }
@@ -475,9 +483,22 @@ class AuthenticationService: ObservableObject {
         return user
     }
 
+    /// Records a re-sign-in identity mismatch. Identifiers and event name only
+    /// (never the email or any PHI).
+    private func auditIdentityMismatch(expected: UUID, actual: UUID?) {
+        try? auditLogger.log(
+            event: .unauthorizedAccess,
+            userId: expected,
+            message: "Re-sign-in identity mismatch: server patient \(actual?.uuidString ?? "unknown")"
+        )
+    }
+
     /// Logs in with biometric authentication only
     @MainActor
     func loginWithBiometric(email: String) async throws -> User {
+        guard isCoreAPIConfigured else {
+            throw AuthenticationError.coreAPINotConfigured
+        }
         // A retired auth method cannot unlock via biometrics; skip the prompt and
         // send the patient to a password sign-in (which migrates the record).
         try rejectLegacyAuthMethod(for: email)
@@ -513,6 +534,11 @@ class AuthenticationService: ObservableObject {
     /// Logs out the current user
     @MainActor
     func logout() async throws {
+        // Stop cloud sync so the WebSocket subscription is cancelled and no
+        // further PHI events can be delivered or persisted after logout.
+        syncCoordinator?.stop()
+        syncCoordinator = nil
+
         guard let session = currentSession else {
             return
         }
@@ -535,11 +561,6 @@ class AuthenticationService: ObservableObject {
         // key material. The Keychain master key is preserved so at-rest PHI
         // remains decryptable after the next login.
         EncryptionManager.shared.clearCachedKeys()
-
-        // Stop cloud sync so the WebSocket subscription is cancelled and no
-        // further PHI events can be delivered or persisted after logout.
-        syncCoordinator?.stop()
-        syncCoordinator = nil
 
         // Update state
         currentSession = nil

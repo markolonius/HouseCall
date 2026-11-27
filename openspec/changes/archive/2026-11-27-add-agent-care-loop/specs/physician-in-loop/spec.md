@@ -5,8 +5,9 @@
 ### Requirement: Rejection Reason Capture
 
 A physician rejection SHALL require a non-empty reason. The reason SHALL be
-stored on the rejected recommendation and included in the transition's audit
-event, in the same transaction as the state change. The reason SHALL never be
+stored on the rejected recommendation, and the transition's audit event SHALL
+record that a reason was captured (never its text), in the same transaction as
+the state change. The reason SHALL never be
 delivered to the patient. The recommendation lifecycle is unchanged:
 `REJECTED` remains terminal for the rejected row; any revision is a new
 recommendation.

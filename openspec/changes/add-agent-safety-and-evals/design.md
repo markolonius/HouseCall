@@ -73,7 +73,10 @@ Each model turn type gets a JSON Schema:
 - Negation handling is deliberately minimal: an explicit "no chest pain"
   immediately preceding the phrase does not match; anything more ambiguous
   matches.
-- The order in `INTAKE` becomes: rules → model triage → interview. A rule hit
+- The order becomes: rules → model triage → the phase's normal turn, in every
+  care phase. Today triage runs only in `INTAKE`, so an emergency reported while
+  waiting for review gets the fixed reminder and one reported after the plan is
+  delivered goes to the relay prompt (found in the add-agent-care-loop review). A rule hit
   is emergent and skips model triage. Without a rule hit, model triage runs; a
   model `EMERGENT` is emergent. A model failure without a rule hit keeps the
   care-loop behaviour (proceed and audit), because the rules have already

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -333,8 +334,14 @@ func TestExecute_RejectReasonStoredAndAudited(t *testing.T) {
 		if err := json.Unmarshal(e.Metadata, &meta); err != nil {
 			t.Fatalf("unmarshal audit metadata: %v", err)
 		}
-		if meta["reason"] != wantReason {
-			t.Errorf("audit metadata reason: want %q, got %v", wantReason, meta["reason"])
+		if _, present := meta["reason"]; present {
+			t.Errorf("audit metadata must not carry the reason text (PHI): %v", meta)
+		}
+		if strings.Contains(string(e.Metadata), wantReason) {
+			t.Errorf("audit metadata leaks reason text: %s", e.Metadata)
+		}
+		if meta["reason_recorded"] != true {
+			t.Errorf("audit metadata reason_recorded: want true, got %v", meta["reason_recorded"])
 		}
 		if meta["new_state"] != domain.StateRejected {
 			t.Errorf("audit metadata new_state: want %q, got %v", domain.StateRejected, meta["new_state"])

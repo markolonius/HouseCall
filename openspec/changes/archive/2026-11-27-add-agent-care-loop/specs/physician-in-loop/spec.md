@@ -23,8 +23,8 @@ recommendation.
 **Given** a recommendation in `PENDING_REVIEW`
 **When** a physician rejects it with reason "ask about current medications"
 **Then** the recommendation moves to `REJECTED` with that reason stored
-**And** the audit event for the transition records the reason in the same
-transaction
+**And** the audit event for the transition records that a reason was captured (never its text, which is
+clinical content) in the same transaction
 
 #### Scenario: The rejected row stays terminal
 

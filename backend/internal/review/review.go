@@ -7,14 +7,10 @@
 //   - final_content is PHI: it is accepted as a parameter but never logged or
 //     placed in audit metadata. It is only written to the DB as part of the
 //     atomic state+audit transaction.
-//   - Audit metadata otherwise carries only identifiers and action/state
-//     strings — no PHI — with one deliberate, spec-mandated exception: the
-//     rejection reason (physician free-text) is included in the
-//     recommendation.reviewed audit event's metadata for a REJECTED outcome,
-//     per openspec/changes/add-agent-care-loop/specs/physician-in-loop/spec.md
-//     ("The reason is stored and audited atomically"). It receives the same
-//     treatment as final_content: written only inside the atomic
-//     state+audit transaction, never logged, never sent to the patient.
+//   - Audit metadata carries only identifiers and action/state strings. The
+//     rejection reason (physician free-text) is stored on
+//     recommendations.rejection_reason only; the audit event records
+//     "reason_recorded": true, never the text.
 package review
 
 import (
@@ -232,16 +228,10 @@ func Execute(
 		}
 		if finalState == domain.StateRejected {
 			// The rejection reason is physician free-text about the patient's
-			// case. Per
-			// openspec/changes/add-agent-care-loop/specs/physician-in-loop/spec.md
-			// ("The reason is stored and audited atomically") it belongs in the
-			// audit event for this transition, in the same transaction as the
-			// state write above — same treatment as storing it on the
-			// recommendation row itself: at rest under the same DB-level
-			// protection as draft_content/final_content, never written to a
-			// server log, and never delivered to the patient (no WS push, no
-			// message row).
-			auditMetadata["reason"] = trimmedReason
+			// case (clinical content). It lives only on
+			// recommendations.rejection_reason; the append-only audit event
+			// records that a reason was captured, never its text.
+			auditMetadata["reason_recorded"] = true
 		}
 		if err := tx.CreateAuditEvent(ctx, tenant, store.AuditEvent{
 			ActorType: "physician",

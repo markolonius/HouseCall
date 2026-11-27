@@ -120,6 +120,12 @@ protocol UserRepositoryProtocol {
     /// - Throws: UserRepositoryError
     func authenticateUser(email: String, credential: String, authMethod: AuthMethod) throws -> User
 
+    /// Migrates a cached user with a retired auth method to password auth by
+    /// replacing the local credential hash with the hash of `password`.
+    /// Callers must only pass a password already accepted by the Core API.
+    /// - Throws: UserRepositoryError
+    func migrateToPasswordAuth(_ user: User, password: String) throws
+
     /// Checks if an email is already registered
     /// - Parameter email: Email address to check
     /// - Returns: true if email exists, false otherwise

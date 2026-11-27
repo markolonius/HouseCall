@@ -38,7 +38,7 @@ enum AuthenticationError: LocalizedError {
         case .coreAPINotConfigured:
             return "This build is not configured to connect to HouseCall."
         case .legacyAuthMethod:
-            return "This account used a sign-in method that is no longer supported. Please sign in with your password, or register again."
+            return "This account used a sign-in method that is no longer supported. Please sign in with your password."
         }
     }
 }
@@ -435,7 +435,22 @@ class AuthenticationService: ObservableObject {
         // to the server-canonical identity — encryption-identity continuity.
         let user: User
         if let existingUser = userRepository.findUser(by: patientId) {
-            try rejectLegacyAuthMethod(existingUser)
+            // Core API accepted the password. A cached record with a retired auth
+            // method (e.g. "passcode") is migrated to password auth rather than
+            // rejected, so the patient is never locked out of an existing account.
+            if let stored = existingUser.authMethod, AuthMethod(rawValue: stored) == nil {
+                do {
+                    try userRepository.migrateToPasswordAuth(existingUser, password: credential)
+                } catch {
+                    throw AuthenticationError.loginFailed(error.localizedDescription)
+                }
+                // Identifiers and event name only — no PHI.
+                try? auditLogger.log(
+                    event: .accountUpdated,
+                    userId: patientId,
+                    message: "Legacy auth method migrated to password"
+                )
+            }
             user = existingUser
         } else {
             do {
@@ -463,6 +478,10 @@ class AuthenticationService: ObservableObject {
     /// Logs in with biometric authentication only
     @MainActor
     func loginWithBiometric(email: String) async throws -> User {
+        // A retired auth method cannot unlock via biometrics; skip the prompt and
+        // send the patient to a password sign-in (which migrates the record).
+        try rejectLegacyAuthMethod(for: email)
+
         // Perform biometric authentication
         let reason = BiometricAuthManager.createAuthenticationReason(for: "login")
         let result = await biometricAuthManager.authenticate(reason: reason)

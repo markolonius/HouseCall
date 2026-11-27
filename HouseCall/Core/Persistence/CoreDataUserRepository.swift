@@ -121,6 +121,26 @@ class CoreDataUserRepository: UserRepositoryProtocol {
         }
     }
 
+    // MARK: - Migrate Legacy Auth Method
+
+    func migrateToPasswordAuth(_ user: User, password: String) throws {
+        guard user.managedObjectContext == context, let userId = user.id else {
+            throw UserRepositoryError.userNotFound
+        }
+        let hashedPassword = try passwordHasher.hash(password: password)
+        user.encryptedPasswordHash = try encryptionManager.encrypt(
+            data: hashedPassword,
+            for: userId
+        )
+        user.authMethod = AuthMethod.password.rawValue
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw UserRepositoryError.saveFailed(error)
+        }
+    }
+
     // MARK: - Update User
 
     func updateUser(_ user: User) throws {

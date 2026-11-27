@@ -192,7 +192,7 @@ private struct AutoLaunchChatView: View {
     // MARK: - Conversation Resolution
 
     /// Fetches the most-recently-updated conversation for this user, or creates
-    /// a new one with the default provider if none exist.
+    /// a new one if none exist.
     /// No PHI is written to logs — only identifiers and event names.
     private func resolveConversation() async {
         do {
@@ -205,7 +205,6 @@ private struct AutoLaunchChatView: View {
             } else {
                 conversation = try conversationRepository.createConversation(
                     userId: userId,
-                    provider: LLMProviderConfigManager.shared.getActiveProvider(),
                     title: nil
                 )
             }
@@ -216,7 +215,8 @@ private struct AutoLaunchChatView: View {
 
             // Build a cloud-sync coordinator only when the Core API base URL
             // is configured AND a JWT is already present in the Keychain.
-            // Otherwise pass nil so the service uses the direct-LLM path.
+            // Otherwise pass nil: the service refuses to send and asks the
+            // patient to sign in.
             let coordinator = buildCloudSyncCoordinator(
                 conversationRepository: conversationRepository,
                 messageRepository: messageRepository
@@ -272,13 +272,14 @@ private struct AutoLaunchChatView: View {
 ///      setting) resolves to a non-empty, valid URL.
 ///   2. A Core API JWT is present in the Keychain under `Keys.coreAPIJWT`.
 ///
-/// Returns `nil` in all other cases so the caller falls back to the
-/// direct-LLM path with no behaviour change.
+/// Returns `nil` in all other cases; the service then refuses to send and
+/// asks the patient to sign in.
 ///
 /// NOTE: A successful cloud login/registration (when `CoreAPIBaseURL` +
 /// `CoreAPITenantID` are configured) stores the JWT under `Keys.coreAPIJWT`, so
 /// this gate activates for an authenticated patient. With no Core API config the
-/// JWT is never written and this returns `nil` (local-only default build).
+/// JWT is never written and this returns `nil`, so sending asks the patient
+/// to sign in.
 @MainActor
 private func buildCloudSyncCoordinator(
     conversationRepository: ConversationRepositoryProtocol,

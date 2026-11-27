@@ -61,18 +61,25 @@ enum ConversationRepositoryError: LocalizedError, Equatable {
     }
 }
 
+extension ConversationRepositoryProtocol {
+    /// Creates a conversation without choosing a provider (the server picks the model).
+    func createConversation(userId: UUID, title: String? = nil) throws -> Conversation {
+        try createConversation(userId: userId, provider: nil, title: title)
+    }
+}
+
 /// Protocol defining conversation data access operations
 protocol ConversationRepositoryProtocol {
     /// Creates a new conversation
     /// - Parameters:
     ///   - userId: User's UUID who owns the conversation
-    ///   - provider: LLM provider type (openai, claude, custom)
+    ///   - provider: Legacy LLM provider tag. Pass nil to leave `llmProvider` at the Core Data schema default
     ///   - title: Optional initial title (will be encrypted)
     /// - Returns: Created Conversation entity
     /// - Throws: ConversationRepositoryError
     func createConversation(
         userId: UUID,
-        provider: LLMProviderType,
+        provider: LLMProviderType?,
         title: String?
     ) throws -> Conversation
 

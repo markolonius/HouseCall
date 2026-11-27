@@ -33,37 +33,19 @@ struct AIConversationServiceTests {
         return container.viewContext
     }
 
-    /// Creates a test service with real repositories.
-    ///
-    /// A `MockLLMProvider` (always-succeeds) is injected via
-    /// `_testProviderOverride` so tests never hit real API keys or the network.
+    /// Creates a signed-out test service (no sync coordinator) with real repositories.
     func createTestService(context: NSManagedObjectContext, userId: UUID) -> AIConversationService {
-        let conversationRepo = CoreDataConversationRepository(
-            context: context,
-            encryptionManager: EncryptionManager.shared,
-            auditLogger: AuditLogger(context: context)
-        )
+        makeService(context: context, userId: userId, withCoordinator: false)
+    }
 
-        let messageRepo = CoreDataMessageRepository(
-            context: context,
-            encryptionManager: EncryptionManager.shared,
-            auditLogger: AuditLogger(context: context)
-        )
-
-        let service = AIConversationService(
-            userId: userId,
-            conversationRepository: conversationRepo,
-            messageRepository: messageRepo,
-            providerConfigManager: LLMProviderConfigManager.shared,
-            auditLogger: AuditLogger(context: context)
-        )
-        // Bypass provider-config checks and live network in unit tests.
-        service._testProviderOverride = StubLLMProvider(shouldFail: false)
+    /// Creates a service wired to a CloudSyncCoordinator whose network is always
+    /// offline, so the send path runs end to end without touching the network.
+    func createCloudTestService(context: NSManagedObjectContext, userId: UUID) throws -> AIConversationService {
+        let service = makeService(context: context, userId: userId, withCoordinator: true)
         return service
     }
 
-    /// Creates a test service whose provider always fails — used by error-path tests.
-    func createFailingTestService(context: NSManagedObjectContext, userId: UUID) -> AIConversationService {
+    private func makeService(context: NSManagedObjectContext, userId: UUID, withCoordinator: Bool) -> AIConversationService {
         let conversationRepo = CoreDataConversationRepository(
             context: context,
             encryptionManager: EncryptionManager.shared,
@@ -74,15 +56,33 @@ struct AIConversationServiceTests {
             encryptionManager: EncryptionManager.shared,
             auditLogger: AuditLogger(context: context)
         )
-        let service = AIConversationService(
+        var coordinator: CloudSyncCoordinator?
+        if withCoordinator {
+            let keychain = TestInMemoryKeychain()
+            try? keychain.set(key: KeychainManager.Keys.coreAPIJWT, value: "test.jwt.token")
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [SyncOfflineURLProtocol.self]
+            if let syncClient = try? SyncClient(
+                baseURL: URL(string: "http://localhost:8080")!,
+                session: URLSession(configuration: config),
+                keychainManager: keychain
+            ) {
+                coordinator = CloudSyncCoordinator(
+                    syncClient: syncClient,
+                    messageRepository: messageRepo,
+                    conversationRepository: conversationRepo,
+                    auditLogger: AuditLogger(context: context),
+                    context: context
+                )
+            }
+        }
+        return AIConversationService(
             userId: userId,
             conversationRepository: conversationRepo,
             messageRepository: messageRepo,
-            providerConfigManager: LLMProviderConfigManager.shared,
-            auditLogger: AuditLogger(context: context)
+            auditLogger: AuditLogger(context: context),
+            syncCoordinator: coordinator
         )
-        service._testProviderOverride = StubLLMProvider(shouldFail: true)
-        return service
     }
 
     // MARK: - Conversation Creation Tests
@@ -110,14 +110,8 @@ struct AIConversationServiceTests {
         let userId = UUID()
         let service = createTestService(context: context, userId: userId)
 
-        // Note: This test may fail if Claude provider is not configured
-        // For a complete test, we'd need to mock the provider config manager
-        do {
-            let conversation = try await service.createConversation(provider: .openai)
-            #expect(conversation.llmProvider == "openai")
-        } catch LLMError.notConfigured {
-            // Expected if provider is not configured in test environment
-        }
+        let conversation = try await service.createConversation(provider: .openai)
+        #expect(conversation.llmProvider == "openai")
     }
 
     @Test("Create multiple conversations")
@@ -218,19 +212,15 @@ struct AIConversationServiceTests {
     func testSendMessageSavesUserMessage() async throws {
         let context = createInMemoryContext()
         let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
+        let service = try createCloudTestService(context: context, userId: userId)
 
         // Create conversation
         let conversation = try await service.createConversation()
         let conversationId = conversation.id!
 
-        // Note: Actually streaming will fail without a configured provider
-        // This test validates the message creation part
-        do {
-            try await service.sendMessage(conversationId: conversationId, content: "I have a headache")
-        } catch {
-            // Expected to fail at streaming stage if provider not configured
-        }
+        // The coordinator is offline, so the POST cannot complete; the message
+        // must still be persisted locally as pending.
+        try await service.sendMessage(conversationId: conversationId, content: "I have a headache")
 
         // Verify user message was saved
         #expect(service.messages.count >= 1)
@@ -278,22 +268,48 @@ struct AIConversationServiceTests {
         }
     }
 
+    @Test("Send without a sync coordinator throws sign-in required and persists nothing")
+    func testSendMessageWithoutCoordinatorRequiresSignIn() async throws {
+        let context = createInMemoryContext()
+        let userId = UUID()
+        let service = createTestService(context: context, userId: userId)
+        #expect(service.syncCoordinator == nil)
+
+        let conversation = try await service.createConversation()
+        let conversationId = conversation.id!
+
+        await #expect(throws: AIConversationError.signInRequired) {
+            try await service.sendMessage(conversationId: conversationId, content: "I have a headache")
+        }
+
+        // Surfaced to the UI with a PHI-free, patient-facing message.
+        #expect(service.errorMessage == AIConversationError.signInRequired.errorDescription)
+        #expect(service.errorMessage?.lowercased().contains("sign in") == true)
+
+        // Nothing was persisted, queued, or streamed: no network dependency exists
+        // in this configuration and no message left the device.
+        #expect(service.messages.isEmpty)
+        #expect(service.isStreaming == false)
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        #expect(try messageRepo.fetchAllMessages(conversationId: conversationId).isEmpty)
+    }
+
     @Test("First message sets conversation title")
     func testFirstMessageSetsTitle() async throws {
         let context = createInMemoryContext()
         let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
+        let service = try createCloudTestService(context: context, userId: userId)
 
         // Create conversation
         let conversation = try await service.createConversation()
         let conversationId = conversation.id!
 
         // Send first message
-        do {
-            try await service.sendMessage(conversationId: conversationId, content: "I have symptoms of the flu")
-        } catch {
-            // Expected to fail at streaming if provider not configured
-        }
+        try await service.sendMessage(conversationId: conversationId, content: "I have symptoms of the flu")
 
         // Verify title was set
         let conversationRepo = CoreDataConversationRepository(
@@ -313,7 +329,7 @@ struct AIConversationServiceTests {
     func testSendMessageUpdatesTimestamp() async throws {
         let context = createInMemoryContext()
         let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
+        let service = try createCloudTestService(context: context, userId: userId)
 
         let conversation = try await service.createConversation()
         let originalTimestamp = conversation.updatedAt!
@@ -322,11 +338,7 @@ struct AIConversationServiceTests {
         try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
 
         // Send message
-        do {
-            try await service.sendMessage(conversationId: conversation.id!, content: "Test message")
-        } catch {
-            // Expected to fail at streaming
-        }
+        try await service.sendMessage(conversationId: conversation.id!, content: "Test message")
 
         // Verify timestamp was updated
         let conversationRepo = CoreDataConversationRepository(
@@ -445,18 +457,14 @@ struct AIConversationServiceTests {
     func testFullConversationFlow() async throws {
         let context = createInMemoryContext()
         let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
+        let service = try createCloudTestService(context: context, userId: userId)
 
         // 1. Create conversation
         let conversation = try await service.createConversation()
         #expect(service.currentConversation != nil)
 
         // 2. Send first message (will fail at streaming but message is saved)
-        do {
-            try await service.sendMessage(conversationId: conversation.id!, content: "I have a headache")
-        } catch {
-            // Expected if provider not configured
-        }
+        try await service.sendMessage(conversationId: conversation.id!, content: "I have a headache")
 
         // Verify message was created
         #expect(service.messages.count >= 1)
@@ -468,133 +476,6 @@ struct AIConversationServiceTests {
         try await service.loadConversation(conversation.id!)
         #expect(service.currentConversation != nil)
         #expect(service.messages.count >= 1)
-    }
-
-    // MARK: - Streaming Regression Tests
-
-    /// Regression guard for the Phase-3 bug where providers emitted an empty
-    /// string and never called `onChunk`, leaving `streamingText` blank and
-    /// persisting an empty assistant message.
-    ///
-    /// This test MUST FAIL if:
-    /// - `streamingText` never updates (stays empty or delivers a single blob)
-    /// - The final persisted assistant message is empty
-    @Test("streamingText updates incrementally and final assistant message is persisted non-empty")
-    func testStreamingTextIncrementalUpdatesAndPersistence() async throws {
-        let context = createInMemoryContext()
-        let userId = UUID()
-
-        // Use a private EncryptionManager instance so parallel test workers
-        // (SecurityTests, EncryptionManagerTests) cannot race on the shared
-        // singleton's key cache between the encrypt (inside sendMessage) and the
-        // decrypt assertion below.  SecurityTests.clearCache() wipes the shared
-        // masterKey from memory; because _testInjectMasterKey bypasses the
-        // Keychain, the subsequent getMasterKey() call regenerates a DIFFERENT
-        // random key, making decryption of content encrypted under the original
-        // key fail.  A per-test instance with its own InMemoryKeychainManager and
-        // an injected master key is fully isolated from that race.
-        let localKeychain = InMemoryKeychainManager()
-        let localEncryption = EncryptionManager._testMakeInstance(keychainManager: localKeychain)
-        localEncryption._testInjectMasterKey(SymmetricKey(size: .bits256))
-
-        let conversationRepo = CoreDataConversationRepository(
-            context: context,
-            encryptionManager: localEncryption,
-            auditLogger: AuditLogger(context: context)
-        )
-        let messageRepo = CoreDataMessageRepository(
-            context: context,
-            encryptionManager: localEncryption,
-            auditLogger: AuditLogger(context: context)
-        )
-        let service = AIConversationService(
-            userId: userId,
-            conversationRepository: conversationRepo,
-            messageRepository: messageRepo,
-            providerConfigManager: LLMProviderConfigManager.shared,
-            auditLogger: AuditLogger(context: context)
-        )
-        service._testProviderOverride = MultiChunkStubProvider()
-
-        // Collect every non-empty streamingText value in publication order.
-        // The Combine sink fires synchronously (willSet) on the main actor, so
-        // each handleStreamChunk call appends exactly one entry here before
-        // execution moves on to the next chunk.
-        var streamingHistory: [String] = []
-        var cancellables = Set<AnyCancellable>()
-        service.$streamingText
-            .filter { !$0.isEmpty }
-            .sink { streamingHistory.append($0) }
-            .store(in: &cancellables)
-
-        // Track isStreaming transitions (initial false, true during, false after).
-        var isStreamingHistory: [Bool] = []
-        service.$isStreaming
-            .sink { isStreamingHistory.append($0) }
-            .store(in: &cancellables)
-
-        let conversation = try await service.createConversation()
-
-        // sendMessage sets isStreaming = true, calls the provider synchronously,
-        // then returns. The handleStreamChunk / handleStreamComplete closures are
-        // dispatched as Task { @MainActor in … } and run after we yield below.
-        try await service.sendMessage(conversationId: conversation.id!, content: "regression test input")
-
-        // Drain the main-actor queue so all spawned Tasks complete:
-        //   3 × handleStreamChunk  +  1 × handleStreamComplete.
-        for _ in 0..<10 {
-            await Task.yield()
-        }
-
-        // 1. streamingText must have grown INCREMENTALLY — at least 2 distinct
-        //    non-empty values observed, ending at the full expected text.
-        let expectedFull = MultiChunkStubProvider.expectedText
-        #expect(
-            streamingHistory.count >= 2,
-            "streamingText must update incrementally — observed \(streamingHistory.count) non-empty emission(s), need ≥ 2"
-        )
-        #expect(
-            streamingHistory.last == expectedFull,
-            "last observed streamingText must equal the full chunk sequence '\(expectedFull)'"
-        )
-
-        // 2. Each successive value must be strictly longer (monotonically growing).
-        for i in 0..<(streamingHistory.count - 1) {
-            #expect(
-                streamingHistory[i + 1].hasPrefix(streamingHistory[i]),
-                "streamingText must grow monotonically: '\(streamingHistory[i])' → '\(streamingHistory[i + 1])'"
-            )
-        }
-
-        // 3. isStreaming lifecycle: went true during streaming, false when done.
-        #expect(
-            isStreamingHistory.contains(true),
-            "isStreaming must have been true during the streaming window"
-        )
-        #expect(
-            service.isStreaming == false,
-            "isStreaming must be false after completion"
-        )
-
-        // 4. Core regression guard: final assistant message is persisted with the
-        //    FULL concatenated content — not empty, not a placeholder.
-        let allMessages = try messageRepo.fetchAllMessages(conversationId: conversation.id!)
-        let assistantMessages = allMessages.filter { $0.role == "assistant" }
-        #expect(assistantMessages.count == 1, "exactly one assistant message must be persisted")
-
-        let persistedContent = try messageRepo.decryptMessageContent(assistantMessages[0])
-        #expect(
-            !persistedContent.isEmpty,
-            "persisted assistant message must not be empty — regression guard against the empty-chunk bug"
-        )
-        #expect(
-            persistedContent == expectedFull,
-            "persisted content must equal the full concatenated response '\(expectedFull)'"
-        )
-        #expect(
-            assistantMessages[0].streamingComplete == true,
-            "persisted message must be marked streamingComplete = true"
-        )
     }
 }
 
@@ -618,75 +499,4 @@ private class TestInMemoryKeychain: KeychainManager {
     override func delete(key: String) throws {
         storage.removeValue(forKey: key)
     }
-}
-
-// MARK: - Stub LLM Provider (test-only)
-
-/// Deterministic provider used by `AIConversationServiceTests`.
-///
-/// `shouldFail = false`: simulates a successful one-chunk streaming response.
-/// `shouldFail = true`:  calls `onComplete(.failure(...))` — exercises the
-///                       service's error-handling path without touching the network.
-private class StubLLMProvider: LLMProvider {
-    let providerType: LLMProviderType = .openai
-    let isConfigured: Bool = true
-    let shouldFail: Bool
-
-    init(shouldFail: Bool) {
-        self.shouldFail = shouldFail
-    }
-
-    func streamCompletion(
-        messages: [ChatMessage],
-        maxTokensOverride: Int?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
-    ) async throws {
-        if shouldFail {
-            onComplete(.failure(.networkError(NSError(domain: "StubProvider", code: -1,
-                                                      userInfo: [NSLocalizedDescriptionKey: "Stubbed failure"]))))
-            return
-        }
-        let response = "Stub response from provider."
-        onChunk(response)
-        onComplete(.success(response))
-    }
-
-    func cancelStreaming() {}
-}
-
-// MARK: - Multi-Chunk Stub LLM Provider (streaming regression test)
-
-/// Deterministic multi-chunk provider used by `testStreamingTextIncrementalUpdatesAndPersistence`.
-///
-/// Emits a known sequence of chunks — "Hello", " ", "world" — via `onChunk`,
-/// then calls `onComplete(.success("Hello world"))`.  This lets the test
-/// verify that `streamingText` grows INCREMENTALLY (one entry per chunk) and
-/// that the final persisted message equals the full concatenated text.
-///
-/// The test FAILS if streaming reverts to the Phase-3 bug where the provider
-/// delivered an empty string without emitting any chunks.
-private class MultiChunkStubProvider: LLMProvider {
-    let providerType: LLMProviderType = .openai
-    let isConfigured: Bool = true
-
-    /// The ordered chunk sequence emitted during one completion call.
-    static let chunks: [String] = ["Hello", " ", "world"]
-
-    /// Full text the caller should expect after all chunks arrive.
-    static var expectedText: String { chunks.joined() }
-
-    func streamCompletion(
-        messages: [ChatMessage],
-        maxTokensOverride: Int?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
-    ) async throws {
-        for chunk in Self.chunks {
-            onChunk(chunk)
-        }
-        onComplete(.success(Self.expectedText))
-    }
-
-    func cancelStreaming() {}
 }

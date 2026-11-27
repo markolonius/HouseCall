@@ -78,13 +78,13 @@ That single command:
 2. Seeds beads from `tasks.md` (`scripts/openspec-to-beads.sh`) — idempotent.
 3. Creates a worktree + branch `claude/<change-id>-phase-<N>` from `main`.
 4. For each ready task in the phase, the **coder** subagent implements the one
-   task, runs `scripts/test.sh` until it passes, and commits.
+   task, runs `scripts/test.sh` until it passes, and commits. Its bead is
+   closed right away, because each task bead blocks the next one.
 5. Gates the phase once, at the end:
    - `scripts/test.sh` runs `go build` / `go vet` / `go test` and/or
      `xcodebuild test`, depending on what changed. No model is involved.
    - The **reviewer** subagent reviews the whole phase diff for correctness +
      HIPAA/security. Blocking findings go back to the coder (max 3 rounds).
-   - On pass+approve: close the phase's beads.
 6. Pushes the branch and opens **one PR for the phase**, targeting `main`. You
    review and merge, then run the next phase.
 

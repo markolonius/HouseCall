@@ -52,7 +52,7 @@ Repeat until no phase-$1 beads remain ready:
 10. **Dispatch the coder** (subagent_type `coder`) with: the bead id, change-id `$0`, the task number + title, and the worktree path `$WT`. The coder implements the task, runs `scripts/test.sh` itself, and commits. Wait for its summary.
     - If the coder reports it could not get `scripts/test.sh` to pass, send it back once with the failure. If it still fails, stop the loop and report to the user.
     - If it reports `BLOCKED` (DB down, no Xcode for an iOS task), report to the user and stop.
-11. Mark the task `- [x]` in `openspec/changes/$0/tasks.md` and commit that edit. Leave the bead open until the phase gate passes. Loop.
+11. Mark the task `- [x]` in `openspec/changes/$0/tasks.md` and commit that edit, then close the bead: `bd close <id> --reason="<one-line summary>"`. Each task bead blocks the next one, so it must be closed here for the loop to continue. Problems found later by the phase gate are fixed on the same branch; the beads stay closed. Loop.
 
 There is no per-task tester or reviewer. Do not dispatch one.
 
@@ -61,7 +61,7 @@ There is no per-task tester or reviewer. Do not dispatch one.
 13. **Dispatch the reviewer ONCE** (subagent_type `reviewer`) with the worktree path, change-id `$0`, phase `$1`, and base ref `$BASE`. It reviews the whole phase diff.
     - If `REQUEST_CHANGES` with blocking findings, send them to the coder in one batch, re-run step 12, then re-review. Same 3-round cap.
     - Any HIPAA/security/tenant-isolation finding is blocking — never override it autonomously.
-14. When `scripts/test.sh` passes and the reviewer returns `APPROVE`: close every bead for the phase, `bd close <id1> <id2> ... --reason="<phase summary>"`.
+14. When `scripts/test.sh` passes and the reviewer returns `APPROVE`, the phase is ready to ship. If the gate needed fixes, mention them in the PR body.
 
 ## Finish
 15. Push the branch: `git push -u origin "$BR"` (retry up to 4× with backoff on network errors only).

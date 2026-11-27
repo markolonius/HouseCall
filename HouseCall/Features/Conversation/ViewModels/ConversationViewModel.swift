@@ -225,9 +225,7 @@ class ConversationViewModel: ObservableObject {
 
     private func handleError(_ error: Error) {
         // Convert technical errors to user-friendly messages
-        if let llmError = error as? LLMError {
-            errorMessage = llmError.userFriendlyMessage
-        } else if let _ = error as? ConversationRepositoryError {
+        if let _ = error as? ConversationRepositoryError {
             errorMessage = "Unable to load conversation. Please try again."
         } else if let _ = error as? MessageRepositoryError {
             errorMessage = "Unable to save message. Please try again."
@@ -241,32 +239,5 @@ class ConversationViewModel: ObservableObject {
             userId: nil,
             details: AuditEventDetails(errorMessage: "conversation view error")
         )
-    }
-}
-
-// MARK: - LLMError Extension
-
-extension LLMError {
-    var userFriendlyMessage: String {
-        switch self {
-        case .notConfigured, .invalidConfiguration:
-            return "AI service not configured. Please check your settings."
-        case .authenticationFailed:
-            return "API authentication failed. Please check your API key in settings."
-        case .networkError:
-            return "Unable to connect to AI service. Please check your internet connection."
-        case .rateLimit:
-            return "Too many requests. Please wait a moment and try again."
-        case .timeout:
-            return "Request timed out. Please try again."
-        case .invalidResponse:
-            return "Received an invalid response from AI service."
-        case .providerError(_, let message):
-            return "AI service error: \(message)"
-        case .cancelled:
-            return "AI response was cancelled."
-        case .streamingError:
-            return "An unexpected error occurred. Please try again."
-        }
     }
 }

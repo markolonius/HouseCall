@@ -157,15 +157,6 @@ struct ChatView: View {
                 .foregroundColor(.blue)
             }
 
-            // Settings button for auth errors
-            if message.contains("authentication") || message.contains("API") {
-                Button("Settings") {
-                    // Navigate to settings (future implementation)
-                }
-                .font(.subheadline)
-                .foregroundColor(.blue)
-            }
-
             Button(action: { viewModel.clearError() }) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.secondary)

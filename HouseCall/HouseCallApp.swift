@@ -205,7 +205,7 @@ private struct AutoLaunchChatView: View {
             } else {
                 conversation = try conversationRepository.createConversation(
                     userId: userId,
-                    provider: LLMProviderConfigManager.shared.getActiveProvider(),
+                    provider: .claude, // task 1.3: fixed placeholder; no provider selection anymore
                     title: nil
                 )
             }

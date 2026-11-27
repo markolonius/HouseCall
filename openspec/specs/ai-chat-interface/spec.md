@@ -195,31 +195,22 @@ italic, lists, inline code, code blocks, and links display formatted.
 
 ### Requirement: Conduct a clinical history-taking interview
 
-The assistant SHALL conduct the conversation as a focused clinical history,
-asking one question per turn and keeping each gathering turn brief, rather than
-returning long multi-topic explanations.
+The chat interface SHALL display a clinician-style history interview that is
+driven by the server-side agent runtime: one question at a time, arriving as
+assistant messages, without a patient-triggered summary control.
 
-#### Scenario: Assistant asks one focused question per turn
+#### Scenario: Patient receives one interview question at a time
 
-- **GIVEN** the user is in a chat and sends "I've had a headache for two days"
-- **WHEN** the assistant responds
-- **THEN** the response is at most a brief acknowledgment plus a single question
-- **AND** the response does not exceed roughly two short sentences before the question
-- **AND** the question targets the next relevant history detail (e.g. onset, severity, or location)
+- **GIVEN** the patient is in a chat conducting the history interview
+- **WHEN** the patient sends a message
+- **THEN** the next assistant message is a single interview question from the agent
+- **AND** no "Summarize" control is shown
 
-#### Scenario: Interview narrows from open to focused questions
+#### Scenario: Approved note is shown to the patient
 
-- **GIVEN** the user has answered an initial open-ended question
-- **WHEN** the assistant continues the interview
-- **THEN** subsequent questions become more focused to characterize the complaint
-- **AND** the assistant does not present a block of differential explanations
-
-#### Scenario: Emergency red flag interrupts the interview
-
-- **GIVEN** the user reports crushing chest pain and shortness of breath
-- **WHEN** the assistant responds
-- **THEN** the assistant advises seeking immediate emergency care
-- **AND** does not continue routine history questions before that advice
+- **GIVEN** the agent has drafted a SOAP note and a physician has approved it
+- **WHEN** the approved note is delivered
+- **THEN** the patient sees the physician-approved plan rendered as a recommendation card
 
 ### Requirement: Summarize and advise after the interview
 
@@ -234,23 +225,4 @@ advice, including the standard professional-care disclaimer.
 - **THEN** the assistant returns a concise summary of the reported history
 - **AND** preliminary non-diagnostic guidance and when to seek care
 - **AND** a statement that this is not a substitute for professional medical advice
-
-### Requirement: Offer a summarize-now action
-
-The chat interface SHALL provide a control that lets the patient end the
-interview and request the assistant's summary.
-
-#### Scenario: Summarize control availability
-
-- **GIVEN** the patient has sent at least one message and no response is streaming
-- **WHEN** the chat screen is displayed
-- **THEN** a "Summarize" control is enabled
-- **WHEN** there are no user messages yet, or a response is currently streaming
-- **THEN** the "Summarize" control is disabled
-
-#### Scenario: Tapping summarize requests the closing turn
-
-- **GIVEN** the summarize control is enabled
-- **WHEN** the patient taps it
-- **THEN** the assistant produces a summary turn as its next response
 

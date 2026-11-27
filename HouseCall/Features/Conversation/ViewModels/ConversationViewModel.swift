@@ -225,7 +225,13 @@ class ConversationViewModel: ObservableObject {
 
     private func handleError(_ error: Error) {
         // Convert technical errors to user-friendly messages
-        if let _ = error as? ConversationRepositoryError {
+        if let aiError = error as? AIConversationError {
+            // Signed-out send: show the sign-in prompt only. This is expected
+            // behaviour, not an AI failure, so it is not audit-logged as one,
+            // and the banner offers no Retry (it only does for connect/timeout).
+            errorMessage = aiError.localizedDescription
+            if aiError == .signInRequired { return }
+        } else if let _ = error as? ConversationRepositoryError {
             errorMessage = "Unable to load conversation. Please try again."
         } else if let _ = error as? MessageRepositoryError {
             errorMessage = "Unable to save message. Please try again."

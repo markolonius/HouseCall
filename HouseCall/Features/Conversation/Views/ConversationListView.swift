@@ -248,7 +248,7 @@ class ConversationListViewModel: ObservableObject {
     func createNewConversation() {
         Task {
             do {
-                // Create new conversation with default provider
+                // Create a new conversation (the schema default fills the legacy provider attribute)
                 let conversation = try conversationRepository.createConversation(
                     userId: userId,
                     provider: .openai,

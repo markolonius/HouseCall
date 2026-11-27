@@ -20,7 +20,7 @@
 - [x] 2.1 Require Core API configuration
   - `AuthenticationService` has no local-only register/login path; with no `CoreAPIBaseURL`/`CoreAPITenantID` the login screen shows a configuration error.
   - Unit tests cover the unconfigured build.
-- [ ] 2.2 Read-only chat without a valid token
+- [x] 2.2 Read-only chat without a valid token
   - When the token is missing or rejected, the chat shows cached history, disables input, and offers sign-in.
   - After sign-in, cloud sync activates without restarting the app.
   - Unit tests cover the expired-token path end to end (401 → read-only → sign-in → active).

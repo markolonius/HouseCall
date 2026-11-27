@@ -1,0 +1,436 @@
+[
+  {
+    "id": "soap-prediabetes-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Prediabetes lifestyle counselling.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My doctor told me my A1c was 6.1 and said I'm prediabetic. I'm 44 and want to know what I can do."
+      },
+      {
+        "role": "assistant",
+        "content": "What does your usual diet and activity look like?"
+      },
+      {
+        "role": "user",
+        "content": "I eat out a lot and I don't exercise much. I sit at a desk all day."
+      },
+      {
+        "role": "assistant",
+        "content": "Any symptoms such as thirst, frequent urination, or weight changes? Any family history?"
+      },
+      {
+        "role": "user",
+        "content": "No symptoms. My mother has type 2 diabetes. I take no medications and have no allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "6.1",
+      "mother",
+      "desk"
+    ],
+    "must_not_include": [
+      "metformin",
+      "insulin",
+      "retinopathy"
+    ],
+    "objective_must_not_contain": [
+      "bmi of",
+      "waist circumference"
+    ]
+  },
+  {
+    "id": "soap-uti-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Uncomplicated cystitis symptoms in a woman.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 34 and I've had burning when I pee and a constant urge to go since yesterday."
+      },
+      {
+        "role": "assistant",
+        "content": "Any fever, back pain, or blood in the urine?"
+      },
+      {
+        "role": "user",
+        "content": "No fever, no back pain. I don't think there's blood."
+      },
+      {
+        "role": "assistant",
+        "content": "Any vaginal discharge, new partners, or pregnancy possibility? Allergies?"
+      },
+      {
+        "role": "user",
+        "content": "No discharge. Nothing new. I'm not pregnant, my period was last week. I'm allergic to sulfa drugs."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "burning",
+      "yesterday",
+      "sulfa"
+    ],
+    "must_not_include": [
+      "fever of",
+      "kidney stones",
+      "diabetes"
+    ],
+    "objective_must_not_contain": [
+      "urinalysis",
+      "suprapubic",
+      "cva tenderness"
+    ]
+  },
+  {
+    "id": "soap-uri-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Common cold with sore throat in a hypertensive patient.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I've had a sore throat, stuffy nose and a mild cough for four days. I'm 56."
+      },
+      {
+        "role": "assistant",
+        "content": "Any fever, shortness of breath, or trouble swallowing?"
+      },
+      {
+        "role": "user",
+        "content": "A low temperature of 99.5 on my thermometer yesterday. No trouble breathing or swallowing."
+      },
+      {
+        "role": "assistant",
+        "content": "Do you take any medications or have allergies?"
+      },
+      {
+        "role": "user",
+        "content": "I take lisinopril for blood pressure. No allergies. I've been using a decongestant spray."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "sore throat",
+      "99.5",
+      "lisinopril",
+      "decongestant"
+    ],
+    "must_not_include": [
+      "asthma",
+      "diabetes"
+    ],
+    "objective_must_not_contain": [
+      "erythema",
+      "swollen glands"
+    ]
+  },
+  {
+    "id": "soap-back-pain-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Mechanical low back pain after lifting.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I hurt my lower back moving boxes three days ago and it's still sore. I'm 40."
+      },
+      {
+        "role": "assistant",
+        "content": "Does the pain go down your legs, or do you have numbness, weakness, or bladder or bowel problems?"
+      },
+      {
+        "role": "user",
+        "content": "No, it stays in my lower back. No numbness or weakness and my bladder is fine."
+      },
+      {
+        "role": "assistant",
+        "content": "How severe is it and what helps?"
+      },
+      {
+        "role": "user",
+        "content": "About a 5 out of 10, worse bending forward. Ibuprofen helps a little. I have high cholesterol but take no daily medicines. No allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "boxes",
+      "ibuprofen",
+      "cholesterol"
+    ],
+    "must_not_include": [
+      "sciatica",
+      "diabetes"
+    ],
+    "objective_must_not_contain": [
+      "straight leg",
+      "range of motion",
+      "spinal tenderness"
+    ]
+  },
+  {
+    "id": "soap-migraine-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Recurrent migraine in a patient with known pattern.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 38 and I get migraines. This one started this morning with the usual flashing lights."
+      },
+      {
+        "role": "assistant",
+        "content": "Where is the pain and how severe?"
+      },
+      {
+        "role": "user",
+        "content": "Behind my right eye, a 6 out of 10, throbbing, with some nausea. Light bothers me."
+      },
+      {
+        "role": "assistant",
+        "content": "Any weakness, speech trouble, or fever? What do you take for it?"
+      },
+      {
+        "role": "user",
+        "content": "None of that, it's the same as my usual ones. I take sumatriptan and it usually works. I'm allergic to codeine."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "right eye",
+      "sumatriptan",
+      "codeine",
+      "nausea"
+    ],
+    "must_not_include": [
+      "hypertension",
+      "meningitis"
+    ],
+    "objective_must_not_contain": [
+      "neurological exam",
+      "pupils",
+      "neck stiffness on"
+    ]
+  },
+  {
+    "id": "soap-gerd-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Heartburn without alarm features.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I get burning in my upper chest after meals, mostly at night when I lie down. It's been about a month. I'm 50."
+      },
+      {
+        "role": "assistant",
+        "content": "Any trouble swallowing, vomiting, black stools, or weight loss?"
+      },
+      {
+        "role": "user",
+        "content": "No, none of those. And it doesn't come on with exercise, I walk daily with no problem."
+      },
+      {
+        "role": "assistant",
+        "content": "What do you take for it, and any other conditions?"
+      },
+      {
+        "role": "user",
+        "content": "Antacids help. I have type 2 diabetes and take metformin. I drink two coffees a day. No allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "after meals",
+      "antacid",
+      "metformin",
+      "coffee"
+    ],
+    "must_not_include": [
+      "h. pylori",
+      "lisinopril"
+    ],
+    "objective_must_not_contain": [
+      "epigastric tenderness",
+      "abdomen soft"
+    ]
+  },
+  {
+    "id": "soap-ankle-sprain-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Ankle sprain from running.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I rolled my ankle on a trail run yesterday and it's swollen on the outside. I'm 29."
+      },
+      {
+        "role": "assistant",
+        "content": "Can you walk on it, and did you hear a pop?"
+      },
+      {
+        "role": "user",
+        "content": "I can limp on it. No pop. It hurts at about a 4 out of 10."
+      },
+      {
+        "role": "assistant",
+        "content": "Allergies or medical conditions?"
+      },
+      {
+        "role": "user",
+        "content": "No allergies. No conditions. I've been using ice and ibuprofen."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "ankle",
+      "yesterday",
+      "ice",
+      "ibuprofen"
+    ],
+    "must_not_include": [
+      "surgery",
+      "diabetes"
+    ],
+    "objective_must_not_contain": [
+      "x-ray",
+      "anterior drawer",
+      "swelling noted"
+    ]
+  },
+  {
+    "id": "soap-insomnia-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Insomnia with stress, patient on a statin and an ACE inhibitor.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I haven't been sleeping well for about six weeks. I'm 57."
+      },
+      {
+        "role": "assistant",
+        "content": "What does the sleep problem look like, and what is going on in your life?"
+      },
+      {
+        "role": "user",
+        "content": "I fall asleep okay but wake up at 3 am and can't get back to sleep. I'm stressed about my retirement."
+      },
+      {
+        "role": "assistant",
+        "content": "Do you take any medications, caffeine or alcohol?"
+      },
+      {
+        "role": "user",
+        "content": "Lisinopril and simvastatin. Two cups of coffee in the morning, and a glass of wine most nights. No allergies. No sadness or thoughts of harming myself."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "wake",
+      "lisinopril",
+      "simvastatin",
+      "wine"
+    ],
+    "must_not_include": [
+      "zolpidem",
+      "diabetes"
+    ],
+    "objective_must_not_contain": [
+      "bp reading",
+      "mental status exam"
+    ]
+  },
+  {
+    "id": "soap-hypoglycemia-001",
+    "kind": "interview_soap",
+    "description": "Synthetic. Insulin-treated diabetes with a mild nocturnal low, recovered.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 66 and have type 2 diabetes on insulin. Last night I woke up sweaty and shaky."
+      },
+      {
+        "role": "assistant",
+        "content": "Did you check your sugar and what did you do?"
+      },
+      {
+        "role": "user",
+        "content": "It was 58. I drank juice and it came back to 105 after twenty minutes. I felt completely fine after that."
+      },
+      {
+        "role": "assistant",
+        "content": "What insulin and dose do you take and has anything changed recently?"
+      },
+      {
+        "role": "user",
+        "content": "Glargine, 30 units at bedtime. I skipped dinner yesterday. No other medications and no allergies."
+      }
+    ],
+    "required_sections": [
+      "SUBJECTIVE",
+      "OBJECTIVE",
+      "ASSESSMENT",
+      "PLAN"
+    ],
+    "must_include": [
+      "58",
+      "juice",
+      "glargine",
+      "dinner"
+    ],
+    "must_not_include": [
+      "metformin",
+      "lisinopril"
+    ],
+    "objective_must_not_contain": [
+      "pulse of"
+    ]
+  }
+]

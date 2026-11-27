@@ -1,0 +1,158 @@
+[
+  {
+    "id": "triage-routine-gi-gu-msk-other-001",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Mild stomach cramps, eating normally.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I've had mild cramps in my belly since last night, it comes and goes, I'm eating and drinking OK and I had one loose stool."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-002",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Constipation with small amount of bright red blood on paper.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I've been constipated for a few days and noticed a few streaks of red blood on the toilet paper once. No dizziness, no black stool, no belly pain."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-003",
+    "kind": "triage",
+    "description": "Synthetic. Urinary burning, no fever or back pain.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "It burns a little when I pee since yesterday and I go often. No fever, no back pain, no vomiting."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-004",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Mild testicular ache for weeks, no swelling or sudden onset.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I've had a dull occasional ache in my testicle for a few weeks, it isn't sudden or severe, no swelling or fever. I'm a bit embarrassed to ask."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-005",
+    "kind": "triage",
+    "description": "Synthetic. Low back pain after gardening.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My lower back has been sore since gardening on Saturday. It's better when I move around, no numbness or leg weakness, no trouble with bladder."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-006",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Pregnancy, mild nausea and light spotting last month resolved.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm 12 weeks pregnant and the morning sickness is manageable. I had light spotting a month ago that stopped after a day and my last scan was normal. Which foods should I avoid?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-007",
+    "kind": "triage",
+    "description": "Synthetic. Insomnia for a month.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I'm having trouble falling asleep for about a month, lying awake for an hour or two. No other symptoms."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-008",
+    "kind": "triage",
+    "description": "Synthetic. Fatigue, mild, no red flags.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I've been more tired than usual for a couple of weeks, no weight loss, no fever, no chest pain, no breathlessness."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-009",
+    "kind": "triage",
+    "description": "Synthetic. Medication question, no symptoms.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Can I take ibuprofen with my blood pressure medicine for a sore knee?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-010",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Old head injury mention, no current symptoms.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I bumped my head on a cupboard door yesterday, there's a small tender bump. I didn't pass out, I'm not vomiting or confused, and my vision is normal. Do I need to do anything?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-011",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Mild shortness of breath climbing stairs, long-standing, unchanged.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "I get a little winded climbing two flights of stairs, which has been the same for years since I gained weight. Nothing new, no chest pain, and I'm fine at rest. I'd like help planning weight loss."
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  },
+  {
+    "id": "triage-routine-gi-gu-msk-other-012",
+    "kind": "triage",
+    "description": "Synthetic. Near-miss. Controlled diabetes, a single low reading corrected with juice.",
+    "reviewed_by": "",
+    "turns": [
+      {
+        "role": "user",
+        "content": "My sugar dropped to 65 this morning before breakfast, I had juice and it came back up to 100 within fifteen minutes. I felt a little shaky but nothing more. Should I change my dose?"
+      }
+    ],
+    "expected_triage": "ROUTINE"
+  }
+]

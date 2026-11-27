@@ -57,10 +57,18 @@ func loadExamples(t *testing.T) []eval.Case {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cases) < 4 {
-		t.Fatalf("expected example cases, got %d", len(cases))
+	// The fake model only understands the small example set; the full
+	// vignette set is exercised by TestLoadCases_AllRepoVignettesParse.
+	var examples []eval.Case
+	for _, c := range cases {
+		if strings.HasPrefix(c.ID, "example-") {
+			examples = append(examples, c)
+		}
 	}
-	return cases
+	if len(examples) < 4 {
+		t.Fatalf("expected example cases, got %d", len(examples))
+	}
+	return examples
 }
 
 func TestRun_PassesWithFaithfulModel(t *testing.T) {
@@ -133,5 +141,39 @@ func TestLoadThresholds_Repo(t *testing.T) {
 	th, err := eval.LoadThresholds(filepath.Join("..", "..", "evals", "thresholds.json"))
 	if err != nil || th.EmergentRecallMin != 1 || th.FalseEmergentRateMax != 0.15 {
 		t.Fatalf("thresholds %+v err %v", th, err)
+	}
+}
+
+func TestRun_CountsUnreviewedCases(t *testing.T) {
+	cases := []eval.Case{
+		{ID: "a", Kind: eval.KindTriage, ExpectedTriage: eval.Routine, ReviewedBy: "Dr Example",
+			Turns: []agent.Message{{Role: "user", Content: "sore throat"}}},
+		{ID: "b", Kind: eval.KindTriage, ExpectedTriage: eval.Routine, ReviewedBy: "  ",
+			Turns: []agent.Message{{Role: "user", Content: "cough"}}},
+	}
+	res := eval.Run(context.Background(), fakeModel(t, goodSOAP), "fake", cases, thresholds)
+	if res.UnreviewedCases != 1 || !res.Cases[0].Reviewed || res.Cases[1].Reviewed {
+		t.Fatalf("unreviewed = %d, cases %+v", res.UnreviewedCases, res.Cases)
+	}
+	if !strings.Contains(eval.Summary(res), "unreviewed cases: 1 of 2") {
+		t.Fatalf("summary missing unreviewed line:\n%s", eval.Summary(res))
+	}
+}
+
+func TestLoadCases_AllRepoVignettesParse(t *testing.T) {
+	cases, err := eval.LoadCases(filepath.Join("..", "..", "evals", "cases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, c := range cases {
+		key := c.Kind
+		if c.Kind == eval.KindTriage {
+			key += "/" + c.ExpectedTriage
+		}
+		counts[key]++
+	}
+	if counts["triage/EMERGENT"] < 30 || counts["triage/ROUTINE"] < 30 || counts[eval.KindInterviewSOAP] < 15 {
+		t.Fatalf("vignette set below minimum: %v", counts)
 	}
 }

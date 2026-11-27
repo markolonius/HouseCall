@@ -156,6 +156,7 @@ type CaseResult struct {
 	Actual   string   `json:"actual,omitempty"`
 	Valid    bool     `json:"structured_output_valid"`
 	Passed   bool     `json:"passed"`
+	Reviewed bool     `json:"reviewed"` // physician sign-off recorded on the case
 	Failures []string `json:"failures,omitempty"`
 }
 
@@ -177,6 +178,9 @@ type Result struct {
 	Cases          []CaseResult      `json:"cases"`
 	Metrics        map[string]Metric `json:"metrics"`
 	Passed         bool              `json:"passed"`
+	// UnreviewedCases counts cases with an empty reviewed_by. A result with
+	// unreviewed cases must not be used to gate a change.
+	UnreviewedCases int `json:"unreviewed_cases"`
 }
 
 // Run executes every case against mc and computes metrics against th.
@@ -226,6 +230,10 @@ func Run(ctx context.Context, mc agent.ModelClient, model string, cases []Case, 
 					soapFaithful++
 				}
 			}
+		}
+		cr.Reviewed = strings.TrimSpace(c.ReviewedBy) != ""
+		if !cr.Reviewed {
+			res.UnreviewedCases++
 		}
 		res.Cases = append(res.Cases, cr)
 	}
@@ -394,6 +402,9 @@ func sanitize(s string) string {
 func Summary(res Result) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "model: %s  cases: %d\n", res.Model, len(res.Cases))
+	if res.UnreviewedCases > 0 {
+		fmt.Fprintf(&sb, "  unreviewed cases: %d of %d (no physician sign-off; not valid for gating)\n", res.UnreviewedCases, len(res.Cases))
+	}
 	names := make([]string, 0, len(res.Metrics))
 	for n := range res.Metrics {
 		names = append(names, n)

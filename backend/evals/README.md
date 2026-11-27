@@ -47,3 +47,21 @@ is unique.
   from the patient's own turns.
 
 A metric with no applicable cases reports `n/a` and passes vacuously.
+
+## Vignette review
+
+Every case must be reviewed by the physician-founder, who fills in
+`reviewed_by` (name or initials and date) once the expected label, required
+facts and banned terms are clinically correct. Drafted cases ship with an empty
+`reviewed_by`. The set must not be used to gate prompt, rule or model changes
+until all cases are reviewed. The runner reports unreviewed cases separately:
+the summary prints `unreviewed cases: N of M` and the results file records
+`unreviewed_cases` plus a per-case `reviewed` flag, so a result with a
+non-zero count is visibly not gate-valid.
+
+Case ids follow `triage-<label>-<category>-<nnn>` and `soap-<topic>-<nnn>` and
+are never renumbered once published; retire a case by deleting it, not by
+reusing its id. Files are grouped by kind and category
+(`triage_emergent_*.json`, `triage_routine_*.json`, `soap_*.json`). Routine
+near-misses (red-flag words in a benign or resolved context) are labelled
+"Near-miss" in `description`.

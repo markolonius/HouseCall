@@ -24,7 +24,7 @@
   - When the token is missing or rejected, the chat shows cached history, disables input, and offers sign-in.
   - After sign-in, cloud sync activates without restarting the app.
   - Unit tests cover the expired-token path end to end (401 → read-only → sign-in → active).
-- [ ] 2.3 Remove the passcode authentication method
+- [x] 2.3 Remove the passcode authentication method
   - Remove passcode registration/login UI, `AuthMethod.passcode`, and passcode validation.
   - Biometric unlock and the offline fallback for previously authenticated patients keep working.
   - `scripts/test.sh` passes.

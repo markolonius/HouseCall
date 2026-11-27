@@ -12,7 +12,7 @@ import SwiftUI
 @Observable
 class LoginViewModel {
     var email: String = ""
-    var credential: String = "" // Password or passcode
+    var credential: String = "" // Password
     var authMethod: AuthMethod = .password
 
     var isLoading: Bool = false
@@ -76,7 +76,6 @@ class LoginViewModel {
     var credentialPlaceholder: String {
         switch authMethod {
         case .password: return "Password"
-        case .passcode: return "6-Digit Passcode"
         case .biometric: return ""
         }
     }

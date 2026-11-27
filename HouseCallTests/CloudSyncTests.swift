@@ -178,6 +178,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -236,6 +237,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -323,6 +325,7 @@ struct CloudSyncTests {
             keychainManager: kc
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -400,6 +403,7 @@ struct CloudSyncTests {
             keychainManager: kc
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -519,6 +523,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: UUID(),
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -610,6 +615,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -723,6 +729,7 @@ struct CloudSyncTests {
             keychainManager: kc
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -809,6 +816,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -935,6 +943,67 @@ struct CloudSyncTests {
         _ = card.body
     }
 
+    // MARK: - Replay is scoped to the signed-in patient
+
+    @Test("Replay POSTs only the current patient's pending messages")
+    func testReplayScopedToCurrentPatient() async throws {
+        let context = makeInMemoryContext()
+        let userA = UUID()
+        let userB = UUID()
+        let convA = try seedConversation(in: context, userId: userA, serverId: "server-conv-A")
+        let convB = try seedConversation(in: context, userId: userB, serverId: "server-conv-B")
+        let messageRepo = CoreDataMessageRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let conversationRepo = CoreDataConversationRepository(
+            context: context,
+            encryptionManager: EncryptionManager.shared,
+            auditLogger: AuditLogger(context: context)
+        )
+        let msgA = try messageRepo.createMessage(
+            conversationId: convA.id!, role: .user, content: "a", streamingComplete: true)
+        let msgB = try messageRepo.createMessage(
+            conversationId: convB.id!, role: .user, content: "b", streamingComplete: true)
+        msgA.syncState = "pending"
+        msgB.syncState = "pending"
+        try context.save()
+
+        let sid = UUID().uuidString
+        defer { SyncMockURLProtocol.cleanup(sessionID: sid) }
+        for serverId in ["server-conv-A", "server-conv-B"] {
+            SyncMockURLProtocol.register(
+                sessionID: sid, path: "/api/conversations/\(serverId)/messages"
+            ) { req in
+                let json = """
+                {"ID":"srv-\(serverId)","TenantID":"t1","ConversationID":"\(serverId)",\
+                "Role":"user","Content":"x","CreatedAt":"2026-06-03T11:00:00Z"}
+                """
+                return (json.data(using: .utf8)!, makeHTTPResponse(url: req.url!, status: 201))
+            }
+        }
+        let syncClient = try SyncClient(
+            baseURL: URL(string: "http://localhost:8080")!,
+            session: makeStubSession(sessionID: sid),
+            keychainManager: makeKeychain()
+        )
+        let coordinator = CloudSyncCoordinator(
+            userId: userB,
+            syncClient: syncClient,
+            messageRepository: messageRepo,
+            conversationRepository: conversationRepo,
+            auditLogger: AuditLogger(context: context),
+            context: context
+        )
+
+        await coordinator.replayPendingMessages()
+
+        #expect(try messageRepo.fetchMessage(id: msgB.id!)?.syncState == "synced")
+        #expect(try messageRepo.fetchMessage(id: msgA.id!)?.syncState == "pending",
+                "another patient's pending message must not be sent")
+    }
+
     // MARK: - Cohesive offline → replay → recommendation.delivered loop
 
     /// Validates the complete airplane-mode-replay-to-delivered-card loop in one
@@ -977,6 +1046,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let offlineCoordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: offlineSyncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1052,6 +1122,7 @@ struct CloudSyncTests {
             keychainManager: onlineKc
         )
         let onlineCoordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: onlineSyncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1158,6 +1229,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1249,6 +1321,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1264,16 +1337,8 @@ struct CloudSyncTests {
             syncCoordinator: coordinator
         )
 
-        // Pre-condition: isStreaming starts false.
-        #expect(service.isStreaming == false, "isStreaming must start false")
-
         try await service.loadConversation(convLocalId)
         try await service.sendMessage(conversationId: convLocalId, content: "cloud route check")
-
-        // isStreaming must still be false — the cloud path returns before
-        // `streamAssistantTurn` can set it to true.
-        #expect(service.isStreaming == false,
-                "isStreaming must remain false when the cloud coordinator path is taken")
 
         // The user message must still be persisted (cloud path saves first, then POSTs).
         let allMessages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
@@ -1350,6 +1415,7 @@ struct CloudSyncTests {
             keychainManager: kc
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1466,6 +1532,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1544,6 +1611,7 @@ struct CloudSyncTests {
             auditLogger: AuditLogger(context: context)
         )
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -1566,12 +1634,15 @@ struct CloudSyncTests {
         try await service.sendMessage(conversationId: convLocalId, content: "hi")
         #expect(coordinator.requiresReauth == true, "401 must flip requiresReauth")
 
-        // A subsequent send must not loop or reset the flag.
-        try await service.sendMessage(conversationId: convLocalId, content: "again")
+        // A subsequent send is refused (read-only) without another POST and
+        // without resetting the flag.
+        await #expect(throws: AIConversationError.signInRequired) {
+            try await service.sendMessage(conversationId: convLocalId, content: "again")
+        }
         #expect(coordinator.requiresReauth == true, "requiresReauth stays set (no reset)")
 
-        // Exactly one POST per send attempt — no internal retry loop on 401.
-        #expect(callCount.count == 2, "each send makes one POST attempt; 401 must not retry")
+        // Exactly one POST in total — no internal retry loop on 401.
+        #expect(callCount.count == 1, "401 must not retry and the read-only send makes no POST")
     }
 
     // MARK: - ensureServerConversation (HouseCall-zkeg)
@@ -1598,6 +1669,7 @@ struct CloudSyncTests {
 
         let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
             conversationRepository: CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
@@ -1632,6 +1704,7 @@ struct CloudSyncTests {
 
         let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
         let coordinator = CloudSyncCoordinator(
+            userId: userId,
             syncClient: syncClient,
             messageRepository: CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
             conversationRepository: CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context)),
@@ -1678,7 +1751,7 @@ struct CloudSyncTests {
         let syncClient = try SyncClient(baseURL: URL(string: "http://localhost:8080")!, session: session, keychainManager: kc)
         let messageRepo = CoreDataMessageRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context))
         let conversationRepo = CoreDataConversationRepository(context: context, encryptionManager: EncryptionManager.shared, auditLogger: AuditLogger(context: context))
-        let coordinator = CloudSyncCoordinator(syncClient: syncClient, messageRepository: messageRepo, conversationRepository: conversationRepo, auditLogger: AuditLogger(context: context), context: context)
+        let coordinator = CloudSyncCoordinator(userId: userId, syncClient: syncClient, messageRepository: messageRepo, conversationRepository: conversationRepo, auditLogger: AuditLogger(context: context), context: context)
         let service = AIConversationService(userId: userId, conversationRepository: conversationRepo, messageRepository: messageRepo, auditLogger: AuditLogger(context: context), syncCoordinator: coordinator)
 
         try await service.loadConversation(convLocalId)

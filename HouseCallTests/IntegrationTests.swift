@@ -21,7 +21,8 @@ struct IntegrationTests {
         encryptionManager: EncryptionManager,
         repository: CoreDataUserRepository,
         authService: AuthenticationService,
-        auditLogger: AuditLogger
+        auditLogger: AuditLogger,
+        client: FakeCoreAPIAuthClient
     ) {
         let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
@@ -43,14 +44,17 @@ struct IntegrationTests {
             passwordHasher: PasswordHasher.shared,
             auditLogger: auditLogger
         )
+        let client = FakeCoreAPIAuthClient()
         let authService = AuthenticationService(
             userRepository: repository,
             keychainManager: KeychainManager.shared,
             biometricAuthManager: BiometricAuthManager.shared,
-            auditLogger: auditLogger
+            auditLogger: auditLogger,
+            coreAuthClient: client,
+            coreAPITenantId: FakeCoreAPIAuthClient.tenantId
         )
 
-        return (context, encryptionManager, repository, authService, auditLogger)
+        return (context, encryptionManager, repository, authService, auditLogger, client)
     }
 
     // MARK: - Full Registration Flow
@@ -66,7 +70,6 @@ struct IntegrationTests {
         let user = try await authService.register(
             email: "newuser@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "New User",
             authMethod: .password
         )
@@ -99,29 +102,6 @@ struct IntegrationTests {
         try await authService.logout()
     }
 
-    @Test("Full registration flow (passcode auth)")
-    @MainActor
-    func testFullRegistrationFlowPasscode() async throws {
-        let components = createTestComponents()
-        let authService = components.authService
-
-        // Register with passcode
-        let user = try await authService.register(
-            email: "passcodeuser@example.com",
-            password: nil,
-            passcode: "135792",
-            fullName: "Passcode User",
-            authMethod: .passcode
-        )
-        await Task.yield()
-
-        #expect(user.authMethod == "passcode")
-        #expect(user.encryptedPasscodeHash != nil)
-        #expect(authService.isAuthenticated == true)
-
-        try await authService.logout()
-    }
-
     // MARK: - Full Login Flow
 
     @Test("Full login flow with password")
@@ -138,7 +118,6 @@ struct IntegrationTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Login Test",
             authMethod: .password
         )
@@ -159,40 +138,6 @@ struct IntegrationTests {
         try await authService.logout()
     }
 
-    @Test("Full login flow with passcode")
-    @MainActor
-    func testFullLoginFlowPasscode() async throws {
-        let components = createTestComponents()
-        let repository = components.repository
-        let authService = components.authService
-
-        let email = "passcodelogin@example.com"
-        let passcode = "246801"
-
-        // Create user
-        _ = try repository.createUser(
-            email: email,
-            password: nil,
-            passcode: passcode,
-            fullName: "Passcode Login",
-            authMethod: .passcode
-        )
-
-        // Login
-        let user = try await authService.login(
-            email: email,
-            credential: passcode,
-            authMethod: .passcode,
-            useBiometric: false
-        )
-        await Task.yield()
-
-        #expect(user.email == email)
-        #expect(authService.isAuthenticated == true)
-
-        try await authService.logout()
-    }
-
     // MARK: - Session Management Integration
 
     @Test("Session persists across instances")
@@ -209,7 +154,6 @@ struct IntegrationTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Session Test",
             authMethod: .password
         )
@@ -248,7 +192,6 @@ struct IntegrationTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Logout Test",
             authMethod: .password
         )
@@ -287,10 +230,13 @@ struct IntegrationTests {
         _ = try repository.createUser(
             email: email,
             password: "CorrectPassword123!",
-            passcode: nil,
             fullName: "Failed Login Test",
             authMethod: .password
         )
+
+        // Core API unreachable -> offline fallback runs the local credential
+        // check, which records the failure in the audit log.
+        components.client.loginOffline = true
 
         // Attempt login with wrong password
         do {
@@ -323,7 +269,6 @@ struct IntegrationTests {
         let user = try repository.createUser(
             email: "encrypted@example.com",
             password: password,
-            passcode: nil,
             fullName: fullName,
             authMethod: .password
         )
@@ -368,7 +313,6 @@ struct IntegrationTests {
         let registeredUser = try await authService.register(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Journey User",
             authMethod: .password
         )
@@ -420,7 +364,6 @@ struct IntegrationTests {
                         _ = try repository.createUser(
                             email: "concurrent\(i)@example.com",
                             password: "ConcurrentPassword123!",
-                            passcode: nil,
                             fullName: "Concurrent User \(i)",
                             authMethod: .password
                         )
@@ -451,7 +394,6 @@ struct IntegrationTests {
         let user = try await authService.register(
             email: "auditcomplete@example.com",
             password: "AuditPassword123!",
-            passcode: nil,
             fullName: "Audit Complete",
             authMethod: .password
         )
@@ -459,6 +401,8 @@ struct IntegrationTests {
 
         try await authService.logout()
 
+        // Offline fallback performs the local credential check that audits login_success.
+        components.client.loginOffline = true
         _ = try await authService.login(
             email: "auditcomplete@example.com",
             credential: "AuditPassword123!",
@@ -536,7 +480,6 @@ struct AIChatIntegrationTests {
         let user = try! userRepo.createUser(
             email: "chattest@example.com",
             password: "ChatPassword123!",
-            passcode: nil,
             fullName: "Chat Test User",
             authMethod: .password
         )
@@ -553,6 +496,7 @@ struct AIChatIntegrationTests {
             keychainManager: keychain
         )
         let coordinator = CloudSyncCoordinator(
+            userId: user.id!,
             syncClient: syncClient,
             messageRepository: messageRepo,
             conversationRepository: conversationRepo,
@@ -602,7 +546,6 @@ struct AIChatIntegrationTests {
         #expect(userMessages.count == 1)
         #expect(assistantMessages.isEmpty)
         #expect(userMessages[0].syncState == "pending")
-        #expect(aiService.isStreaming == false)
 
         let decryptedUserContent = try messageRepo.decryptMessageContent(userMessages[0])
         #expect(decryptedUserContent.contains("headache"))
@@ -814,7 +757,6 @@ struct AIChatIntegrationTests {
             )
         }
 
-        #expect(signedOut.isStreaming == false)
         #expect(signedOut.errorMessage != nil)
         let stored = try components.messageRepo.fetchAllMessages(conversationId: conversation.id!)
         #expect(stored.isEmpty)

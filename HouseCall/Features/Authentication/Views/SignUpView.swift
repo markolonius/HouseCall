@@ -167,6 +167,18 @@ struct SignUpView: View {
                             .cornerRadius(8)
                     }
 
+                    // Configuration Error (build lacks Core API config)
+                    if !authService.isCoreAPIConfigured {
+                        Text("This build is not configured to connect to HouseCall.")
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                            .accessibilityLabel("Configuration error. This build is not configured to connect to HouseCall.")
+                            .accessibilityIdentifier("coreAPIConfigurationError")
+                    }
+
                     // Create Account Button
                     AsyncSubmitButton(
                         action: {
@@ -174,7 +186,7 @@ struct SignUpView: View {
                             _ = await viewModel.signUp()
                             print("🔵 Sign up completed")
                         },
-                        isEnabled: viewModel.canSubmit
+                        isEnabled: viewModel.canSubmit && authService.isCoreAPIConfigured
                     ) {
                         Text("Create Account")
                             .fontWeight(.semibold)

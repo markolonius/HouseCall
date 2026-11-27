@@ -96,7 +96,6 @@ class SignUpViewModel: ObservableObject {
             _ = try await authService.register(
                 email: email,
                 password: authMethod == .password ? password : nil,
-                passcode: authMethod == .passcode ? password : nil,
                 fullName: fullName,
                 authMethod: authMethod
             )

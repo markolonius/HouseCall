@@ -191,7 +191,6 @@ struct HIPAAComplianceTests {
         let user = try repository.createUser(
             email: "plaintext@example.com",
             password: password,
-            passcode: nil,
             fullName: "Plaintext Test",
             authMethod: .password
         )
@@ -253,9 +252,9 @@ struct HIPAAComplianceTests {
         // Even if device doesn't support biometrics, the system should handle it
         #expect(biometricType == .faceID || biometricType == .touchID || biometricType == .none)
 
-        // Verify fallback to password/passcode exists
-        let authMethods: [AuthMethod] = [.password, .passcode, .biometric]
-        #expect(authMethods.count == 3)
+        // Verify fallback to password exists
+        let authMethods: [AuthMethod] = [.password, .biometric]
+        #expect(authMethods.count == 2)
     }
 
     @Test("Password complexity requirements enforced")
@@ -334,7 +333,7 @@ struct HIPAAComplianceTests {
         safeguards["Data integrity mechanisms"] = true // AES-GCM auth tag
 
         // §164.312(d) - Person or Entity Authentication
-        safeguards["Authentication"] = true // Password/Passcode/Biometric
+        safeguards["Authentication"] = true // Password/Biometric
 
         // §164.312(e) - Transmission Security
         safeguards["Integrity controls"] = true // AES-GCM

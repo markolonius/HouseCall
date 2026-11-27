@@ -83,7 +83,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "offline@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Offline Patient",
             authMethod: .password,
             id: patientId
@@ -113,6 +112,118 @@ struct CloudOfflineFallbackTests {
                 "isAuthenticated must be true after successful offline fallback login")
     }
 
+    // MARK: - Legacy (retired) auth method
+
+    @Test("Offline + cached user with retired auth method — fails with legacyAuthMethod, no session")
+    func testOfflineLogin_legacyAuthMethod_rejected() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+
+        let repo = makeRepo(context: context)
+        let user = try repo.createUser(
+            email: "legacy@example.com",
+            password: "SecurePassword123!",
+            fullName: "Legacy Patient",
+            authMethod: .password,
+            id: UUID()
+        )
+        // Simulate a dev account stored with the retired method.
+        user.authMethod = "passcode"
+        try context.save()
+
+        let service = makeService(context: context, keychain: keychain, stubBehaviour: .offline("no route"))
+
+        do {
+            _ = try await service.login(
+                email: "legacy@example.com",
+                credential: "SecurePassword123!",
+                authMethod: .password
+            )
+            Issue.record("Expected legacyAuthMethod error")
+        } catch AuthenticationError.legacyAuthMethod {
+            // expected
+        }
+        await Task.yield()
+        #expect(service.isAuthenticated == false)
+    }
+
+    @Test("Online login with legacy cached record — migrated to password, then offline fallback works")
+    func testOnlineLogin_legacyCachedRecord_migratesToPassword() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        let patientId = UUID()
+
+        let repo = makeRepo(context: context)
+        let user = try repo.createUser(
+            email: "migrate@example.com",
+            password: "OldLocalPassword123!",
+            fullName: "Migrate Patient",
+            authMethod: .password,
+            id: patientId
+        )
+        user.authMethod = "passcode"
+        try context.save()
+
+        let online = makeService(
+            context: context, keychain: keychain,
+            stubBehaviour: .accept(patientId: patientId.uuidString)
+        )
+        let loggedIn = try await online.login(
+            email: "migrate@example.com",
+            credential: "ServerPassword123!",
+            authMethod: .password
+        )
+        #expect(loggedIn.id == patientId)
+        #expect(loggedIn.authMethod == "password")
+        await Task.yield()
+        #expect(online.isAuthenticated == true)
+
+        // Offline fallback with the password the server accepted now succeeds.
+        let offline = makeService(context: context, keychain: keychain, stubBehaviour: .offline("no route"))
+        let again = try await offline.login(
+            email: "migrate@example.com",
+            credential: "ServerPassword123!",
+            authMethod: .password
+        )
+        #expect(again.id == patientId)
+    }
+
+    @Test("Biometric login with retired auth method — fails with legacyAuthMethod")
+    func testBiometricLogin_legacyAuthMethod_rejected() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        let repo = makeRepo(context: context)
+        let user = try repo.createUser(
+            email: "bio-legacy@example.com",
+            password: "SecurePassword123!",
+            fullName: "Bio Legacy",
+            authMethod: .password,
+            id: UUID()
+        )
+        user.authMethod = "passcode"
+        try context.save()
+
+        let service = makeService(context: context, keychain: keychain, stubBehaviour: .offline("n/a"))
+        do {
+            _ = try await service.loginWithBiometric(email: "bio-legacy@example.com")
+            Issue.record("Expected legacyAuthMethod error")
+        } catch AuthenticationError.legacyAuthMethod {
+            // expected
+        }
+    }
+
+    @Test("restoreSession with retired stored auth method — session token dropped")
+    func testRestoreSession_legacyAuthMethod_dropsToken() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+        try keychain.saveSessionToken(UUID())
+        try keychain.saveAuthMethod("passcode")
+
+        _ = makeService(context: context, keychain: keychain, stubBehaviour: .offline("n/a"))
+
+        #expect(try keychain.retrieveSessionToken() == nil)
+    }
+
     // MARK: - Offline + correct credential → encryption identity preserved
 
     @Test("Offline + existing user — encryption identity (user.id) matches cached local user")
@@ -125,7 +236,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "eid@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "EID Patient",
             authMethod: .password,
             id: patientId
@@ -167,7 +277,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "offline2@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Offline Patient 2",
             authMethod: .password,
             id: patientId
@@ -254,7 +363,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "rejected@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Rejected Patient",
             authMethod: .password,
             id: patientId
@@ -306,7 +414,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo1.createUser(
             email: "test@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Test Patient",
             authMethod: .password,
             id: patientId
@@ -371,6 +478,7 @@ private final class StubOfflineAuthClient: CoreAPIAuthClientProtocol, @unchecked
     enum Behaviour {
         case offline(String)
         case unauthorized
+        case accept(patientId: String)
     }
 
     let loginBehaviour: Behaviour
@@ -385,6 +493,8 @@ private final class StubOfflineAuthClient: CoreAPIAuthClientProtocol, @unchecked
             throw SyncError.offline(reason)
         case .unauthorized:
             throw SyncError.unauthorized
+        case .accept(let patientId):
+            return CoreAPIAuthResult(token: "test-jwt", patientId: patientId)
         }
     }
 

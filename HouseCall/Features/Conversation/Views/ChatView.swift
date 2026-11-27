@@ -16,6 +16,7 @@ struct ChatView: View {
     @State private var messageText: String = ""
     @State private var showError: Bool = false
     @State private var showProfile: Bool = false
+    @State private var showSignIn: Bool = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -26,14 +27,10 @@ struct ChatView: View {
                     LazyVStack(spacing: 8) {
                         // Messages
                         ForEach(viewModel.messages, id: \.id) { message in
-                            let isThisMessageStreaming = viewModel.isStreaming && message.id == viewModel.streamingMessageId
                             MessageBubbleView(
                                 message: message,
                                 messageRepository: viewModel.messageRepository,
-                                isStreaming: isThisMessageStreaming,
-                                // Pass live text only for the in-progress assistant message
-                                // so tokens appear incrementally without a second bubble.
-                                streamingText: isThisMessageStreaming ? viewModel.streamingText : nil
+                                isStreaming: false
                             )
                             .id(message.id)
                         }
@@ -47,6 +44,11 @@ struct ChatView: View {
                             RecommendationCard(model: card)
                                 .id("rec-\(card.id)")
                         }
+
+                        if viewModel.isAwaitingReply {
+                            WaitingForReplyIndicator()
+                                .id("awaiting-reply")
+                        }
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 16)
@@ -54,7 +56,7 @@ struct ChatView: View {
                 .onChange(of: viewModel.messages.count) {
                     scrollToBottom(proxy: proxy)
                 }
-                .onChange(of: viewModel.streamingText) {
+                .onChange(of: viewModel.isAwaitingReply) {
                     scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: viewModel.recommendationCards.count) {
@@ -65,7 +67,9 @@ struct ChatView: View {
             Divider()
 
             // MARK: - Error Banner
-            if let errorMessage = viewModel.errorMessage {
+            if viewModel.isReadOnly {
+                signInBanner
+            } else if let errorMessage = viewModel.errorMessage {
                 errorBanner(message: errorMessage)
             }
 
@@ -88,6 +92,9 @@ struct ChatView: View {
         .sheet(isPresented: $showProfile) {
             ProfileView()
         }
+        .sheet(isPresented: $showSignIn) {
+            CloudSignInSheet(viewModel: viewModel)
+        }
         .onAppear {
             viewModel.loadMessages()
         }
@@ -101,12 +108,12 @@ struct ChatView: View {
             TextField("Type your message...", text: $messageText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .focused($isInputFocused)
-                .disabled(viewModel.isStreaming)
+                .disabled(viewModel.isReadOnly)
                 .lineLimit(1...5)
                 .accessibilityIdentifier("chatMessageInput")
 
             // Clear button
-            if !messageText.isEmpty && !viewModel.isStreaming {
+            if !messageText.isEmpty && !viewModel.isReadOnly {
                 Button(action: clearMessage) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
@@ -125,16 +132,35 @@ struct ChatView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color(.systemBackground))
-        .overlay(
-            // "AI is responding..." label
-            viewModel.isStreaming ?
-                Text("AI is responding...")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.bottom, 80)
-                : nil,
-            alignment: .bottom
-        )
+    }
+
+    private var signInBanner: some View {
+        HStack {
+            Image(systemName: "lock.fill")
+                .foregroundColor(.orange)
+                .accessibilityHidden(true)
+
+            Text("Sign in to send messages")
+                .font(.subheadline)
+                .foregroundColor(.primary)
+
+            Spacer()
+
+            Button("Sign in") { showSignIn = true }
+                .font(.subheadline)
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Sign in to send messages")
+                .accessibilityHint("Opens a password prompt to reconnect")
+                .accessibilityIdentifier("chatSignInButton")
+        }
+        .padding()
+        .background(Color(.systemYellow).opacity(0.2))
+        .cornerRadius(8)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Chat is read-only. Sign in to send messages.")
+        .accessibilityIdentifier("chatSignInBanner")
     }
 
     private func errorBanner(message: String) -> some View {
@@ -185,7 +211,7 @@ struct ChatView: View {
     }
 
     private var canSend: Bool {
-        !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isStreaming
+        !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isReadOnly
     }
 
     // MARK: - Actions
@@ -210,11 +236,91 @@ struct ChatView: View {
     private func scrollToBottom(proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             withAnimation {
-                if viewModel.isStreaming, let streamingId = viewModel.streamingMessageId {
-                    // Scroll to the in-list streaming bubble (no separate "streaming" anchor needed)
-                    proxy.scrollTo(streamingId, anchor: .bottom)
-                } else if let lastMessage = viewModel.messages.last {
+                if let lastMessage = viewModel.messages.last {
                     proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Waiting indicator
+
+/// Typing dots shown between sending a message and the agent's reply.
+private struct WaitingForReplyIndicator: View {
+    @State private var animate = false
+
+    var body: some View {
+        HStack {
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color.gray)
+                        .frame(width: 8, height: 8)
+                        .opacity(animate ? 1.0 : 0.3)
+                        .animation(
+                            .easeInOut(duration: 0.6)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(index) * 0.2),
+                            value: animate
+                        )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(Color(.systemGray5))
+            .cornerRadius(20)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .onAppear { animate = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Waiting for a reply")
+        .accessibilityIdentifier("chatAwaitingReplyIndicator")
+    }
+}
+
+// MARK: - Sign-in sheet
+
+/// Asks for the password (email prefilled from the current session) and
+/// re-authenticates with the Core API. Dismisses itself on success.
+private struct CloudSignInSheet: View {
+    @ObservedObject var viewModel: ConversationViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var password: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    // Display only: sign-in is locked to the current patient.
+                    Text(viewModel.signInEmail)
+                        .foregroundColor(.secondary)
+                        .accessibilityLabel("Email \(viewModel.signInEmail), cannot be changed")
+                    SecureField("Password", text: $password)
+                        .textContentType(.password)
+                        .accessibilityIdentifier("chatSignInPassword")
+                }
+                if let error = viewModel.signInError {
+                    Text(error).foregroundColor(.red).font(.footnote)
+                }
+            }
+            .navigationTitle("Sign in")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Sign in") {
+                        Task {
+                            if await viewModel.signIn(password: password) { dismiss() }
+                        }
+                    }
+                    .disabled(password.isEmpty || viewModel.isSigningIn)
+                    .accessibilityLabel("Sign in")
+                    .accessibilityIdentifier("chatSignInSubmit")
                 }
             }
         }

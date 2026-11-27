@@ -120,7 +120,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "patient@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Jane Smith",
             authMethod: .password
         )
@@ -144,7 +143,6 @@ struct CloudRegistrationTests {
         _ = try await service.register(
             email: "jwt@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "JWT Patient",
             authMethod: .password
         )
@@ -168,7 +166,6 @@ struct CloudRegistrationTests {
         _ = try await service.register(
             email: "session@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Session Patient",
             authMethod: .password
         )
@@ -194,7 +191,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "enc@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Enc Patient",
             authMethod: .password
         )
@@ -225,7 +221,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "phi@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "PHI Patient",
             authMethod: .password
         )
@@ -238,29 +233,36 @@ struct CloudRegistrationTests {
                 "PHI encrypted under user.id must round-trip correctly under the canonical patientId")
     }
 
-    // MARK: - Cloud disabled (nil deps) — local path unchanged
+    // MARK: - Unconfigured build (nil deps) — registration unavailable
 
-    @Test("Cloud disabled — local-only registration creates user with a generated id")
-    func testLocalOnlyRegistration() async throws {
+    @Test("Unconfigured build — register throws coreAPINotConfigured and creates no local user")
+    func testUnconfiguredRegistration() async throws {
         let context = makeContext()
         let keychain = InMemoryKeychainManager()
-        // nil client + nil tenantId → local-only path
         let service = makeService(context: context, keychain: keychain, stubClient: nil, tenantId: nil)
 
-        let user = try await service.register(
-            email: "local@example.com",
-            password: "SecurePassword123!",
-            passcode: nil,
-            fullName: "Local Patient",
-            authMethod: .password
-        )
+        #expect(service.isCoreAPIConfigured == false)
 
-        #expect(user.email == "local@example.com")
-        #expect(user.id != nil, "Local user must still receive a generated id")
+        var thrown: AuthenticationError?
+        do {
+            _ = try await service.register(
+                email: "local@example.com",
+                password: "SecurePassword123!",
+                fullName: "Local Patient",
+                authMethod: .password
+            )
+        } catch let e as AuthenticationError {
+            thrown = e
+        }
+        guard case .coreAPINotConfigured? = thrown else {
+            Issue.record("Expected coreAPINotConfigured, got \(String(describing: thrown))")
+            return
+        }
 
-        // No JWT must be stored for a local-only registration.
+        let request = NSFetchRequest<NSManagedObject>(entityName: "User")
+        #expect(try context.count(for: request) == 0, "No local account record may be created")
         let storedJWT = try? keychain.get(key: KeychainManager.Keys.coreAPIJWT)
-        #expect(storedJWT == nil, "Local-only registration must NOT store a Core API JWT")
+        #expect(storedJWT == nil)
     }
 
     // MARK: - 409 conflict
@@ -277,7 +279,6 @@ struct CloudRegistrationTests {
             _ = try await service.register(
                 email: "dup@example.com",
                 password: "SecurePassword123!",
-                passcode: nil,
                 fullName: "Duplicate",
                 authMethod: .password
             )
@@ -323,7 +324,6 @@ struct CloudRegistrationTests {
             _ = try await service.register(
                 email: "offline@example.com",
                 password: "SecurePassword123!",
-                passcode: nil,
                 fullName: "Offline Patient",
                 authMethod: .password
             )

@@ -29,17 +29,13 @@ class AIConversationService: ObservableObject {
     /// Messages in the current conversation
     @Published private(set) var messages: [Message] = []
 
-    /// Whether an AI response is currently streaming
-    @Published private(set) var isStreaming: Bool = false
-
     /// Current error message, if any
     @Published private(set) var errorMessage: String?
 
-    /// Current streaming response text (accumulates as chunks arrive)
-    @Published private(set) var streamingText: String = ""
-
-    /// ID of the message currently being streamed
-    @Published private(set) var streamingMessageId: UUID?
+    /// Whether the cloud connection is usable. `.signInRequired` means there is
+    /// no coordinator yet, or the Core API rejected the token (401): the chat is
+    /// read-only until `activateCloud(_:)` is called after a fresh sign-in.
+    @Published private(set) var cloudState: CloudSessionState = .signInRequired
 
     // MARK: - Turn Token Budget
 
@@ -63,7 +59,9 @@ class AIConversationService: ObservableObject {
 
     /// Cloud sync coordinator injected when the Core API is available.
     /// `nil` means the patient is not signed in; sending fails with `signInRequired`.
-    let syncCoordinator: CloudSyncCoordinator?
+    /// Attached after sign-in via `activateCloud(_:)`.
+    private(set) var syncCoordinator: CloudSyncCoordinator?
+    private var reauthSubscription: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -78,7 +76,26 @@ class AIConversationService: ObservableObject {
         self.conversationRepository = conversationRepository
         self.messageRepository = messageRepository
         self.auditLogger = auditLogger
-        self.syncCoordinator = syncCoordinator
+        if let syncCoordinator {
+            activateCloud(syncCoordinator)
+        }
+    }
+
+    // MARK: - Cloud session
+
+    /// Attaches a (started) coordinator and marks the cloud session active.
+    /// Replaces any previous coordinator, which is stopped. No restart needed.
+    func activateCloud(_ coordinator: CloudSyncCoordinator) {
+        if let old = syncCoordinator, old !== coordinator { old.stop() }
+        syncCoordinator = coordinator
+        errorMessage = nil
+        cloudState = coordinator.requiresReauth ? .signInRequired : .active
+        reauthSubscription = coordinator.$requiresReauth
+            .dropFirst()
+            .sink { [weak self] requiresReauth in
+                guard let self, self.syncCoordinator === coordinator else { return }
+                self.cloudState = requiresReauth ? .signInRequired : .active
+            }
     }
 
     // MARK: - Conversation Management
@@ -189,7 +206,8 @@ class AIConversationService: ObservableObject {
         }
 
         // No coordinator means the patient is not signed in: nothing may leave the device.
-        guard let coordinator = syncCoordinator else {
+        guard let coordinator = syncCoordinator, !coordinator.requiresReauth else {
+            cloudState = .signInRequired
             errorMessage = AIConversationError.signInRequired.localizedDescription
             throw AIConversationError.signInRequired
         }
@@ -258,32 +276,10 @@ class AIConversationService: ObservableObject {
         // AI reply arrives asynchronously via WebSocket; no streaming UI here.
     }
 
-    /// Resets streaming UI state (no on-device streaming remains; kept for UI callers)
-    func cancelStreaming() {
-        isStreaming = false
-        streamingMessageId = nil
-        streamingText = ""
-
-        // Log interruption
-        if let conversationId = currentConversation?.id {
-            try? auditLogger.log(
-                event: .aiStreamingInterrupted,
-                userId: userId,
-                details: AuditEventDetails(
-                    message: "User cancelled streaming",
-                    additionalInfo: ["conversationId": conversationId.uuidString]
-                )
-            )
-        }
-    }
-
     /// Clears the current conversation and messages, resetting all in-memory state.
     func clearCurrentConversation() {
         currentConversation = nil
         messages = []
-        streamingText = ""
-        streamingMessageId = nil
-        isStreaming = false
         errorMessage = nil
     }
 
@@ -296,6 +292,14 @@ class AIConversationService: ObservableObject {
         let context = message.managedObjectContext
         try? context?.save()
     }
+}
+
+// MARK: - Cloud session state
+
+/// Whether messages can currently be sent to the Core API.
+enum CloudSessionState: Equatable {
+    case active
+    case signInRequired
 }
 
 // MARK: - Errors

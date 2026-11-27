@@ -240,7 +240,7 @@ class KeychainManager {
     // MARK: - Authentication Method
 
     /// Saves user's preferred authentication method
-    /// - Parameter method: "password", "passcode", or "biometric"
+    /// - Parameter method: "password" or "biometric"
     func saveAuthMethod(_ method: String) throws {
         let data = Data(method.utf8)
         try save(data: data, for: Keys.authMethod)

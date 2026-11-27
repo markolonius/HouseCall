@@ -17,14 +17,14 @@
 
 ## Phase 2 — Cloud-only chat and sign-in
 
-- [ ] 2.1 Require Core API configuration
+- [x] 2.1 Require Core API configuration
   - `AuthenticationService` has no local-only register/login path; with no `CoreAPIBaseURL`/`CoreAPITenantID` the login screen shows a configuration error.
   - Unit tests cover the unconfigured build.
-- [ ] 2.2 Read-only chat without a valid token
+- [x] 2.2 Read-only chat without a valid token
   - When the token is missing or rejected, the chat shows cached history, disables input, and offers sign-in.
   - After sign-in, cloud sync activates without restarting the app.
   - Unit tests cover the expired-token path end to end (401 → read-only → sign-in → active).
-- [ ] 2.3 Remove the passcode authentication method
+- [x] 2.3 Remove the passcode authentication method
   - Remove passcode registration/login UI, `AuthMethod.passcode`, and passcode validation.
   - Biometric unlock and the offline fallback for previously authenticated patients keep working.
   - `scripts/test.sh` passes.

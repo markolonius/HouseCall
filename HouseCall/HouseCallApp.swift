@@ -135,6 +135,8 @@ private struct AutoLaunchChatView: View {
     let conversationRepository: ConversationRepositoryProtocol
     let messageRepository: MessageRepositoryProtocol
 
+    @EnvironmentObject private var authService: AuthenticationService
+
     private enum LaunchState {
         case loading
         case ready
@@ -218,6 +220,7 @@ private struct AutoLaunchChatView: View {
             // Otherwise pass nil: the service refuses to send and asks the
             // patient to sign in.
             let coordinator = buildCloudSyncCoordinator(
+                userId: userId,
                 conversationRepository: conversationRepository,
                 messageRepository: messageRepository
             )
@@ -228,6 +231,47 @@ private struct AutoLaunchChatView: View {
                 syncCoordinator: coordinator
             )
             coordinator?.start()
+            authService.syncCoordinator = coordinator
+
+            // Read-only recovery: with no valid token (missing at launch, or
+            // rejected with a 401 later) the chat offers sign-in. A successful
+            // Core API login stores a fresh JWT; the coordinator is then built
+            // and started in place, without restarting the app. A sign-in that
+            // resolves to a different patient is rejected and ends the local
+            // session.
+            let convRepo = conversationRepository
+            let msgRepo = messageRepository
+            let auth = authService
+            let cloudSignIn: ConversationViewModel.CloudSignIn = { password in
+                guard let current = auth.getCurrentUser(), let email = current.email else {
+                    throw AuthenticationError.noActiveSession
+                }
+                // Locked to the current patient: a different server identity
+                // is rejected and ends the local session.
+                _ = try await auth.login(
+                    email: email,
+                    credential: password,
+                    authMethod: .password,
+                    expectedUserId: current.id
+                )
+                guard let fresh = buildCloudSyncCoordinator(
+                    userId: userId,
+                    conversationRepository: convRepo,
+                    messageRepository: msgRepo
+                ) else {
+                    // Core API unreachable: offline fallback gave no token.
+                    throw AuthenticationError.loginFailed("Unable to reach the server.")
+                }
+                fresh.start()
+                auth.syncCoordinator = fresh
+                await fresh.ensureServerConversation(
+                    localConversationId: conversationId,
+                    title: "Consultation"
+                )
+                // Send anything left pending by the earlier 401.
+                await fresh.replayPendingMessages()
+                return fresh
+            }
 
             // In cloud mode, ensure the conversation exists server-side so the
             // patient's messages can be POSTed (the send path requires a
@@ -244,7 +288,9 @@ private struct AutoLaunchChatView: View {
                 conversationId: conversationId,
                 conversationRepository: conversationRepository,
                 messageRepository: messageRepository,
-                aiService: aiService
+                aiService: aiService,
+                signInEmail: authService.getCurrentUser()?.email ?? "",
+                cloudSignIn: cloudSignIn
             )
             launchState = .ready
         } catch {
@@ -282,6 +328,7 @@ private struct AutoLaunchChatView: View {
 /// to sign in.
 @MainActor
 private func buildCloudSyncCoordinator(
+    userId: UUID,
     conversationRepository: ConversationRepositoryProtocol,
     messageRepository: MessageRepositoryProtocol
 ) -> CloudSyncCoordinator? {
@@ -301,6 +348,7 @@ private func buildCloudSyncCoordinator(
     // Both gates passed — build the coordinator.
     guard let syncClient = try? SyncClient(baseURL: baseURL) else { return nil }
     return CloudSyncCoordinator(
+        userId: userId,
         syncClient: syncClient,
         messageRepository: messageRepository,
         conversationRepository: conversationRepository
@@ -338,7 +386,6 @@ enum UITestBootstrap {
         _ = try? repo.createUser(
             email: testEmail,
             password: testPassword,
-            passcode: nil,
             fullName: "UI Test",      // Synthetic — not real PHI
             authMethod: .password
         )

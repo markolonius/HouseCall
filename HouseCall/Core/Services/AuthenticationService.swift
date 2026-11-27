@@ -18,6 +18,8 @@ enum AuthenticationError: LocalizedError {
     case sessionValidationFailed
     case noActiveSession
     case biometricAuthFailed(String)
+    case coreAPINotConfigured
+    case legacyAuthMethod
 
     var errorDescription: String? {
         switch self {
@@ -33,6 +35,10 @@ enum AuthenticationError: LocalizedError {
             return "No active user session"
         case .biometricAuthFailed(let reason):
             return "Biometric authentication failed: \(reason)"
+        case .coreAPINotConfigured:
+            return "This build is not configured to connect to HouseCall."
+        case .legacyAuthMethod:
+            return "This account used a sign-in method that is no longer supported. Please sign in with your password."
         }
     }
 }
@@ -60,14 +66,15 @@ class AuthenticationService: ObservableObject {
 
     // `shared` reads Core API config at first access.  When both
     // `CoreAPIBaseURL` and `CoreAPITenantID` are set in the xcconfig,
-    // the singleton is cloud-enabled; otherwise it is local-only.
+    // the singleton is configured; otherwise register/login throw
+    // `AuthenticationError.coreAPINotConfigured`.
     // Tests that construct `AuthenticationService(...)` directly are
     // unaffected — the memberwise init defaults remain `nil`.
     static let shared: AuthenticationService = makeShared()
 
     /// Production factory.  Reads build-time config via `CoreAPIConfig`
     /// and returns a cloud-enabled instance when both the base URL and the
-    /// tenant ID are present, or a local-only instance when either is absent.
+    /// tenant ID are present, or an unconfigured instance when either is absent.
     ///
     /// Tests should NOT call this method; inject deps via the memberwise
     /// `init(...)` instead to keep tests hermetic.
@@ -78,7 +85,7 @@ class AuthenticationService: ObservableObject {
             let tenantId = CoreAPIConfig.tenantID(),
             let client = try? CoreAPIAuthClient(baseURL: baseURL)
         else {
-            // Config absent or URL invalid — local-only, zero behaviour change.
+            // Config absent or URL invalid — unconfigured; register/login are unavailable.
             return AuthenticationService()
         }
         return AuthenticationService(
@@ -95,7 +102,7 @@ class AuthenticationService: ObservableObject {
 
     /// Returns an `AuthenticationService` wired with cloud deps when both
     /// `urlString` and `tenantId` are non-nil and `urlString` is a valid,
-    /// TLS-compliant URL; returns a local-only instance otherwise.
+    /// TLS-compliant URL; returns an unconfigured instance otherwise.
     ///
     /// - Parameters:
     ///   - urlString: The raw base URL string (mirrors `CoreAPIConfig.baseURLString()`).
@@ -135,8 +142,8 @@ class AuthenticationService: ObservableObject {
 
     /// Optional Core API auth client.  When non-nil (together with
     /// `coreAPITenantId`), registration and login route through Core API.
-    /// `nil` preserves the original local-only behaviour — no existing call
-    /// sites or tests are affected.  Production wiring is finalised in phase 5.
+    /// `nil` means the build is unconfigured: register/login throw
+    /// `AuthenticationError.coreAPINotConfigured`.
     private let coreAuthClient: CoreAPIAuthClientProtocol?
 
     /// Tenant identifier passed to Core API auth calls.  Must be non-nil
@@ -148,6 +155,13 @@ class AuthenticationService: ObservableObject {
     /// Set this to the active `CloudSyncCoordinator` once the coordinator is
     /// started; set it back to `nil` after `stop()` is called.
     weak var syncCoordinator: CloudSyncCoordinator?
+
+    /// `true` when both a Core API auth client and tenant id are present.
+    /// When `false`, register/login are unavailable and the UI shows a
+    /// configuration error.
+    var isCoreAPIConfigured: Bool {
+        coreAuthClient != nil && coreAPITenantId != nil
+    }
 
     private var sessionTimeoutTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -190,45 +204,26 @@ class AuthenticationService: ObservableObject {
     /// - Network unreachable → `registrationFailed("Registration requires…")`
     /// - 401 → `registrationFailed("Registration unauthorised")`
     ///
-    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
+    /// Without cloud deps this throws `AuthenticationError.coreAPINotConfigured`;
+    /// there is no local-only path and no local account is created.
     @MainActor
     func register(
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
-        // Cloud-enabled path
-        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
-            return try await registerViaCloudAPI(
-                authClient: authClient,
-                tenantId: tenantId,
-                email: email,
-                password: password,
-                passcode: passcode,
-                fullName: fullName,
-                authMethod: authMethod
-            )
+        guard let authClient = coreAuthClient, let tenantId = coreAPITenantId else {
+            throw AuthenticationError.coreAPINotConfigured
         }
-
-        // Local-only path (unchanged)
-        do {
-            let user = try userRepository.createUser(
-                email: email,
-                password: password,
-                passcode: passcode,
-                fullName: fullName,
-                authMethod: authMethod
-            )
-
-            // Create session for newly registered user
-            try await createSession(for: user, authMethod: authMethod)
-
-            return user
-        } catch {
-            throw AuthenticationError.registrationFailed(error.localizedDescription)
-        }
+        return try await registerViaCloudAPI(
+            authClient: authClient,
+            tenantId: tenantId,
+            email: email,
+            password: password,
+            fullName: fullName,
+            authMethod: authMethod
+        )
     }
 
     /// Cloud registration flow.  Separated from the public `register` method so
@@ -240,7 +235,6 @@ class AuthenticationService: ObservableObject {
         tenantId: String,
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
@@ -290,7 +284,6 @@ class AuthenticationService: ObservableObject {
             user = try userRepository.createUser(
                 email: email,
                 password: password,
-                passcode: passcode,
                 fullName: fullName,
                 authMethod: authMethod,
                 id: patientId
@@ -325,13 +318,15 @@ class AuthenticationService: ObservableObject {
     /// - 401 (unauthorized) → `loginFailed(...)`. Core API is authoritative; no fallback.
     /// - Network unreachable → `loginFailed(...)` for now (task 4.1 will add offline fallback).
     ///
-    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
+    /// Without cloud deps this throws `AuthenticationError.coreAPINotConfigured`;
+    /// there is no local-only path and no local account is created.
     @MainActor
     func login(
         email: String,
         credential: String,
         authMethod: AuthMethod,
-        useBiometric: Bool = false
+        useBiometric: Bool = false,
+        expectedUserId: UUID? = nil
     ) async throws -> User {
         // Biometric pre-check (preserved from original behaviour).
         // Runs regardless of cloud/local path: biometric gates device-local session
@@ -346,31 +341,17 @@ class AuthenticationService: ObservableObject {
             }
         }
 
-        // Cloud-enabled path
-        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
-            return try await loginViaCloudAPI(
-                authClient: authClient,
-                tenantId: tenantId,
-                email: email,
-                credential: credential,
-                authMethod: authMethod
-            )
+        guard let authClient = coreAuthClient, let tenantId = coreAPITenantId else {
+            throw AuthenticationError.coreAPINotConfigured
         }
-
-        // Local-only path (unchanged)
-        do {
-            let user = try userRepository.authenticateUser(
-                email: email,
-                credential: credential,
-                authMethod: authMethod
-            )
-
-            try await createSession(for: user, authMethod: authMethod)
-
-            return user
-        } catch {
-            throw AuthenticationError.loginFailed(error.localizedDescription)
-        }
+        return try await loginViaCloudAPI(
+            authClient: authClient,
+            tenantId: tenantId,
+            email: email,
+            credential: credential,
+            authMethod: authMethod,
+            expectedUserId: expectedUserId
+        )
     }
 
     /// Cloud login flow.  Separated from the public `login` method so the
@@ -381,7 +362,8 @@ class AuthenticationService: ObservableObject {
         tenantId: String,
         email: String,
         credential: String,
-        authMethod: AuthMethod
+        authMethod: AuthMethod,
+        expectedUserId: UUID?
     ) async throws -> User {
         // Step 1: Authenticate against Core API (Core API is authoritative).
         let authResult: CoreAPIAuthResult
@@ -409,15 +391,14 @@ class AuthenticationService: ObservableObject {
                 //
                 // No JWT is obtained; cloud sync stays inactive until a subsequent
                 // online login succeeds and a fresh token is stored.
+                try rejectLegacyAuthMethod(for: email)
+                let localUser: User
                 do {
-                    let localUser = try userRepository.authenticateUser(
+                    localUser = try userRepository.authenticateUser(
                         email: email,
                         credential: credential,
                         authMethod: authMethod
                     )
-                    // Local check succeeded: start a session from the cached record.
-                    try await createSession(for: localUser, authMethod: authMethod)
-                    return localUser
                 } catch {
                     // No cached user for this email, or credential mismatch —
                     // offline access cannot be granted without a valid local record.
@@ -425,6 +406,15 @@ class AuthenticationService: ObservableObject {
                         "Unable to reach the server. Please check your connection."
                     )
                 }
+                // Re-sign-in lock: the cached record must be the same patient.
+                if let expectedUserId, localUser.id != expectedUserId {
+                    auditIdentityMismatch(expected: expectedUserId, actual: localUser.id)
+                    try? await logout()
+                    throw AuthenticationError.loginFailed("Sign-in did not match the current account.")
+                }
+                // Local check succeeded: start a session from the cached record.
+                try await createSession(for: localUser, authMethod: authMethod)
+                return localUser
             default:
                 throw AuthenticationError.loginFailed(syncErr.localizedDescription ?? "Server error")
             }
@@ -437,6 +427,15 @@ class AuthenticationService: ObservableObject {
             throw AuthenticationError.loginFailed("Invalid patient id from server")
         }
 
+        // Re-sign-in guard: when re-authenticating on top of an existing local
+        // session, the server identity must be the same patient. Otherwise do
+        // not store the token or create a session, and end the local session.
+        if let expectedUserId, expectedUserId != patientId {
+            auditIdentityMismatch(expected: expectedUserId, actual: patientId)
+            try? await logout()
+            throw AuthenticationError.loginFailed("Sign-in did not match the current account.")
+        }
+
         // Step 3: Ensure the local cache user exists for the canonical patientId.
         // On first login on this device the record may not exist yet (e.g., the
         // patient registered on another device or the local store was cleared).
@@ -444,13 +443,28 @@ class AuthenticationService: ObservableObject {
         // to the server-canonical identity — encryption-identity continuity.
         let user: User
         if let existingUser = userRepository.findUser(by: patientId) {
+            // Core API accepted the password. A cached record with a retired auth
+            // method (e.g. "passcode") is migrated to password auth rather than
+            // rejected, so the patient is never locked out of an existing account.
+            if let stored = existingUser.authMethod, AuthMethod(rawValue: stored) == nil {
+                do {
+                    try userRepository.migrateToPasswordAuth(existingUser, password: credential)
+                } catch {
+                    throw AuthenticationError.loginFailed(error.localizedDescription)
+                }
+                // Identifiers and event name only — no PHI.
+                try? auditLogger.log(
+                    event: .accountUpdated,
+                    userId: patientId,
+                    message: "Legacy auth method migrated to password"
+                )
+            }
             user = existingUser
         } else {
             do {
                 user = try userRepository.createUser(
                     email: email,
                     password: authMethod == .password ? credential : nil,
-                    passcode: authMethod == .passcode ? credential : nil,
                     fullName: "",   // Not known at login; profile sync is future work (not in this change)
                     authMethod: authMethod,
                     id: patientId
@@ -469,9 +483,26 @@ class AuthenticationService: ObservableObject {
         return user
     }
 
+    /// Records a re-sign-in identity mismatch. Identifiers and event name only
+    /// (never the email or any PHI).
+    private func auditIdentityMismatch(expected: UUID, actual: UUID?) {
+        try? auditLogger.log(
+            event: .unauthorizedAccess,
+            userId: expected,
+            message: "Re-sign-in identity mismatch: server patient \(actual?.uuidString ?? "unknown")"
+        )
+    }
+
     /// Logs in with biometric authentication only
     @MainActor
     func loginWithBiometric(email: String) async throws -> User {
+        guard isCoreAPIConfigured else {
+            throw AuthenticationError.coreAPINotConfigured
+        }
+        // A retired auth method cannot unlock via biometrics; skip the prompt and
+        // send the patient to a password sign-in (which migrates the record).
+        try rejectLegacyAuthMethod(for: email)
+
         // Perform biometric authentication
         let reason = BiometricAuthManager.createAuthenticationReason(for: "login")
         let result = await biometricAuthManager.authenticate(reason: reason)
@@ -485,6 +516,8 @@ class AuthenticationService: ObservableObject {
         guard let user = userRepository.findUser(by: email) else {
             throw AuthenticationError.loginFailed("User not found")
         }
+
+        try rejectLegacyAuthMethod(user)
 
         // Verify user has biometric enabled
         guard user.authMethod == AuthMethod.biometric.rawValue else {
@@ -501,6 +534,11 @@ class AuthenticationService: ObservableObject {
     /// Logs out the current user
     @MainActor
     func logout() async throws {
+        // Stop cloud sync so the WebSocket subscription is cancelled and no
+        // further PHI events can be delivered or persisted after logout.
+        syncCoordinator?.stop()
+        syncCoordinator = nil
+
         guard let session = currentSession else {
             return
         }
@@ -523,11 +561,6 @@ class AuthenticationService: ObservableObject {
         // key material. The Keychain master key is preserved so at-rest PHI
         // remains decryptable after the next login.
         EncryptionManager.shared.clearCachedKeys()
-
-        // Stop cloud sync so the WebSocket subscription is cancelled and no
-        // further PHI events can be delivered or persisted after logout.
-        syncCoordinator?.stop()
-        syncCoordinator = nil
 
         // Update state
         currentSession = nil
@@ -626,11 +659,33 @@ class AuthenticationService: ObservableObject {
         }
     }
 
+    /// Throws `.legacyAuthMethod` when a stored auth-method string is not a
+    /// supported `AuthMethod` (e.g. the retired "passcode" method).
+    private func rejectLegacyAuthMethod(_ stored: String?) throws {
+        guard let stored, AuthMethod(rawValue: stored) == nil else { return }
+        throw AuthenticationError.legacyAuthMethod
+    }
+
+    private func rejectLegacyAuthMethod(_ user: User) throws {
+        try rejectLegacyAuthMethod(user.authMethod)
+    }
+
+    private func rejectLegacyAuthMethod(for email: String) throws {
+        guard let user = userRepository.findUser(by: email) else { return }
+        try rejectLegacyAuthMethod(user)
+    }
+
     /// Restores session from keychain if available
     private func restoreSession() {
         guard let _ = try? keychainManager.retrieveSessionToken(),
-              let authMethodString = try? keychainManager.retrieveAuthMethod(),
-              let _ = AuthMethod(rawValue: authMethodString) else {
+              let authMethodString = try? keychainManager.retrieveAuthMethod() else {
+            return
+        }
+
+        // A stored legacy method (retired passcode) must not restore a session;
+        // drop the token so the patient is sent to sign in with their password.
+        guard AuthMethod(rawValue: authMethodString) != nil else {
+            try? keychainManager.deleteSessionToken()
             return
         }
 

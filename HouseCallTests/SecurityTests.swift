@@ -563,14 +563,15 @@ struct SecurityTests {
             userRepository: userRepo,
             keychainManager: KeychainManager.shared,
             biometricAuthManager: BiometricAuthManager.shared,
-            auditLogger: auditLogger
+            auditLogger: auditLogger,
+            coreAuthClient: FakeCoreAPIAuthClient(),
+            coreAPITenantId: FakeCoreAPIAuthClient.tenantId
         )
 
         // Register a user and establish a session.
         _ = try await authService.register(
             email: "timeout-test@example.com",
             password: "TimeoutPass123!",
-            passcode: nil,
             fullName: "Timeout User",
             authMethod: .password
         )

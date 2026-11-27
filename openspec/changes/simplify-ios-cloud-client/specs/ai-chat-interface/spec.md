@@ -26,4 +26,4 @@ conversation without an intermediate conversation list or a "New Chat" step.
 - **WHEN** the patient finishes logging in
 - **THEN** a new conversation is created automatically and registered with the Core API
 - **AND** the chat screen opens on that empty conversation ready for input
-- **AND** no model provider is selected or stored for it
+- **AND** the app does not select a model provider for it (the legacy `llmProvider` field keeps its schema default)

@@ -12,7 +12,7 @@
   - Remove the `LLM_*` keys from `Info.plist`, `Base.xcconfig` and `Secrets.example.xcconfig`.
   - The user removes deleted files from the Xcode target (project files are hook-protected); the coder lists them.
 - [ ] 1.3 Create the first conversation without a provider
-  - `HouseCallApp.resolveConversation` no longer reads a provider; new conversations store a fixed placeholder value.
+  - `HouseCallApp.resolveConversation` no longer reads a provider; new conversations leave the legacy `llmProvider` field at its Core Data default (no model migration).
   - `scripts/test.sh` passes.
 
 ## Phase 2 — Cloud-only chat and sign-in

@@ -104,14 +104,9 @@ struct MessageDTO: Codable {
 struct RecommendationDTO: Codable {
     let ID: String
     let ConversationID: String
-    let PatientID: String
     let State: String
     let PayloadType: String
-    /// Raw JSONB bytes from the backend (e.g. `{"text":"…"}` for guidance).
-    let Payload: Data?
-    let DraftContent: String
     let FinalContent: String?
-    let ReviewedBy: String?
     let ReviewedAt: String?
     let CreatedAt: String
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -60,8 +61,36 @@ func (rt *Router) handleGetRecommendation(w http.ResponseWriter, r *http.Request
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		writeJSON(w, http.StatusOK, toPatientRecommendation(rec))
+		return
 	}
 	writeJSON(w, http.StatusOK, rec)
+}
+
+// patientRecommendation is the only shape of a recommendation a patient may
+// see: the physician-approved content, never the unapproved AI draft, raw
+// payload, reviewer identity, or model/prompt provenance. Keys stay
+// PascalCase (no json tags on store.Recommendation) to match the iOS client.
+type patientRecommendation struct {
+	ID             uuid.UUID
+	ConversationID uuid.UUID
+	State          string
+	PayloadType    string
+	FinalContent   *string
+	ReviewedAt     *time.Time
+	CreatedAt      time.Time
+}
+
+func toPatientRecommendation(r store.Recommendation) patientRecommendation {
+	return patientRecommendation{
+		ID:             r.ID,
+		ConversationID: r.ConversationID,
+		State:          r.State,
+		PayloadType:    r.PayloadType,
+		FinalContent:   r.FinalContent,
+		ReviewedAt:     r.ReviewedAt,
+		CreatedAt:      r.CreatedAt,
+	}
 }
 
 func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Request) {

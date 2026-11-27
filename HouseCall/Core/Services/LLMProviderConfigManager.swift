@@ -20,6 +20,11 @@ class LLMProviderConfigManager: ObservableObject {
     private let keychainManager: KeychainManager
     private let userDefaults: UserDefaults
 
+    /// Looks up a build-config value by Info.plist key. Defaults to the app
+    /// bundle; injectable so tests do not depend on the developer's local
+    /// Secrets.xcconfig.
+    private let buildConfigValue: (String) -> Any?
+
     /// Key prefix for UserDefaults storage
     private let configKeyPrefix = "llm_provider_config"
 
@@ -34,10 +39,12 @@ class LLMProviderConfigManager: ObservableObject {
 
     init(
         keychainManager: KeychainManager = .shared,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        buildConfigValue: @escaping (String) -> Any? = { Bundle.main.object(forInfoDictionaryKey: $0) }
     ) {
         self.keychainManager = keychainManager
         self.userDefaults = userDefaults
+        self.buildConfigValue = buildConfigValue
 
         // Load active provider from UserDefaults
         if let savedProviderString = userDefaults.string(forKey: "\(configKeyPrefix)_active"),
@@ -54,7 +61,7 @@ class LLMProviderConfigManager: ObservableObject {
     /// Provider specified via LLM_DEFAULT_PROVIDER build setting → Info.plist.
     /// Returns nil if the value is absent or cannot be parsed as an LLMProviderType.
     private func buildConfigDefaultProvider() -> LLMProviderType? {
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: "LLMDefaultProvider") as? String,
+        guard let raw = buildConfigValue("LLMDefaultProvider") as? String,
               !raw.isEmpty,
               let provider = LLMProviderType(rawValue: raw) else {
             return nil
@@ -65,7 +72,7 @@ class LLMProviderConfigManager: ObservableObject {
     /// API key specified via LLM_DEFAULT_API_KEY build setting → Info.plist.
     /// Returns nil when the value is absent or empty (never committed to git).
     private func buildConfigAPIKey() -> String? {
-        guard let key = Bundle.main.object(forInfoDictionaryKey: "LLMDefaultAPIKey") as? String,
+        guard let key = buildConfigValue("LLMDefaultAPIKey") as? String,
               !key.isEmpty else {
             return nil
         }
@@ -80,19 +87,19 @@ class LLMProviderConfigManager: ObservableObject {
     ///
     /// Ollama needs no API key, so `requiresAuth` is always false here.
     private func buildConfigCustomConfig() -> CustomProviderConfig? {
-        guard let baseURL = Bundle.main.object(forInfoDictionaryKey: "LLMCustomBaseURL") as? String,
+        guard let baseURL = buildConfigValue("LLMCustomBaseURL") as? String,
               !baseURL.isEmpty,
               // Guard against unresolved xcconfig placeholders such as "$(LLM_CUSTOM_BASE_URL)"
               !baseURL.hasPrefix("$(") else {
             return nil
         }
 
-        let rawEndpoint = Bundle.main.object(forInfoDictionaryKey: "LLMCustomEndpoint") as? String ?? ""
+        let rawEndpoint = buildConfigValue("LLMCustomEndpoint") as? String ?? ""
         let endpoint = (rawEndpoint.isEmpty || rawEndpoint.hasPrefix("$("))
             ? "v1/chat/completions"
             : rawEndpoint
 
-        let rawModel = Bundle.main.object(forInfoDictionaryKey: "LLMCustomModel") as? String ?? ""
+        let rawModel = buildConfigValue("LLMCustomModel") as? String ?? ""
         let model = (rawModel.isEmpty || rawModel.hasPrefix("$("))
             ? "llama3"
             : rawModel

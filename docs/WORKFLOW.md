@@ -1,6 +1,6 @@
 # Development Workflow — Spec-Driven, Agent-Orchestrated
 
-HouseCall is built with an **OpenSpec → beads → worktree → coder/tester/reviewer → PR**
+HouseCall is built with an **OpenSpec → beads → worktree → coder → test script + reviewer → PR**
 loop, driven from a single interactive Claude Code session on the dev machine
 (a Mac mini). You approve specs and merge PRs; an orchestrator agent does the
 rest.
@@ -13,14 +13,14 @@ rest.
 - **beads answers _where we are_.** Tasks become beads issues in a dependency
   graph so the orchestrator always knows the next unblocked unit of work and
   never loses that state between sessions.
-- **GitHub is the collaboration surface.** Beads issues are mirrored to GitHub
-  Issues; each phase lands as one pull request you review and merge.
+- **GitHub is the review surface.** Each phase lands as one pull request you
+  review and merge.
 
 ## Hard constraint: no headless mode
 
 This workflow never shells out to `claude -p` / SDK headless runs. The
 orchestrator is the **main interactive session** (the `/run-phase` command),
-and it dispatches the coder/tester/reviewer as **native Claude Code
+and it dispatches the coder and reviewer as **native Claude Code
 subagents** via the Task tool. That works on every plan and on both the CLI
 and web — nothing depends on headless automation.
 
@@ -74,52 +74,61 @@ From an interactive session at the repo root:
 
 That single command:
 
-1. Seeds beads from `tasks.md` (`scripts/openspec-to-beads.sh`) — idempotent.
-2. Mirrors beads → GitHub Issues (`scripts/beads-sync-github.sh`).
-3. Creates a worktree + branch `claude/<change-id>-phase-<N>`.
-4. For each ready task in the phase, runs the pipeline:
-   - **coder** subagent implements the one task and commits.
-   - **tester** subagent runs `go test` / `xcodebuild test`; failures loop back
-     to the coder (max 3 rounds).
-   - **reviewer** subagent reviews the diff for correctness + HIPAA/security;
-     blocking findings loop back to the coder.
-   - On pass+approve: close the bead, close the mirrored issue, tick the task.
-5. Pushes the branch and opens **one PR for the phase**. You review and merge.
+1. Checks preconditions, including that the previous phase's PR is merged.
+2. Seeds beads from `tasks.md` (`scripts/openspec-to-beads.sh`) — idempotent.
+3. Creates a worktree + branch `claude/<change-id>-phase-<N>` from `main`.
+4. For each ready task in the phase, the **coder** subagent implements the one
+   task, runs `scripts/test.sh` until it passes, and commits.
+5. Gates the phase once, at the end:
+   - `scripts/test.sh` runs `go build` / `go vet` / `go test` and/or
+     `xcodebuild test`, depending on what changed. No model is involved.
+   - The **reviewer** subagent reviews the whole phase diff for correctness +
+     HIPAA/security. Blocking findings go back to the coder (max 3 rounds).
+   - On pass+approve: close the phase's beads.
+6. Pushes the branch and opens **one PR for the phase**, targeting `main`. You
+   review and merge, then run the next phase.
 
 The orchestrator runs autonomously and only stops for genuine forks — an
-ambiguous spec, an architectural decision, or a task that fails after 3
-repair rounds.
+ambiguous spec, an architectural decision, a blocked environment, or a phase
+that fails its gate after 3 repair rounds.
 
 ## The pieces
 
 | Path | Role |
 |---|---|
 | `.claude/commands/run-phase.md` | The orchestrator playbook (the one command you run) |
-| `.claude/agents/coder.md` | Implements one bead, commits; never pushes |
-| `.claude/agents/tester.md` | Runs the test suites; returns PASS/FAIL |
-| `.claude/agents/reviewer.md` | Correctness + HIPAA/security review of the diff |
+| `.claude/agents/coder.md` | Implements one bead, runs `scripts/test.sh`, commits; never pushes |
+| `.claude/agents/reviewer.md` | Correctness + HIPAA/security review of the phase diff |
+| `scripts/test.sh` | Runs the suites relevant to the changed files; the phase gate |
 | `scripts/dev-bootstrap.sh` | One-time Mac mini environment setup |
 | `scripts/openspec-to-beads.sh` | `tasks.md` → beads graph (idempotent) |
-| `scripts/beads-sync-github.sh` | beads ↔ GitHub Issues mirror |
-| `.beads/github-map.tsv` | Committed bead-id → issue-number mapping |
+
+Retired: the per-task `tester` subagent (replaced by `scripts/test.sh`) and
+the beads → GitHub Issues mirror (`scripts/beads-sync-github.sh`,
+`.beads/github-map.tsv`). The script is kept but no longer called.
+
+## Small fixes
+
+A standalone bug fix does not need a proposal or `/run-phase`. Use a plain
+branch and PR; CI runs the same suites.
 
 ## Conventions & guardrails
 
 - **Don't bypass the pipeline.** To implement a phase, use `/run-phase`; don't
-  invoke the coder/tester/reviewer subagents by hand. The orchestrator owns
-  git, beads, the GitHub mirror, and the ship decision.
-- **One PR per phase.** Branch is `claude/<change-id>-phase-<N>`; the
+  invoke the coder/reviewer subagents by hand. The orchestrator owns
+  git, beads, the phase gate, and the ship decision.
+- **One PR per phase, merged before the next.** Branch is
+  `claude/<change-id>-phase-<N>` off `main`; phases are not stacked. The
   orchestrator never pushes to `main` and never force-pushes.
 - **HIPAA is enforced at review time.** PHI must never reach logs, audit
   metadata, or error strings; every store query is tenant-scoped. The reviewer
   treats any violation as blocking.
-- **beads is the source of truth** for task state; the GitHub mirror is
-  one-way (beads → GitHub).
+- **beads is the source of truth** for task state.
 
 ## First-run caveat
 
 The helper scripts target the documented `bd` interface but were authored
 without a live `bd` to test against. On first run, confirm the flags against
 your installed version (`bd --help`, `bd create --help`, `bd ready --help`)
-and adjust the three scripts if a flag name differs — they're deliberately
+and adjust the scripts if a flag name differs — they're deliberately
 small and readable for exactly this reason.

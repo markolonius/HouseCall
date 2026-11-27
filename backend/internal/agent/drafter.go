@@ -318,26 +318,31 @@ func (d *Drafter) writeTriageFailureAudit(ctx context.Context, tenantID store.Te
 // nor a physician can ever receive a reference to a message that does not
 // yet exist in the DB.
 func (d *Drafter) runEmergentTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
-	// Step 1: persist the fixed emergency-referral message as an
+	// Step 1: persist the fixed emergency-referral message (a failure is
+	// handled after the audit and physician notification below) as an
 	// assistant-role message so the iOS client can retrieve it via
 	// GET /api/conversations/{id}/messages.
-	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", EmergencyReferralMessage)
-	if err != nil {
-		return err
-	}
+	msg, saveErr := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", EmergencyReferralMessage)
 
 	// Step 2: write the audit event. Metadata contains identifiers only — no
 	// PHI, no message content (the message is fixed text, but the pattern is
-	// kept consistent with the rest of the drafter).
+	// kept consistent with the rest of the drafter). When the message could
+	// not be saved there is no message_id; the event still records the
+	// emergent triage so the trail is honest about what happened.
+	auditMeta := map[string]any{
+		"conversation_id": conv.ID.String(),
+		"patient_id":      patient.ID.String(),
+	}
+	if saveErr == nil {
+		auditMeta["message_id"] = msg.ID.String()
+	} else {
+		auditMeta["referral_message_saved"] = false
+	}
 	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
 		ActorType: string(domain.ActorAgent),
 		ActorID:   nil, // agent has no user UUID
 		EventType: "agent.emergent_triage",
-		Metadata: mustMarshalJSON(map[string]any{
-			"conversation_id": conv.ID.String(),
-			"patient_id":      patient.ID.String(),
-			"message_id":      msg.ID.String(),
-		}),
+		Metadata:  mustMarshalJSON(auditMeta),
 	}); auditErr != nil {
 		// A failed audit write must not prevent the referral or the urgent
 		// notification from firing — log the error type only (never the
@@ -345,9 +350,10 @@ func (d *Drafter) runEmergentTurn(ctx context.Context, tenantID store.TenantID, 
 		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
 	}
 
-	// Step 3: emit the urgent queue.updated variant to physicians AFTER the
-	// message is durably committed. Payload carries identifiers plus a
-	// priority flag only — no PHI.
+	// Step 3: emit the urgent queue.updated variant to physicians. It fires
+	// even when saving the referral message failed — a patient with a
+	// suspected emergency must still reach a physician. Payload carries
+	// identifiers plus a priority flag only — no PHI.
 	d.notifier.SendToPhysicians(tenantID.String(), mustMarshalJSON(map[string]any{
 		"type": "queue.updated",
 		"data": map[string]any{
@@ -355,6 +361,12 @@ func (d *Drafter) runEmergentTurn(ctx context.Context, tenantID store.TenantID, 
 			"priority":        "urgent",
 		},
 	}))
+
+	if saveErr != nil {
+		// No message exists to point the patient client at; surface the error
+		// so DraftAsync records the failure.
+		return saveErr
+	}
 
 	// Step 4: push the referral to the patient over WS. The payload is IDs
 	// only so no PHI crosses the notification channel; the client fetches

@@ -1264,16 +1264,8 @@ struct CloudSyncTests {
             syncCoordinator: coordinator
         )
 
-        // Pre-condition: isStreaming starts false.
-        #expect(service.isStreaming == false, "isStreaming must start false")
-
         try await service.loadConversation(convLocalId)
         try await service.sendMessage(conversationId: convLocalId, content: "cloud route check")
-
-        // isStreaming must still be false — the cloud path returns before
-        // `streamAssistantTurn` can set it to true.
-        #expect(service.isStreaming == false,
-                "isStreaming must remain false when the cloud coordinator path is taken")
 
         // The user message must still be persisted (cloud path saves first, then POSTs).
         let allMessages = try messageRepo.fetchAllMessages(conversationId: convLocalId)
@@ -1566,12 +1558,15 @@ struct CloudSyncTests {
         try await service.sendMessage(conversationId: convLocalId, content: "hi")
         #expect(coordinator.requiresReauth == true, "401 must flip requiresReauth")
 
-        // A subsequent send must not loop or reset the flag.
-        try await service.sendMessage(conversationId: convLocalId, content: "again")
+        // A subsequent send is refused (read-only) without another POST and
+        // without resetting the flag.
+        await #expect(throws: AIConversationError.signInRequired) {
+            try await service.sendMessage(conversationId: convLocalId, content: "again")
+        }
         #expect(coordinator.requiresReauth == true, "requiresReauth stays set (no reset)")
 
-        // Exactly one POST per send attempt — no internal retry loop on 401.
-        #expect(callCount.count == 2, "each send makes one POST attempt; 401 must not retry")
+        // Exactly one POST in total — no internal retry loop on 401.
+        #expect(callCount.count == 1, "401 must not retry and the read-only send makes no POST")
     }
 
     // MARK: - ensureServerConversation (HouseCall-zkeg)

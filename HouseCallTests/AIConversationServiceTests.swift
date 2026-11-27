@@ -289,7 +289,6 @@ struct AIConversationServiceTests {
         // Nothing was persisted, queued, or streamed: no network dependency exists
         // in this configuration and no message left the device.
         #expect(service.messages.isEmpty)
-        #expect(service.isStreaming == false)
         let messageRepo = CoreDataMessageRepository(
             context: context,
             encryptionManager: EncryptionManager.shared,
@@ -372,60 +371,7 @@ struct AIConversationServiceTests {
         // Verify state is cleared
         #expect(service.currentConversation == nil)
         #expect(service.messages.isEmpty)
-        #expect(service.isStreaming == false)
-        #expect(service.streamingText == "")
         #expect(service.errorMessage == nil)
-    }
-
-    @Test("Cancel streaming updates state")
-    func testCancelStreaming() async throws {
-        let context = createInMemoryContext()
-        let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
-
-        // Create conversation
-        let conversation = try await service.createConversation()
-
-        // Simulate streaming state
-        // (In a real scenario, this would be set during an actual streaming request)
-
-        // Cancel streaming
-        service.cancelStreaming()
-
-        // Verify state is reset
-        #expect(service.isStreaming == false)
-        #expect(service.streamingMessageId == nil)
-        #expect(service.streamingText == "")
-    }
-
-    // MARK: - Error Handling Tests
-
-    @Test("Published error message is accessible")
-    func testErrorMessageProperty() async throws {
-        let context = createInMemoryContext()
-        let userId = UUID()
-        let service = createTestService(context: context, userId: userId)
-
-        // Initially no error
-        #expect(service.errorMessage == nil)
-
-        // Trigger an error (try to send to non-existent conversation)
-        do {
-            try await service.sendMessage(conversationId: UUID(), content: "Test")
-        } catch {
-            // Expected
-        }
-
-        // Error message should be cleared on next successful operation start
-        let conversation = try await service.createConversation()
-        do {
-            try await service.sendMessage(conversationId: conversation.id!, content: "Test")
-        } catch {
-            // Expected, but error should be cleared at start
-        }
-
-        // At start of sendMessage, errorMessage is cleared
-        // So we can't reliably test the exact error message here
     }
 
     // MARK: - Published Properties Tests
@@ -439,9 +385,6 @@ struct AIConversationServiceTests {
         // Verify initial state
         #expect(service.currentConversation == nil)
         #expect(service.messages.isEmpty)
-        #expect(service.isStreaming == false)
-        #expect(service.streamingText == "")
-        #expect(service.streamingMessageId == nil)
 
         // Create conversation
         let conversation = try await service.createConversation()

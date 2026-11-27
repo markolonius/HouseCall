@@ -21,17 +21,28 @@ class ConversationViewModel: ObservableObject {
     /// Messages in the current conversation
     @Published private(set) var messages: [Message] = []
 
-    /// Whether an AI response is currently streaming
-    @Published private(set) var isStreaming: Bool = false
-
     /// Current error message to display in UI
     @Published private(set) var errorMessage: String?
 
-    /// Current streaming response text
-    @Published private(set) var streamingText: String = ""
+    /// `.signInRequired` puts the chat in read-only mode (history visible,
+    /// input disabled, sign-in offered). The local session stays active.
+    @Published private(set) var cloudState: CloudSessionState = .signInRequired
 
-    /// ID of the message currently being streamed
-    @Published private(set) var streamingMessageId: UUID?
+    /// True while a sign-in attempt is in flight.
+    @Published private(set) var isSigningIn: Bool = false
+
+    /// Sign-in failure message shown in the sign-in sheet (never contains PHI).
+    @Published private(set) var signInError: String?
+
+    /// Re-authenticates against the Core API and returns a started coordinator.
+    /// Injected by the app; `nil` disables the sign-in action.
+    typealias CloudSignIn = (_ password: String) async throws -> CloudSyncCoordinator
+    private let cloudSignIn: CloudSignIn?
+
+    /// Email of the current session, prefilled in the sign-in sheet.
+    let signInEmail: String
+
+    var isReadOnly: Bool { cloudState == .signInRequired }
 
     // MARK: - Dependencies
 
@@ -42,6 +53,7 @@ class ConversationViewModel: ObservableObject {
     private let userId: UUID
     private let conversationId: UUID
     private var cancellables = Set<AnyCancellable>()
+    private var coordinatorCancellables = Set<AnyCancellable>()
 
     // Last sent message for retry functionality
     private var lastMessageContent: String?
@@ -56,8 +68,12 @@ class ConversationViewModel: ObservableObject {
         conversationId: UUID,
         conversationRepository: ConversationRepositoryProtocol,
         messageRepository: MessageRepositoryProtocol,
-        aiService: AIConversationService? = nil
+        aiService: AIConversationService? = nil,
+        signInEmail: String = "",
+        cloudSignIn: CloudSignIn? = nil
     ) {
+        self.signInEmail = signInEmail
+        self.cloudSignIn = cloudSignIn
         self.userId = userId
         self.conversationId = conversationId
         self.conversationRepository = conversationRepository
@@ -158,27 +174,9 @@ class ConversationViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Observe streaming state
-        aiService.$isStreaming
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isStreaming in
-                self?.isStreaming = isStreaming
-            }
-            .store(in: &cancellables)
-
-        // Observe streaming text
-        aiService.$streamingText
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] text in
-                self?.streamingText = text
-            }
-            .store(in: &cancellables)
-
-        // Observe streaming message ID
-        aiService.$streamingMessageId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] messageId in
-                self?.streamingMessageId = messageId
+        aiService.$cloudState
+            .sink { [weak self] state in
+                self?.cloudState = state
             }
             .store(in: &cancellables)
 
@@ -192,34 +190,61 @@ class ConversationViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        if let coordinator = aiService.syncCoordinator {
+            observeCoordinator(coordinator)
+        }
+    }
+
+    /// Subscribes to a coordinator's delivered cards / synced-message counter.
+    private func observeCoordinator(_ coordinator: CloudSyncCoordinator) {
+        coordinatorCancellables.removeAll()
         // Observe delivered recommendation cards from the sync coordinator.
         // Filter to cards belonging to this conversation only.
-        if let coordinator = aiService.syncCoordinator {
-            coordinator.$deliveredCards
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] allCards in
-                    guard let self else { return }
-                    self.recommendationCards = allCards.filter {
-                        $0.conversationLocalId == self.conversationId
-                    }
-                    // Reload messages so the newly-persisted assistant message
-                    // from the recommendation handler appears in the list.
-                    if !self.recommendationCards.isEmpty {
-                        self.loadMessages()
-                    }
+        coordinator.$deliveredCards
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] allCards in
+                guard let self else { return }
+                self.recommendationCards = allCards.filter {
+                    $0.conversationLocalId == self.conversationId
                 }
-                .store(in: &cancellables)
+                // Reload messages so the newly-persisted assistant message
+                // from the recommendation handler appears in the list.
+                if !self.recommendationCards.isEmpty {
+                    self.loadMessages()
+                }
+            }
+            .store(in: &coordinatorCancellables)
 
-            // Observe syncedMessageCount so agent interview questions that
-            // arrive via `message.created` (no card model) also trigger a
-            // message list refresh.
-            coordinator.$syncedMessageCount
-                .receive(on: DispatchQueue.main)
-                .dropFirst()  // skip initial 0 value on subscription
-                .sink { [weak self] _ in
-                    self?.loadMessages()
-                }
-                .store(in: &cancellables)
+        // Observe syncedMessageCount so agent interview questions that
+        // arrive via `message.created` (no card model) also trigger a
+        // message list refresh.
+        coordinator.$syncedMessageCount
+            .receive(on: DispatchQueue.main)
+            .dropFirst()  // skip initial 0 value on subscription
+            .sink { [weak self] _ in
+                self?.loadMessages()
+            }
+            .store(in: &coordinatorCancellables)
+    }
+
+    /// Signs in again with the Core API and activates cloud sync in place.
+    /// Returns true on success. The local session is never touched on failure.
+    @discardableResult
+    func signIn(password: String) async -> Bool {
+        guard let cloudSignIn, !isSigningIn else { return false }
+        isSigningIn = true
+        signInError = nil
+        defer { isSigningIn = false }
+        do {
+            let coordinator = try await cloudSignIn(password)
+            aiService.activateCloud(coordinator)
+            observeCoordinator(coordinator)
+            errorMessage = nil
+            loadMessages()
+            return true
+        } catch {
+            signInError = "Unable to sign in. Check your password and connection."
+            return false
         }
     }
 

@@ -612,7 +612,6 @@ struct AIChatIntegrationTests {
         #expect(userMessages.count == 1)
         #expect(assistantMessages.isEmpty)
         #expect(userMessages[0].syncState == "pending")
-        #expect(aiService.isStreaming == false)
 
         let decryptedUserContent = try messageRepo.decryptMessageContent(userMessages[0])
         #expect(decryptedUserContent.contains("headache"))
@@ -824,7 +823,6 @@ struct AIChatIntegrationTests {
             )
         }
 
-        #expect(signedOut.isStreaming == false)
         #expect(signedOut.errorMessage != nil)
         let stored = try components.messageRepo.fetchAllMessages(conversationId: conversation.id!)
         #expect(stored.isEmpty)

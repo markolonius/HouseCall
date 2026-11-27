@@ -135,6 +135,8 @@ private struct AutoLaunchChatView: View {
     let conversationRepository: ConversationRepositoryProtocol
     let messageRepository: MessageRepositoryProtocol
 
+    @EnvironmentObject private var authService: AuthenticationService
+
     private enum LaunchState {
         case loading
         case ready
@@ -229,6 +231,34 @@ private struct AutoLaunchChatView: View {
             )
             coordinator?.start()
 
+            // Read-only recovery: with no valid token (missing at launch, or
+            // rejected with a 401 later) the chat offers sign-in. A successful
+            // Core API login stores a fresh JWT; the coordinator is then built
+            // and started in place, without restarting the app. The local
+            // session is never ended by this path.
+            let convRepo = conversationRepository
+            let msgRepo = messageRepository
+            let auth = authService
+            let cloudSignIn: ConversationViewModel.CloudSignIn = { password in
+                guard let email = auth.getCurrentUser()?.email else {
+                    throw AuthenticationError.noActiveSession
+                }
+                _ = try await auth.login(email: email, credential: password, authMethod: .password)
+                guard let fresh = buildCloudSyncCoordinator(
+                    conversationRepository: convRepo,
+                    messageRepository: msgRepo
+                ) else {
+                    // Core API unreachable: offline fallback gave no token.
+                    throw AuthenticationError.loginFailed("Unable to reach the server.")
+                }
+                fresh.start()
+                await fresh.ensureServerConversation(
+                    localConversationId: conversationId,
+                    title: "Consultation"
+                )
+                return fresh
+            }
+
             // In cloud mode, ensure the conversation exists server-side so the
             // patient's messages can be POSTed (the send path requires a
             // serverId). Generic, non-PHI title.
@@ -244,7 +274,9 @@ private struct AutoLaunchChatView: View {
                 conversationId: conversationId,
                 conversationRepository: conversationRepository,
                 messageRepository: messageRepository,
-                aiService: aiService
+                aiService: aiService,
+                signInEmail: authService.getCurrentUser()?.email ?? "",
+                cloudSignIn: cloudSignIn
             )
             launchState = .ready
         } catch {

@@ -17,7 +17,7 @@
 
 ## Phase 2 — Cloud-only chat and sign-in
 
-- [ ] 2.1 Require Core API configuration
+- [x] 2.1 Require Core API configuration
   - `AuthenticationService` has no local-only register/login path; with no `CoreAPIBaseURL`/`CoreAPITenantID` the login screen shows a configuration error.
   - Unit tests cover the unconfigured build.
 - [ ] 2.2 Read-only chat without a valid token

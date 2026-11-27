@@ -36,10 +36,6 @@ const NewComplaintMarker = "<NEW_COMPLAINT>"
 // EmergentMarker is the sentinel token the triage model emits — and nothing
 // else for that turn — when it classifies the patient's most recent message
 // as an emergency presentation warranting immediate emergency care (see
-// TriageSystemPromptVersion identifies the current text of TriageSystemPrompt. Bump it whenever the
-// prompt text changes; prompt_version_test.go fails otherwise.
-const TriageSystemPromptVersion = "triage/2026-11-27"
-
 // TriageSystemPrompt and
 // openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
 // "Red-Flag Triage"). The agent runtime detects this marker server-side
@@ -57,6 +53,10 @@ const EmergentMarker = "<EMERGENT>"
 // as NOT an emergency presentation, so the normal interview turn should
 // proceed. See EmergentMarker for the shared marker-parsing rationale.
 const RoutineMarker = "<ROUTINE>"
+
+// TriageSystemPromptVersion identifies the current text of TriageSystemPrompt. Bump it whenever the
+// prompt text changes; prompt_version_test.go fails otherwise.
+const TriageSystemPromptVersion = "triage/2026-11-27"
 
 // TriageSystemPrompt instructs the model to act as a cheap, single-purpose
 // classifier: given the full conversation so far, decide whether the

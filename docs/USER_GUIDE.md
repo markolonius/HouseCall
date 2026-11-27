@@ -38,7 +38,7 @@ The app will automatically log you out after 5 minutes of inactivity for securit
 ### Signing In Again When Chat Is Read-Only
 
 Sometimes you can read your earlier conversations but cannot send new messages. This happens when:
-- you signed in with Face ID or Touch ID (chat is usually read-only after this, because a leftover sign-in can remain if the app was force-quit)
+- you signed in with Face ID or Touch ID. Chat is usually read-only after this; if the app was force-quit, an earlier sign-in may still be active.
 - your sign-in with HouseCall expired or was rejected
 - you signed in while your phone could not reach the internet
 
@@ -86,7 +86,7 @@ Replies come from the HouseCall assistant. The assistant asks you questions abou
 
 The assistant will:
 - ✅ Ask you questions about your symptoms, one at a time
-- ✅ Is instructed to tell you to call 911 if you describe an emergency (but do not rely on it; call 911 yourself)
+- ✅ Be instructed to tell you to call 911 if you describe an emergency (but do not rely on it; call 911 yourself)
 - ✅ Prepare an assessment and care plan, which a physician reviews and approves before you see it
 
 The assistant will NOT:
@@ -179,7 +179,7 @@ Account deletion is not yet available in the app. To ask about your data, contac
 A: HouseCall is free to download. There is nothing to set up for AI access; the assistant is part of the service.
 
 **Q: Can I use HouseCall without an internet connection?**
-A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline but still signed in, chat stays active, but sending fails until you reconnect. If your sign-in has expired, or you signed in while offline, the chat is read-only until you sign in again.
+A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline but still signed in, chat stays active, and your message is saved and sent automatically once you're back online. If your sign-in has expired, or you signed in while offline, the chat is read-only until you sign in again.
 
 **Q: How long are my conversations stored?**
 A: Your messages are stored encrypted on your device and also on HouseCall's servers. The app does not currently let you delete conversations. Contact support with questions about your data.

@@ -6,7 +6,7 @@
   - `sendMessage` always routes through `CloudSyncCoordinator`; the service no longer takes an `LLMProviderConfigManager`.
   - When no coordinator is available, sending fails with a sign-in-required error and nothing leaves the device.
   - Unit test: with no coordinator, `sendMessage` makes no network call and surfaces the sign-in error.
-- [ ] 1.2 Delete the on-device provider stack
+- [x] 1.2 Delete the on-device provider stack
   - Delete `Core/Services/LLMProviders/`, `LLMProvider.swift`, `LLMProviderConfigManager.swift`, `Features/Settings/`.
   - Delete their tests (`OpenAIProviderTests`, `ClaudeProviderTests`, `CustomProviderTests`, `SSEParserTests`, `LLMProviderConfigManagerTests`, provider cases in `APIKeySecurityTests`).
   - Remove the `LLM_*` keys from `Info.plist`, `Base.xcconfig` and `Secrets.example.xcconfig`.

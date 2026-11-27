@@ -266,7 +266,7 @@ func (d *Drafter) generateTriageTurn(ctx context.Context, tenantID store.TenantI
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnTriage, modelMsgs)
 }
 
 // writeTriageFailureAudit records a triage classification failure — either a
@@ -523,7 +523,7 @@ func (d *Drafter) generateRelayTurn(ctx context.Context, tenantID store.TenantID
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnRelay, modelMsgs)
 }
 
 // deliverRelayReply persists a PLAN_DELIVERED relay reply — an explanation
@@ -769,7 +769,7 @@ func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.Tena
 		})
 	}
 
-	return d.client.Complete(ctx, modelMsgs)
+	return completeFor(ctx, d.client, TurnInterview, modelMsgs)
 }
 
 // interviewTurnCapReached reports whether the number of assistant-role turns
@@ -978,7 +978,7 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 	var soapPayload domain.SOAPPayload
 	var parseErr error
 	for attempt := 0; attempt < soapDraftMaxAttempts; attempt++ {
-		text, err = d.client.Complete(ctx, modelMsgs)
+		text, err = completeFor(ctx, d.client, TurnSOAP, modelMsgs)
 		if err != nil {
 			// Non-nil error means no valid model output — do NOT persist.
 			return err

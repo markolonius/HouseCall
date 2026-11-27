@@ -106,6 +106,14 @@ func runServe(dsn, addr string) error {
 	//    agent.PatientNotifier (via rt.SendToPatient).
 	agentCfg := agent.ClientConfigFromEnv()
 	log.Printf("agent: model config %s", agentCfg)
+	if err := agent.ValidateEndpoint(agentCfg.BaseURL, os.Getenv("APP_ENV")); err != nil {
+		return fmt.Errorf("configuration error: %w", err)
+	}
+	checkCtx, cancelCheck := context.WithTimeout(context.Background(), 5*time.Second)
+	if warn := agent.CheckEndpoint(checkCtx, agentCfg, nil); warn != "" {
+		log.Print(warn)
+	}
+	cancelCheck()
 	drafter := agent.NewDrafter(agent.NewClient(agentCfg, nil), s, rt, rt)
 
 	// 3. Wire the drafter into the Router before the server starts accepting

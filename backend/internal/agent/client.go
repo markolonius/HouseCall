@@ -109,17 +109,20 @@ type Message struct {
 //
 // The zero value is not valid; construct via NewClient.
 type Client struct {
-	cfg  ClientConfig
-	http *http.Client
+	cfg      ClientConfig
+	http     *http.Client
+	timeouts Timeouts
 }
 
 // NewClient creates a Client. If httpClient is nil a default client with
 // DefaultTimeout is used.
 func NewClient(cfg ClientConfig, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout}
+		// No client-level timeout: per-call deadlines come from the context
+		// (see CompleteFor), so long turns such as SOAP drafts are not capped.
+		httpClient = &http.Client{}
 	}
-	return &Client{cfg: cfg, http: httpClient}
+	return &Client{cfg: cfg, http: httpClient, timeouts: TimeoutsFromEnv()}
 }
 
 // chatRequest is the subset of the OpenAI Chat Completions request body used
@@ -174,6 +177,18 @@ func (e *ParseError) Error() string {
 // transport / context error. The caller MUST NOT treat a non-nil error as
 // clinical content — see the package-level failure contract.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
+	return c.CompleteFor(ctx, TurnDefault, messages)
+}
+
+// CompleteFor is Complete with the per-turn-type timeout applied. The timeout
+// is applied as a context deadline only when ctx has none; an unset turn type
+// uses DefaultTimeout.
+func (c *Client) CompleteFor(ctx context.Context, turn TurnType, messages []Message) (string, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeouts.For(turn))
+		defer cancel()
+	}
 	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: messages})
 	if err != nil {
 		// json.Marshal failure is a programming error; wrap for context.

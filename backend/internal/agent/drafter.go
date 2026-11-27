@@ -648,6 +648,16 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 		return err
 	}
 
+	// The cap counts only the questions asked in the CURRENT interview, i.e.
+	// assistant messages after the conversation last entered INTAKE. Acks,
+	// reminders, relay replies and earlier interviews' questions must not
+	// count, or a re-interview (after a rejection or a new complaint) would be
+	// skipped. See store.LatestIntakeEntryAt for the boundary.
+	priorMsgs, err = d.currentInterviewMessages(ctx, tenantID, conv.ID, priorMsgs)
+	if err != nil {
+		return err
+	}
+
 	outcome := decideInterviewAction(raw, priorMsgs, DefaultMaxInterviewTurns)
 
 	if outcome.ReadyForNote {
@@ -662,6 +672,25 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 	// Interview continues: deliver the next question to the patient. No
 	// recommendation row is created; this is non-clinical data collection.
 	return d.deliverInterviewQuestion(ctx, tenantID, conv, patient, outcome.Question)
+}
+
+// currentInterviewMessages drops messages created at or before the
+// conversation's latest INTAKE entry boundary, leaving the current interview.
+func (d *Drafter) currentInterviewMessages(ctx context.Context, tenantID store.TenantID, convID uuid.UUID, msgs []store.Message) ([]store.Message, error) {
+	boundary, ok, err := d.store.LatestIntakeEntryAt(ctx, tenantID, convID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return msgs, nil
+	}
+	out := make([]store.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.CreatedAt.After(boundary) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 // generateInterviewTurn assembles the full tenant-scoped conversation history

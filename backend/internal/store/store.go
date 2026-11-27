@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -406,6 +407,43 @@ func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, c
 		return "", false, nil
 	}
 	return reason, true, nil
+}
+
+// LatestIntakeEntryAt returns the timestamp of the most recent event that put
+// the conversation back into (or kept it out of) a fresh INTAKE interview:
+//
+//   - the latest recommendation commit (its created_at is the same
+//     transaction as the review-pending acknowledgement message, i.e. the end
+//     of the previous interview),
+//   - the latest REJECTED review (AWAITING_REVIEW → INTAKE), and
+//   - the latest agent.new_complaint_reopened_intake audit event
+//     (PLAN_DELIVERED → INTAKE).
+//
+// All three are written in the same transaction as the phase change they
+// describe, so they are reliable boundaries. ok is false when none exists (the
+// conversation's first interview). Messages strictly after the returned time
+// belong to the current interview. Tenant-scoped.
+func (s *Store) LatestIntakeEntryAt(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (at time.Time, ok bool, err error) {
+	var ts *time.Time
+	err = s.pool.QueryRow(ctx,
+		`SELECT GREATEST(
+		     (SELECT MAX(created_at) FROM recommendations
+		       WHERE tenant_id = $1 AND conversation_id = $2),
+		     (SELECT MAX(reviewed_at) FROM recommendations
+		       WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'REJECTED'),
+		     (SELECT MAX(created_at) FROM audit_events
+		       WHERE tenant_id = $1 AND event_type = 'agent.new_complaint_reopened_intake'
+		         AND metadata->>'conversation_id' = $2::text)
+		 )`,
+		tenant.UUID(), conversationID,
+	).Scan(&ts)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if ts == nil {
+		return time.Time{}, false, nil
+	}
+	return *ts, true, nil
 }
 
 // GetLatestDeliveredRecommendation returns the most recently reviewed

@@ -23,35 +23,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-HouseCall is a HIPAA-compliant SwiftUI iOS healthcare application using Core Data for encrypted persistence. The app provides secure user authentication with biometric support (Face ID/Touch ID), encrypted data storage, comprehensive audit logging, session management for healthcare data protection, and an AI-powered chat interface for patient interaction with health assistants.
+HouseCall is a HIPAA-compliant SwiftUI iOS healthcare application using Core Data for encrypted persistence. The app provides secure user authentication with biometric support (Face ID/Touch ID), encrypted data storage, comprehensive audit logging, session management for healthcare data protection, and a chat interface for patient interaction with the HouseCall health assistant. The iOS app is a cloud client: it never calls a model. All AI runs server-side in the Go agent runtime behind physician review.
 
 ## Build and Test Commands
+
+Prefer `scripts/test.sh` (the phase gate): it builds, vets and tests whichever of the Go backend and iOS app changed. It uses the `iPhone 17,OS=latest` simulator (override with `HOUSECALL_SIMULATOR`).
 
 ### Building the App
 ```bash
 # Build for iOS Simulator (Debug)
-xcodebuild -scheme HouseCall -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 15' build
+xcodebuild -scheme HouseCall -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' build
 
 # Build for iOS Simulator (Release)
-xcodebuild -scheme HouseCall -configuration Release -destination 'platform=iOS Simulator,name=iPhone 15' build
+xcodebuild -scheme HouseCall -configuration Release -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' build
 
 # Build and run (use Xcode or iOS Simulator)
 open HouseCall.xcodeproj  # Then Cmd+R in Xcode
 ```
 
+The app needs `CORE_API_BASE_URL` and `CORE_API_TENANT_ID` in `HouseCall/Config/Secrets.xcconfig` (copy from `Secrets.example.xcconfig`).
+
 ### Running Tests
 ```bash
 # Run all tests
-xcodebuild test -scheme HouseCall -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme HouseCall -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest'
 
 # Run unit tests only (HouseCallTests target)
-xcodebuild test -scheme HouseCall -only-testing:HouseCallTests -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme HouseCall -only-testing:HouseCallTests -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest'
 
 # Run UI tests only (HouseCallUITests target)
-xcodebuild test -scheme HouseCall -only-testing:HouseCallUITests -destination 'platform=iOS Simulator,name=iPhone 15'
-
-# Run a specific test
-xcodebuild test -scheme HouseCall -only-testing:HouseCallTests/HouseCallTests/example -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme HouseCall -only-testing:HouseCallUITests -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest'
 ```
 
 ### Clean Build
@@ -85,7 +86,7 @@ xcodebuild clean -scheme HouseCall
   - LocalAuthentication framework
   - Healthcare-appropriate authentication prompts
   - Biometric availability detection
-  - Graceful fallback to password/passcode
+  - Graceful fallback to password
 
 - **AuditLogger.swift**: HIPAA-compliant audit trail (45 CFR § 164.312(b))
   - All authentication events logged
@@ -95,7 +96,7 @@ xcodebuild clean -scheme HouseCall
 
 #### Data Access Layer (`Core/Persistence/`)
 - **UserRepository.swift**: User data access protocol
-  - Supports three authentication methods: password, passcode, biometric
+  - Supports two authentication methods: password, biometric
   - CRUD operations with encryption integration
   - Automatic audit logging
 
@@ -113,7 +114,7 @@ xcodebuild clean -scheme HouseCall
 #### Business Logic (`Core/Services/`)
 - **AuthenticationService.swift**: High-level authentication orchestration
   - User registration (async/await)
-  - Multi-method login (password/passcode/biometric)
+  - Email + password login against the Core API; biometric unlock of an existing session
   - Session management with 5-minute timeout
   - App lifecycle monitoring (background/foreground)
   - ObservableObject for SwiftUI integration
@@ -125,7 +126,6 @@ xcodebuild clean -scheme HouseCall
   - Create/read/update/delete conversations
   - User-specific conversation queries
   - Title encryption/decryption
-  - Provider switching support
   - Automatic audit logging
 
 - **CoreDataConversationRepository.swift**: Core Data implementation
@@ -137,64 +137,25 @@ xcodebuild clean -scheme HouseCall
 - **MessageRepository.swift**: Message data access protocol
   - Create/read/update/delete messages
   - Pagination support (limit/offset)
-  - Streaming message updates
+  - Message content updates
   - Content encryption/decryption
   - User ID retrieval for encryption
 
 - **CoreDataMessageRepository.swift**: Core Data implementation
   - Encrypted message content storage
-  - Streaming message update support
+  - Message update support
   - Efficient pagination queries
   - Conversation relationship management
 
-#### LLM Provider Layer (`Core/Services/LLMProviders/`)
-- **LLMProvider.swift**: Provider abstraction protocol
-  - `streamCompletion()` for streaming responses
-  - `cancelStreaming()` for request cancellation
-  - Provider type identification
-  - Configuration validation
-
-- **OpenAIProvider.swift**: OpenAI integration
-  - GPT-4, GPT-4-Turbo, GPT-3.5-Turbo support
-  - Server-Sent Events (SSE) streaming
-  - Bearer token authentication
-  - Rate limit and error handling
-  - Exponential backoff retry logic
-
-- **ClaudeProvider.swift**: Anthropic Claude integration
-  - Claude 3.7 Sonnet, Claude 3 Opus/Haiku support
-  - Anthropic SSE streaming format
-  - API key + version header authentication
-  - Claude-specific error handling
-
-- **CustomProvider.swift**: Self-hosted LLM support
-  - OpenAI-compatible endpoint support
-  - Ollama, llama.cpp, and custom servers
-  - Configurable base URL and authentication
-  - Flexible model selection
-
-- **SSEParser.swift**: Server-Sent Events parser
-  - Streaming chunk extraction
-  - Partial chunk buffering
-  - Multi-provider format support
-  - [DONE] marker detection
-
-- **LLMProviderConfigManager.swift**: Provider configuration
-  - API key storage in KeychainManager
-  - Model selection per provider
-  - Temperature and max_tokens configuration
-  - System prompt management
-  - Provider switching logic
-
-#### AI Conversation Service (`Core/Services/`)
-- **AIConversationService.swift**: High-level conversation orchestration
-  - Create conversations with provider selection
-  - Send messages with streaming responses
-  - Switch providers mid-conversation
-  - Incremental message updates
-  - Comprehensive error handling
+#### Cloud Client (`Core/Services/`, `Core/Services/Sync/`)
+The app never calls a model. All AI runs server-side in the Go agent runtime behind physician review. The app requires the Core API (`CORE_API_BASE_URL`, `CORE_API_TENANT_ID` in `Secrets.xcconfig`); an unconfigured build shows a configuration error and there are no local-only accounts.
+- **AIConversationService.swift**: Conversation orchestration
+  - Create conversations, save encrypted user messages, hand off to sync
+  - Assistant messages arrive whole (no streaming) and are stored encrypted
   - Audit logging integration
-  - ObservableObject for SwiftUI integration
+- **CoreAPIAuthClient.swift / CoreAPIConfig.swift**: Core API sign-in and build configuration
+- **CloudSyncCoordinator.swift / SyncClient.swift**: Syncs conversations and messages with the Core API; resumes without restart after re-sign-in
+- Without a valid token (expired/rejected, or after an offline sign-in) chat is read-only until the patient signs in again
 
 ### UI Layer
 
@@ -215,30 +176,26 @@ xcodebuild clean -scheme HouseCall
   - Accessibility support
 
 - **LoginView.swift**: User login
-  - Email + credential input
-  - Biometric toggle (Face ID/Touch ID)
-  - Auth method detection
+  - Email + password against the Core API
+  - Biometric unlock of a previously authenticated session
+  - Offline fallback for a previously signed-in patient
 
 #### Conversation Views (`Features/Conversation/Views/`)
 - **ConversationListView.swift**: Conversation list with navigation
   - Displays all user conversations (sorted by updatedAt)
   - Encrypted conversation titles (decrypted for display)
-  - Provider badges (OpenAI, Claude, Custom)
   - "New Chat" button in toolbar and empty state
   - Swipe-to-delete gesture
   - Navigation to ChatView on tap
   - Embedded ConversationListViewModel
 
-- **ChatView.swift**: Real-time chat interface
+- **ChatView.swift**: Chat interface
   - Scrollable message list with ScrollViewReader
-  - Message bubbles (user: right-aligned blue, AI: left-aligned gray)
-  - Auto-scroll to bottom during streaming
-  - Typing indicator animation
+  - Message bubbles (user: right-aligned blue, assistant: left-aligned gray)
+  - "Waiting for a reply" indicator while the agent answers
   - Message input with Send/Clear buttons
-  - Provider switcher menu in toolbar
+  - Read-only mode: "Sign in to send messages" banner with an in-place password sheet
   - Error banner with retry functionality
-  - Settings navigation
-  - System messages for provider switches
 
 - **MessageBubbleView.swift**: Message display component
   - User messages: right-aligned, blue background
@@ -248,18 +205,6 @@ xcodebuild clean -scheme HouseCall
   - Timestamp display on tap
   - VoiceOver accessibility labels
 
-#### Settings Views (`Features/Settings/Views/`)
-- **LLMProviderSettingsView.swift**: Provider configuration
-  - Provider selection picker (OpenAI, Claude, Custom)
-  - Secure API key input (masked text fields)
-  - Model selection per provider
-  - Custom endpoint URL for self-hosted providers
-  - Temperature slider (0.0 - 2.0)
-  - Max tokens slider (100 - 4000)
-  - Test Configuration button
-  - Save Settings button
-  - Settings persistence via UserDefaults and Keychain
-
 #### ViewModels
 **Authentication** (`Features/Authentication/ViewModels/`)
 - **SignUpViewModel**: Registration logic with real-time validation
@@ -268,19 +213,10 @@ xcodebuild clean -scheme HouseCall
 **Conversation** (`Features/Conversation/ViewModels/`)
 - **ConversationViewModel**: Chat view state management
   - Load conversations and messages
-  - Send messages with streaming handling
-  - Provider switching
+  - Send messages; "waiting for a reply" state while the agent answers
+  - Read-only state and in-place sign-in when there is no valid token
   - Error handling and retry logic
-  - Combine-based reactive updates
   - ObservableObject for SwiftUI integration
-
-**Settings** (`Features/Settings/ViewModels/`)
-- **LLMProviderSettingsViewModel**: Provider configuration management
-  - API key storage in Keychain
-  - Provider configuration persistence
-  - Model selection logic
-  - Configuration validation
-  - Test connection functionality
 
 #### Deprecated (`ContentView.swift`)
 - Template view from Xcode project creation
@@ -291,16 +227,16 @@ xcodebuild clean -scheme HouseCall
 
 #### Production Entities
 - **User**: Encrypted user accounts
-  - `id` (UUID), `email`, `encryptedPasswordHash`, `encryptedPasscodeHash`
+  - `id` (UUID), `email`, `encryptedPasswordHash`
   - `encryptedFullName`, `createdAt`, `lastLoginAt`
-  - `authMethod` (password/passcode/biometric), `accountStatus`
+  - `authMethod` (password/biometric), `accountStatus`
 
 - **Conversation**: Encrypted conversation storage
   - `id` (UUID), `userId` (UUID)
   - `encryptedTitle` (Binary Data) - encrypted conversation title
   - `createdAt` (Date), `updatedAt` (Date)
   - `isActive` (Boolean)
-  - `llmProvider` (String) - "openai", "claude", "custom"
+  - `llmProvider` (String) - legacy, unused; kept to avoid a Core Data migration
   - Relationship: `messages` (one-to-many with Message)
 
 - **Message**: Encrypted message storage
@@ -309,13 +245,13 @@ xcodebuild clean -scheme HouseCall
   - `encryptedContent` (Binary Data) - encrypted message text
   - `timestamp` (Date)
   - `tokenCount` (Int32)
-  - `streamingComplete` (Boolean)
+  - `streamingComplete` (Boolean) - legacy; assistant messages arrive whole
   - Relationship: `conversation` (many-to-one with Conversation)
 
 - **AuditLogEntry**: HIPAA compliance audit trail
   - `id`, `timestamp`, `eventType`, `userId`
   - `encryptedDetails`, `deviceId`
-  - Extended event types: conversation_created, conversation_accessed, conversation_deleted, message_created, ai_interaction, ai_interaction_failed, provider_switched, screenshot_detected
+  - Extended event types: conversation_created, conversation_accessed, conversation_deleted, message_created, screenshot_detected
 
 #### Legacy Entity (Deprecated)
 - **Item**: Template entity from Xcode project
@@ -325,14 +261,13 @@ xcodebuild clean -scheme HouseCall
 - **Validators.swift**: Comprehensive input validation
   - Email: RFC 5322 format (NSDataDetector)
   - Password: 12+ chars, uppercase, lowercase, number, special char
-  - Passcode: 6 digits, no sequential (123456), no repeated (111111)
   - Password strength assessment (0-5 scale)
   - Full name validation
 
 ### Testing Structure
 - **HouseCallTests**: Unit tests using Swift Testing framework
   - `@Test` macro syntax with `#expect(...)` assertions
-  - 265+ tests across 18 test files
+  - Run through `scripts/test.sh` (builds, vets, tests what changed)
   - 90%+ coverage for Core/Security, Core/Persistence, and Core/Services
   - In-memory Core Data for isolated testing
 
@@ -345,18 +280,12 @@ xcodebuild clean -scheme HouseCall
   - AuditLoggerTests.swift (20+ tests)
   - BiometricAuthManagerTests.swift (10+ tests)
   - SecurityTests.swift (15+ tests for encryption, screen protection, session timeout)
-  - APIKeySecurityTests.swift (25+ tests for API key storage and network security)
 
-  **AI Chat System Tests:**
-  - ConversationRepositoryTests.swift (18 tests for conversation CRUD with encryption)
-  - MessageRepositoryTests.swift (20 tests for message persistence, pagination, streaming)
-  - AIConversationServiceTests.swift (20+ tests for service orchestration)
-  - OpenAIProviderTests.swift (33 tests for OpenAI provider)
-  - ClaudeProviderTests.swift (30 tests for Claude provider)
-  - CustomProviderTests.swift (37 tests for custom/self-hosted provider)
-  - SSEParserTests.swift (12+ tests for Server-Sent Events parsing)
-  - LLMProviderConfigManagerTests.swift (15+ tests for provider configuration)
-  - IntegrationTests.swift (10+ AI chat integration tests)
+  **Chat and Cloud Client Tests:**
+  - ConversationRepositoryTests.swift, MessageRepositoryTests.swift (encrypted persistence, pagination)
+  - AIConversationServiceTests.swift, ConversationViewModelTests.swift, ReadOnlyChatTests.swift, ProviderlessConversationTests.swift
+  - Cloud*Tests.swift, CoreAPIAuthClientTests.swift, SyncClientTests.swift (Core API sign-in, offline fallback, sync)
+  - IntegrationTests.swift
 
 - **HouseCallUITests**: UI testing target for end-to-end tests
   - ChatInterfaceUITests.swift (30+ UI tests for chat interaction, navigation, accessibility)
@@ -369,29 +298,27 @@ xcodebuild clean -scheme HouseCall
   - All conversation titles encrypted
   - All message content encrypted
   - User-specific encryption keys via HKDF key derivation
-✅ **Encryption in Transit**: TLS 1.2+ for all LLM provider API calls
-  - OpenAI: HTTPS enforced (https://api.openai.com)
-  - Anthropic Claude: HTTPS enforced (https://api.anthropic.com)
-  - Custom providers: URL validation for secure protocols
+✅ **Encryption in Transit**: TLS 1.2+ for all Core API calls (the app talks only to the Core API, never to a model vendor)
 ✅ **Access Controls**: Session timeout, biometric authentication, authentication-gated chat
 ✅ **Audit Trail**: All events logged per 45 CFR § 164.312(b)
   - All authentication events
-  - All conversation operations (create, access, delete, provider switch)
-  - All AI interactions (start, complete, fail)
+  - All conversation operations (create, access, delete)
+  - Sign-in and sync events
   - Screenshot detection
   - No PHI in audit logs (event metadata only)
 ✅ **Screen Protection**: Screenshot detection and privacy overlay
   - Screenshot attempts logged to audit trail
   - Privacy screen displayed in app switcher
 ✅ **No PHI in Logs**: Error messages never expose sensitive data
-  - API keys never logged
+  - No model API keys exist on the device
   - Message content never logged
   - Encrypted audit log details
 
 ### Authentication Methods
-1. **Password**: 12+ characters, complexity requirements, PBKDF2 hashing
-2. **Passcode**: 6 digits, pattern validation (no 123456, 111111)
-3. **Biometric**: Face ID/Touch ID with no stored credentials
+1. **Password**: 12+ characters, complexity requirements; verified by the Core API (a local PBKDF2 hash supports the offline fallback)
+2. **Biometric**: Face ID/Touch ID unlocks a previously authenticated session; no stored credentials
+
+The 6-digit passcode method has been removed.
 
 ### Session Management
 - 5-minute inactivity timeout
@@ -407,24 +334,15 @@ let repository = CoreDataUserRepository()
 let user = try repository.createUser(
     email: "patient@example.com",
     password: "SecurePassword123!",
-    passcode: nil,
     fullName: "John Doe",
-    authMethod: .password
+    authMethod: .password,
+    id: patientId  // Core API patientId keeps the encryption identity stable
 )
 // Full name and password hash are automatically encrypted
 ```
 
-**Authenticating a user:**
-```swift
-let authService = AuthenticationService.shared
-let user = try await authService.login(
-    email: "patient@example.com",
-    credential: "SecurePassword123!",
-    authMethod: .password,
-    useBiometric: false
-)
-// Creates session, logs audit event
-```
+**Signing in:**
+Sign-in is email + password against the Core API (`CoreAPIAuthClient`); there are no local-only accounts. Face ID / Touch ID only unlocks a previously authenticated session. If the server is unreachable, a previously signed-in patient can still open their encrypted local history, read-only until a token is available.
 
 **Accessing decrypted user data:**
 ```swift
@@ -440,7 +358,6 @@ if let fullName = try? authService.getCurrentUserFullName() {
 let conversationRepo = CoreDataConversationRepository()
 let conversation = try conversationRepo.createConversation(
     userId: currentUserId,
-    provider: .openai,
     title: "Headache and fever symptoms"
 )
 // Title is automatically encrypted before storage
@@ -461,96 +378,13 @@ let messageRepo = CoreDataMessageRepository()
 let message = try messageRepo.createMessage(
     conversationId: conversationId,
     role: .user,
-    content: "I've had a headache for 3 days",
-    streamingComplete: true
+    content: "I've had a headache for 3 days"
 )
 // Content is automatically encrypted before storage
 ```
 
-**Streaming message updates (for AI responses):**
-```swift
-// Initial creation
-var message = try messageRepo.createMessage(
-    conversationId: conversationId,
-    role: .assistant,
-    content: "Based on",
-    streamingComplete: false
-)
-
-// Update as chunks arrive
-try messageRepo.updateMessageContent(
-    id: message.id,
-    content: "Based on your symptoms",
-    complete: false,
-    tokenCount: nil
-)
-
-// Mark complete when done
-try messageRepo.updateMessageContent(
-    id: message.id,
-    content: "Based on your symptoms, I recommend...",
-    complete: true,
-    tokenCount: 150
-)
-```
-
-**Sending a message via AIConversationService:**
-```swift
-let aiService = AIConversationService.shared
-try await aiService.sendMessage(
-    conversationId: conversationId,
-    content: "What are common cold symptoms?"
-)
-// Service handles:
-// - Encrypting user message
-// - Calling LLM provider
-// - Streaming AI response
-// - Encrypting AI message
-// - Audit logging
-```
-
-**Switching LLM providers:**
-```swift
-try await aiService.switchProvider(
-    conversationId: conversationId,
-    to: .claude
-)
-// Conversation context is maintained
-// System message added to conversation
-```
-
-### LLM Provider Configuration
-
-**Storing API keys securely:**
-```swift
-let configManager = LLMProviderConfigManager.shared
-
-// Set OpenAI API key (stored in Keychain)
-try configManager.setAPIKey("sk-...", for: .openai)
-
-// Set Claude API key
-try configManager.setAPIKey("sk-ant-...", for: .claude)
-
-// Configure custom provider
-try configManager.setCustomProviderConfig(
-    baseURL: "http://localhost:11434",
-    apiKey: nil,  // Optional for local servers
-    model: "llama3"
-)
-```
-
-**Retrieving provider configuration:**
-```swift
-let config = configManager.getConfig(for: .openai)
-print("Model: \(config.model)")
-print("Temperature: \(config.temperature)")
-print("Max tokens: \(config.maxTokens)")
-
-// API key retrieved securely from Keychain
-if let apiKey = try? configManager.getAPIKey(for: .openai) {
-    // Use API key for requests (never log it)
-}
-```
+**Sending a message:**
+`AIConversationService` saves the encrypted user message locally and `CloudSyncCoordinator` syncs it to the Core API. The assistant reply is produced server-side by the agent runtime, synced down whole, and stored encrypted. The app never calls a model and holds no model API keys.
 
 ## Development Notes
 
@@ -586,61 +420,35 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 
 ### AI Chat Issues
 
-#### "Unable to connect to AI service"
-**Symptoms**: Chat messages fail to send, error banner appears
+#### Chat is read-only ("Sign in to send messages")
+**Symptoms**: History is visible but sending is disabled and a banner asks the user to sign in
 **Causes**:
-- No network connectivity
-- API endpoint unreachable
-- Provider service downtime
+- Core API token expired or was rejected
+- Signed in through the offline fallback (server was unreachable)
 
 **Solutions**:
-1. Check network connection
-2. Verify API endpoint is reachable (use curl or Postman)
-3. Check provider status pages:
-   - OpenAI: https://status.openai.com
-   - Anthropic: https://status.anthropic.com
-4. Try switching to alternative provider in settings
+1. Tap the banner and enter the account password in the in-place sheet; sync resumes without restarting
+2. If it fails, check the network and that the Core API is reachable
 
-#### "API authentication failed. Check settings."
-**Symptoms**: Authentication error on message send
+#### Reply never arrives
+**Symptoms**: The "waiting for a reply" indicator stays up
 **Causes**:
-- Invalid or expired API key
-- Missing API key in Keychain
-- Incorrect API key format
+- The server-side agent is still working, or the Core API is unreachable
+- The reply is held for physician review
 
 **Solutions**:
-1. Navigate to Settings > LLM Provider Settings
-2. Verify API key is entered correctly
-3. Test configuration with "Test Configuration" button
-4. For OpenAI: Key should start with `sk-`
-5. For Claude: Key should start with `sk-ant-`
-6. Re-enter API key if needed
+1. Check network connectivity and Core API health
+2. Assistant messages arrive whole (no streaming) through sync
+3. Check the Go backend logs for the agent run
 
-#### "Rate limit exceeded. Wait 60s."
-**Symptoms**: API calls blocked with rate limit error
+#### Configuration error at launch
+**Symptoms**: App shows a Core API configuration error
 **Causes**:
-- Too many requests in short time period
-- Exceeded provider's rate limits
-- Free tier limitations
+- `CORE_API_BASE_URL` / `CORE_API_TENANT_ID` missing from `Secrets.xcconfig`
 
 **Solutions**:
-1. Wait for the countdown timer to complete
-2. Upgrade to paid tier for higher rate limits
-3. Configure rate limit handling in provider settings
-4. Switch to alternative provider temporarily
-
-#### Streaming Response Interrupted
-**Symptoms**: AI response stops mid-sentence, partial text displayed
-**Causes**:
-- Network connection lost during streaming
-- Provider timeout (>30 seconds)
-- App backgrounded during response
-
-**Solutions**:
-1. Tap "Retry" button to resend last message
-2. Check network stability
-3. Keep app in foreground during long responses
-4. Partial response is saved - visible in chat history
+1. Copy `HouseCall/Config/Secrets.example.xcconfig` to `Secrets.xcconfig` and fill in both values
+2. Rebuild
 
 #### "Unable to decrypt conversation/message"
 **Symptoms**: Conversation or message shows decryption error
@@ -656,40 +464,10 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 4. Delete conversation and start new one
 5. Report issue if problem continues
 
-### Provider Configuration Issues
-
-#### Custom Provider Not Working
-**Symptoms**: Custom/self-hosted provider fails to respond
-**Causes**:
-- Incorrect base URL
-- Provider not running
-- Incompatible API format
-
-**Solutions**:
-1. Verify custom server is running (e.g., `curl http://localhost:11434/v1/models`)
-2. Check base URL includes full path (e.g., `http://localhost:11434/v1/chat/completions`)
-3. Ensure provider follows OpenAI-compatible API format
-4. Check provider logs for errors
-5. Test with Ollama: `ollama serve` then use `http://localhost:11434`
-
-#### API Key Not Persisting
-**Symptoms**: API key is lost after app restart
-**Causes**:
-- Keychain access issues
-- App reinstallation
-- iOS Keychain bug
-
-**Solutions**:
-1. Re-enter API key in settings
-2. Tap "Save Settings" after entering key
-3. Restart app to verify persistence
-4. Check iOS Settings > Face ID & Passcode > Data Protection is enabled
-5. If issue persists, check device storage is not full
-
 ### Performance Issues
 
-#### Chat UI Laggy During Streaming
-**Symptoms**: Choppy scrolling, delayed text updates
+#### Chat UI Laggy With Long Histories
+**Symptoms**: Choppy scrolling in a long conversation
 **Causes**:
 - Too many messages in conversation
 - Device memory pressure
@@ -699,7 +477,6 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 1. Delete old conversations to reduce memory usage
 2. Restart app to clear caches
 3. Use pagination - load only recent messages
-4. Reduce max_tokens in provider settings for shorter responses
 
 #### App Crashes on Message Send
 **Symptoms**: App crashes when sending message
@@ -730,7 +507,7 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 3. Run tests individually to isolate failures
 4. Check test logs for specific error messages
 5. Ensure iOS Simulator is iPhone 15 (as specified in tests)
-
+5. Run through `scripts/test.sh` (iPhone 17 simulator, `OS=latest`)
 #### Keychain Tests Failing
 **Symptoms**: KeychainManager tests fail with error -25300 (item not found)
 **Causes**:
@@ -775,18 +552,6 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 
 ### Common Development Mistakes
 
-#### ❌ Don't: Store API keys in code
-```swift
-// WRONG - API key exposed in code
-let apiKey = "sk-1234567890abcdef"
-```
-
-#### ✅ Do: Store API keys in Keychain
-```swift
-// CORRECT - API key stored securely
-try configManager.setAPIKey(userProvidedKey, for: .openai)
-```
-
 #### ❌ Don't: Log PHI data
 ```swift
 // WRONG - Message content logged
@@ -820,7 +585,7 @@ For issues not covered in this guide:
 2. Review OpenSpec documentation: `/openspec/changes/add-ai-chat-interface/`
 3. Check test files for usage examples
 4. Review audit logs for error details
-5. Enable debug logging in provider implementations
+5. Run `scripts/test.sh` to build, vet and test what your change touched
 
 ## Automated Phase Workflow
 

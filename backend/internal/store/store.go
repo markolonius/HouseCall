@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -169,20 +170,20 @@ func (s *Store) CreateConversation(ctx context.Context, tenant TenantID, patient
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO conversations (tenant_id, patient_id, title)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, tenant_id, patient_id, title, created_at, updated_at`,
+		 RETURNING id, tenant_id, patient_id, title, care_phase, created_at, updated_at`,
 		tenant.UUID(), patientID, title,
-	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
 func (s *Store) GetConversation(ctx context.Context, tenant TenantID, id uuid.UUID) (Conversation, error) {
 	var c Conversation
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, patient_id, title, created_at, updated_at
+		`SELECT id, tenant_id, patient_id, title, care_phase, created_at, updated_at
 		   FROM conversations
 		  WHERE tenant_id = $1 AND id = $2`,
 		tenant.UUID(), id,
-	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	).Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Conversation{}, ErrNotFound
 	}
@@ -191,7 +192,7 @@ func (s *Store) GetConversation(ctx context.Context, tenant TenantID, id uuid.UU
 
 func (s *Store) ListConversationsByPatient(ctx context.Context, tenant TenantID, patientID uuid.UUID) ([]Conversation, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tenant_id, patient_id, title, created_at, updated_at
+		`SELECT id, tenant_id, patient_id, title, care_phase, created_at, updated_at
 		   FROM conversations
 		  WHERE tenant_id = $1 AND patient_id = $2
 		  ORDER BY updated_at DESC`,
@@ -204,7 +205,7 @@ func (s *Store) ListConversationsByPatient(ctx context.Context, tenant TenantID,
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.TenantID, &c.PatientID, &c.Title, &c.CarePhase, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -362,6 +363,114 @@ func (s *Store) ListRecommendationsByState(ctx context.Context, tenant TenantID,
 	return out, rows.Err()
 }
 
+// GetLatestRejectionReason returns the rejection reason of the most recently
+// reviewed REJECTED recommendation for a conversation, but only when that
+// rejection is still the conversation's latest reviewed outcome — i.e. no
+// DELIVERED recommendation for the same conversation was reviewed more
+// recently. A later delivery means the plan was subsequently
+// approved/modified and delivered, so an earlier rejection is stale and no
+// longer useful reviewer guidance. Returns ok == false when there is no
+// rejection at all, or the newest rejection is older than a later delivery.
+// Used by the agent drafter (task 3.3) to inject reviewer guidance into the
+// interview prompt — never into any patient-facing message.
+func (s *Store) GetLatestRejectionReason(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (reason string, ok bool, err error) {
+	err = s.pool.QueryRow(ctx,
+		`WITH latest_rejected AS (
+		     SELECT rejection_reason, reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'REJECTED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 ),
+		 latest_delivered AS (
+		     SELECT reviewed_at
+		       FROM recommendations
+		      WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
+		      ORDER BY reviewed_at DESC
+		      LIMIT 1
+		 )
+		 SELECT COALESCE(lr.rejection_reason, '')
+		   FROM latest_rejected lr
+		   LEFT JOIN latest_delivered ld ON true
+		  WHERE ld.reviewed_at IS NULL OR lr.reviewed_at > ld.reviewed_at`,
+		tenant.UUID(), conversationID,
+	).Scan(&reason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	// Legacy REJECTED rows (pre-migration 0005) have a NULL reason, read as
+	// ''. Empty means there is no reviewer guidance to inject.
+	if reason == "" {
+		return "", false, nil
+	}
+	return reason, true, nil
+}
+
+// LatestIntakeEntryAt returns the timestamp of the most recent event that put
+// the conversation back into (or kept it out of) a fresh INTAKE interview:
+//
+//   - the latest recommendation commit (its created_at is the same
+//     transaction as the review-pending acknowledgement message, i.e. the end
+//     of the previous interview),
+//   - the latest REJECTED review (AWAITING_REVIEW → INTAKE), and
+//   - the latest agent.new_complaint_reopened_intake audit event
+//     (PLAN_DELIVERED → INTAKE).
+//
+// All three are written in the same transaction as the phase change they
+// describe, so they are reliable boundaries. ok is false when none exists (the
+// conversation's first interview). Messages strictly after the returned time
+// belong to the current interview. Tenant-scoped.
+func (s *Store) LatestIntakeEntryAt(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (at time.Time, ok bool, err error) {
+	var ts *time.Time
+	err = s.pool.QueryRow(ctx,
+		`SELECT GREATEST(
+		     (SELECT MAX(created_at) FROM recommendations
+		       WHERE tenant_id = $1 AND conversation_id = $2),
+		     (SELECT MAX(reviewed_at) FROM recommendations
+		       WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'REJECTED'),
+		     (SELECT MAX(created_at) FROM audit_events
+		       WHERE tenant_id = $1 AND event_type = 'agent.new_complaint_reopened_intake'
+		         AND metadata->>'conversation_id' = $2::text)
+		 )`,
+		tenant.UUID(), conversationID,
+	).Scan(&ts)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if ts == nil {
+		return time.Time{}, false, nil
+	}
+	return *ts, true, nil
+}
+
+// GetLatestDeliveredRecommendation returns the most recently reviewed
+// DELIVERED recommendation for a conversation — the grounding source for the
+// PLAN_DELIVERED relay turn (task 4.2; see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). Returns ErrNotFound if no DELIVERED
+// recommendation exists for the conversation in this tenant.
+func (s *Store) GetLatestDeliveredRecommendation(ctx context.Context, tenant TenantID, conversationID uuid.UUID) (Recommendation, error) {
+	var r Recommendation
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, tenant_id, conversation_id, patient_id, state, payload_type, payload,
+		        draft_content, final_content, reviewed_by, reviewed_at, created_at
+		   FROM recommendations
+		  WHERE tenant_id = $1 AND conversation_id = $2 AND state = 'DELIVERED'
+		  ORDER BY reviewed_at DESC
+		  LIMIT 1`,
+		tenant.UUID(), conversationID,
+	).Scan(&r.ID, &r.TenantID, &r.ConversationID, &r.PatientID, &r.State, &r.PayloadType, &r.Payload,
+		&r.DraftContent, &r.FinalContent, &r.ReviewedBy, &r.ReviewedAt, &r.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Recommendation{}, ErrNotFound
+	}
+	return r, err
+}
+
 // --- recommendations (additional) ---
 
 // ListRecommendationsByPhysician returns recommendations in the given state
@@ -437,7 +546,9 @@ func (s *Store) GetRecommendationForPhysician(ctx context.Context, tenant Tenant
 // real database connection.
 type TxWriter interface {
 	UpdateRecommendationState(ctx context.Context, tenant TenantID, id uuid.UUID, state string, reviewedBy *uuid.UUID, finalContent *string) error
+	UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error
 	CreateAuditEvent(ctx context.Context, tenant TenantID, e AuditEvent) error
+	TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error
 }
 
 // TxStore wraps a pgx.Tx and exposes the write methods needed for atomic
@@ -508,6 +619,100 @@ func (ts *TxStore) UpdateRecommendationState(ctx context.Context, tenant TenantI
 		tenant.UUID(), id, state, reviewedBy, finalContent,
 	)
 	return err
+}
+
+// UpdateRecommendationRejection sets the recommendation to REJECTED, stamps
+// reviewed_by/reviewed_at, and stores the physician's rejection reason —
+// within tx, atomically with the audit event and the AWAITING_REVIEW→INTAKE
+// care-phase reset (see internal/review.Execute). This is a dedicated method
+// rather than an addition to UpdateRecommendationState because
+// rejection_reason is written on no other transition. final_content is
+// deliberately left untouched (stays nil) — a REJECTED recommendation is
+// never patient-visible.
+func (ts *TxStore) UpdateRecommendationRejection(ctx context.Context, tenant TenantID, id uuid.UUID, reviewedBy uuid.UUID, reason string) error {
+	tag, err := ts.tx.Exec(ctx,
+		`UPDATE recommendations
+		    SET state            = 'REJECTED',
+		        reviewed_by      = $3,
+		        reviewed_at      = NOW(),
+		        rejection_reason = $4
+		  WHERE tenant_id = $1 AND id = $2 AND state = 'PENDING_REVIEW'`,
+		tenant.UUID(), id, reviewedBy, reason,
+	)
+	if err != nil {
+		return err
+	}
+	// No row matched: the recommendation does not exist for this tenant or has
+	// already left PENDING_REVIEW (e.g. a concurrent approve). Surfacing
+	// ErrNotFound rolls back the surrounding transaction so a REJECTED row can
+	// never carry approved final_content.
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CreateMessage inserts a message within tx. Use this when the message
+// insert must be atomic with other writes in the same transaction — e.g. the
+// SOAP draft commit, which persists the fixed patient-facing acknowledgement
+// message atomically with the recommendation and the INTAKE→AWAITING_REVIEW
+// care-phase transition (task 2.2).
+func (ts *TxStore) CreateMessage(ctx context.Context, tenant TenantID, conversationID uuid.UUID, role, content string) (Message, error) {
+	var m Message
+	err := ts.tx.QueryRow(ctx,
+		`INSERT INTO messages (tenant_id, conversation_id, role, content)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, tenant_id, conversation_id, role, content, idempotency_key, created_at`,
+		tenant.UUID(), conversationID, role, content,
+	).Scan(&m.ID, &m.TenantID, &m.ConversationID, &m.Role, &m.Content, &m.IdempotencyKey, &m.CreatedAt)
+	return m, err
+}
+
+// ErrInvalidCarePhaseTransition is returned by TransitionCarePhase when the
+// requested (from, to) pair is not one of the edges the care-phase state
+// machine allows. No row is mutated when this error is returned.
+var ErrInvalidCarePhaseTransition = errors.New("store: invalid care phase transition")
+
+// allowedCarePhaseTransitions enumerates every legal care-phase edge (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Conversation Care Phase State Machine"). Any (from, to) pair not present
+// here — including same-state pairs like INTAKE→INTAKE — is disallowed.
+var allowedCarePhaseTransitions = map[CarePhase]map[CarePhase]bool{
+	CarePhaseIntake:         {CarePhaseAwaitingReview: true},
+	CarePhaseAwaitingReview: {CarePhasePlanDelivered: true, CarePhaseIntake: true},
+	CarePhasePlanDelivered:  {CarePhaseIntake: true},
+}
+
+// TransitionCarePhase moves a conversation's care_phase from `from` to `to`
+// within tx, atomically with whatever other writes the caller composes in the
+// same transaction (e.g. SOAP draft commit, recommendation delivery,
+// rejection). The edge is validated against allowedCarePhaseTransitions
+// before any query runs, so a disallowed edge returns
+// ErrInvalidCarePhaseTransition without touching the database.
+//
+// The UPDATE is additionally scoped by `WHERE care_phase = from`, a
+// compare-and-swap guard: if the row's current phase has already moved on
+// (e.g. a racing writer), zero rows are affected and ErrNotFound is
+// returned instead of silently overwriting a phase the caller didn't
+// observe. The WHERE clause is also tenant-scoped, so a call made under the
+// wrong tenant id matches zero rows and leaves the row untouched.
+func (ts *TxStore) TransitionCarePhase(ctx context.Context, tenant TenantID, conversationID uuid.UUID, from, to CarePhase) error {
+	if !allowedCarePhaseTransitions[from][to] {
+		return ErrInvalidCarePhaseTransition
+	}
+	tag, err := ts.tx.Exec(ctx,
+		`UPDATE conversations
+		    SET care_phase = $4
+		  WHERE tenant_id = $1 AND id = $2 AND care_phase = $3`,
+		tenant.UUID(), conversationID, string(from), string(to),
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CreateAuditEvent writes an audit event within tx. PHI must not appear in

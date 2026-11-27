@@ -15,6 +15,7 @@ import (
 type reviewRequest struct {
 	Action       string `json:"action"`        // approve | modify | reject
 	FinalContent string `json:"final_content"` // required for modify; optional override for approve
+	Reason       string `json:"reason"`        // required for reject; ignored otherwise. PHI-adjacent — never logged.
 }
 
 func (rt *Router) handleListRecommendations(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +91,7 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 
 	// Delegate to the shared, transport-agnostic review logic. This ensures the
 	// web app and the JSON API drive identical state-machine semantics.
-	result, err := review.Execute(ctx, rt.store, claims.TenantID, claims.ActorID, recID, req.Action, req.FinalContent)
+	result, err := review.Execute(ctx, rt.store, claims.TenantID, claims.ActorID, recID, req.Action, req.FinalContent, req.Reason)
 	if errors.Is(err, review.ErrActorNotFound) {
 		// Physician record not found for the session actor — treat as 403 (session
 		// anomaly) rather than leaking internal state, preserving the original
@@ -100,6 +101,10 @@ func (rt *Router) handleReviewRecommendation(w http.ResponseWriter, r *http.Requ
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, review.ErrEmptyRejectionReason) {
+		http.Error(w, "reason required for reject", http.StatusUnprocessableEntity)
 		return
 	}
 	if errors.Is(err, domain.ErrUnlicensedState) {

@@ -375,6 +375,67 @@ func TestUpdateRecommendationState_ReviewedAt(t *testing.T) {
 	}
 }
 
+// TestUpdateRecommendationRejection verifies that TxStore.UpdateRecommendationRejection
+// (added alongside internal/review's rejection-reason handling, task 3.1)
+// sets state=REJECTED, stamps reviewed_by/reviewed_at, and stores the
+// rejection reason, all within a single UPDATE.
+func TestUpdateRecommendationRejection(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	f := setupFixture(t, s)
+	ctx := context.Background()
+
+	tid := TenantID(f.A.Tenant.ID)
+
+	rec, err := s.CreateRecommendation(ctx, tid, Recommendation{
+		ConversationID: f.A.Conversation.ID,
+		PatientID:      f.A.Patient.ID,
+		State:          "PENDING_REVIEW",
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"drink water"}`),
+		DraftContent:   "drink water",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	physicianID := f.A.Physician.ID
+	const wantReason = "ask about current medications"
+	if err := s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationRejection(ctx, tid, rec.ID, physicianID, wantReason)
+	}); err != nil {
+		t.Fatalf("UpdateRecommendationRejection: %v", err)
+	}
+
+	after, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get after rejection: %v", err)
+	}
+	if after.State != "REJECTED" {
+		t.Errorf("state = %q, want REJECTED", after.State)
+	}
+	if after.ReviewedBy == nil || *after.ReviewedBy != physicianID {
+		t.Errorf("reviewed_by = %v, want %v", after.ReviewedBy, physicianID)
+	}
+	if after.ReviewedAt == nil {
+		t.Error("reviewed_at is nil, want non-nil timestamp")
+	}
+	if after.FinalContent != nil {
+		t.Errorf("final_content = %v, want nil (rejected recommendations are never patient-visible)", after.FinalContent)
+	}
+
+	var gotReason *string
+	if err := pool.QueryRow(ctx,
+		`SELECT rejection_reason FROM recommendations WHERE tenant_id = $1 AND id = $2`,
+		tid.UUID(), rec.ID,
+	).Scan(&gotReason); err != nil {
+		t.Fatalf("query rejection_reason: %v", err)
+	}
+	if gotReason == nil || *gotReason != wantReason {
+		t.Fatalf("rejection_reason = %v, want %q", gotReason, wantReason)
+	}
+}
+
 func TestSchemaRejectsCrossTenantParent(t *testing.T) {
 	// The composite (tenant_id, parent_id) FKs added in 0001_init mean a
 	// conversation cannot be written under tenant A pointing at a patient
@@ -388,5 +449,48 @@ func TestSchemaRejectsCrossTenantParent(t *testing.T) {
 	tidA := TenantID(f.A.Tenant.ID)
 	if _, err := s.CreateConversation(ctx, tidA, f.B.Patient.ID, "cross-tenant probe"); err == nil {
 		t.Fatalf("schema accepted a conversation whose patient belongs to a different tenant")
+	}
+}
+
+// TestUpdateRecommendationRejection_Conflict verifies a recommendation that
+// has already left PENDING_REVIEW cannot be rejected: ErrNotFound is returned
+// and the row (state, final_content) is untouched.
+func TestUpdateRecommendationRejection_Conflict(t *testing.T) {
+	pool := testPool(t)
+	s := New(pool)
+	f := setupFixture(t, s)
+	ctx := context.Background()
+	tid := TenantID(f.A.Tenant.ID)
+
+	rec, err := s.CreateRecommendation(ctx, tid, Recommendation{
+		ConversationID: f.A.Conversation.ID,
+		PatientID:      f.A.Patient.ID,
+		State:          "PENDING_REVIEW",
+		PayloadType:    "guidance",
+		Payload:        []byte(`{"text":"x"}`),
+		DraftContent:   "x",
+	})
+	if err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+	final := "approved text"
+	if err := s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationState(ctx, tid, rec.ID, "DELIVERED", &f.A.Physician.ID, &final)
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	err = s.Txn(ctx, func(tx *TxStore) error {
+		return tx.UpdateRecommendationRejection(ctx, tid, rec.ID, f.A.Physician.ID, "late reject")
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reject after approve: got %v, want ErrNotFound", err)
+	}
+	after, err := s.GetRecommendation(ctx, tid, rec.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if after.State != "DELIVERED" || after.FinalContent == nil || *after.FinalContent != final {
+		t.Errorf("row mutated by failed rejection: state=%s final=%v", after.State, after.FinalContent)
 	}
 }

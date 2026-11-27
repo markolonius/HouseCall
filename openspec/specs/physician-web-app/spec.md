@@ -45,7 +45,8 @@ with, within the physician's tenant.
 The physician web app SHALL let the physician approve, reject, or modify a
 `PENDING_REVIEW` recommendation. Each action SHALL invoke the corresponding
 Core API state transition. `modify` SHALL allow editing the content before
-delivery.
+delivery. `reject` SHALL require a non-empty reason, submitted with the
+transition.
 
 #### Scenario: Approve delivers the recommendation
 
@@ -61,12 +62,19 @@ delivery.
 **Then** the recommendation transitions to `MODIFIED` and then `DELIVERED`
 **And** the patient receives the edited content
 
-#### Scenario: Reject is terminal and never delivered
+#### Scenario: Reject requires a reason and is never delivered
 
 **Given** a `PENDING_REVIEW` recommendation in the physician's queue
-**When** the physician rejects it
-**Then** the recommendation transitions to `REJECTED`
+**When** the physician rejects it with a reason
+**Then** the recommendation transitions to `REJECTED` with that reason stored
 **And** the patient never receives its content
+
+#### Scenario: Reject without a reason is blocked in the UI
+
+**Given** a `PENDING_REVIEW` recommendation in the physician's queue
+**When** the physician submits a rejection with an empty reason field
+**Then** the rejection is not submitted and the physician is prompted for a
+reason
 
 ### Requirement: SOAP Note Review Rendering
 

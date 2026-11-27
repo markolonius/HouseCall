@@ -89,11 +89,28 @@ func (d *Drafter) WithOnComplete(fn func()) *Drafter {
 	return &cp
 }
 
-// DraftAsync spawns a goroutine that runs one step of the clinical interview
-// per patient message: either delivers the next interview question directly to
-// the patient, or — when the interview is judged complete — drafts a soap_note
-// recommendation into PENDING_REVIEW for physician review. It is fire-and-
-// forget: errors are logged but never returned to the caller.
+// DraftAsync spawns a goroutine that runs one turn of the care-phase state
+// machine for a patient message, dispatching on conv.CarePhase (see
+// openspec/changes/add-agent-care-loop/design.md, "Per-phase dispatch
+// replaces the single interview path"):
+//
+//   - INTAKE (and any unrecognized/empty phase, defensively — conversations
+//     loaded before the care_phase migration or built by in-memory test
+//     fixtures may have a zero-value CarePhase): a cheap red-flag triage
+//     classification runs first (see runIntakeTurn); an emergent result
+//     short-circuits to a fixed emergency-referral message, otherwise
+//     today's interview behaviour proceeds — either delivering the next
+//     interview question directly to the patient, or drafting a soap_note
+//     recommendation into PENDING_REVIEW for physician review.
+//   - AWAITING_REVIEW: no model call and no new recommendation — the
+//     conversation already has a draft awaiting physician review. This
+//     dispatch branch IS the double-draft guard (task 2.3 fills in the
+//     patient-facing acknowledgement).
+//   - PLAN_DELIVERED: post-approval plan relay — explains or defers questions
+//     about the delivered recommendation, or reopens INTAKE and runs an
+//     interview turn when the patient reports a new complaint.
+//
+// It is fire-and-forget: errors are logged but never returned to the caller.
 //
 // The caller must not pass a request-scoped context — use context.Background()
 // or a long-lived server context so the goroutine is not cancelled when the
@@ -107,7 +124,7 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 			defer d.onComplete()
 		}
 
-		// Recover from any panic inside runInterviewTurn (nil-deref, driver
+		// Recover from any panic inside the dispatched turn (nil-deref, driver
 		// bug, etc.) so a single drafting failure cannot crash the server
 		// process. middleware.Recoverer only protects HTTP handler goroutines;
 		// fire-and-forget goroutines must manage their own recovery.
@@ -120,7 +137,7 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 		}()
 
 		ctx := context.Background()
-		if err := d.runInterviewTurn(ctx, tenantID, conv, patient); err != nil {
+		if err := d.dispatchTurn(ctx, tenantID, conv, patient); err != nil {
 			// Log type only — never the error message or body, which may echo
 			// request content or PHI (see ModelError.Body HIPAA note in
 			// client.go).
@@ -149,8 +166,464 @@ func (d *Drafter) DraftAsync(tenantID store.TenantID, conv store.Conversation, p
 	}()
 }
 
-// runInterviewTurn is the synchronous orchestration logic called by DraftAsync
-// per patient message. It runs one step of the clinical interview:
+// dispatchTurn is the single entry point DraftAsync's goroutine calls to run
+// one turn of the care-phase state machine. It selects the per-phase
+// behaviour from conv.CarePhase — see DraftAsync's doc comment for the
+// behaviour of each branch.
+//
+// Dispatching here (rather than inside runInterviewTurn) is deliberate: it is
+// the mechanism that prevents a second model call/recommendation while a
+// conversation is AWAITING_REVIEW (the double-draft bug this change fixes).
+func (d *Drafter) dispatchTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	switch conv.CarePhase {
+	case store.CarePhaseAwaitingReview:
+		return d.runAwaitingReviewTurn(ctx, tenantID, conv, patient)
+	case store.CarePhasePlanDelivered:
+		return d.runPlanDeliveredTurn(ctx, tenantID, conv, patient)
+	case store.CarePhaseIntake, "":
+		// Empty CarePhase is treated as INTAKE defensively: conversations
+		// loaded before the care_phase migration backfill, or built by
+		// in-memory/older test fixtures that never set the field, must still
+		// get the triage-then-interview behaviour rather than silently no-op.
+		return d.runIntakeTurn(ctx, tenantID, conv, patient)
+	default:
+		return d.runIntakeTurn(ctx, tenantID, conv, patient)
+	}
+}
+
+// runIntakeTurn is the entry point dispatchTurn uses for conversations in
+// INTAKE (and the defensive empty/unrecognized-phase fallback). It runs a
+// cheap red-flag triage classification on the patient's message BEFORE any
+// interview turn — see design.md, "Triage is a separate cheap classification
+// call", and openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/
+// spec.md, "Red-Flag Triage":
+//
+//   - The triage Complete() call itself fails (timeout, transport error,
+//     non-2xx model response): fail open. Writes an ai_interaction_failed
+//     audit event describing the triage failure, then proceeds to
+//     runInterviewTurn exactly as if triage had never run. Per design.md:
+//     "blocking care on a triage outage is worse" than skipping the screen
+//     for one turn — the physician gate that follows the interview is still
+//     ahead of the patient either way.
+//   - TriageUnparseable (the classifier ran but its output could not be
+//     parsed unambiguously — see TriageOutcome's doc comment): the same
+//     fail-open behaviour as a Complete() error, with a distinct audit
+//     reason ("unparseable") so the two failure modes stay distinguishable
+//     in the audit trail.
+//   - TriageRoutine: proceeds straight to runInterviewTurn — today's
+//     behaviour, unchanged by this method's existence.
+//   - TriageEmergent: suppresses the normal interview turn entirely — see
+//     runEmergentTurn. No interview-turn model call is made for this
+//     patient message.
+func (d *Drafter) runIntakeTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	raw, err := d.generateTriageTurn(ctx, tenantID, conv)
+	if err != nil {
+		// Classifier unavailable: fail open to the interview turn, recording
+		// the failure first. draftFailureReason's type-driven mapping keeps
+		// this consistent with every other model-failure audit reason in the
+		// file — no error message, body, or PHI is inspected.
+		d.writeTriageFailureAudit(ctx, tenantID, conv, patient, draftFailureReason(err))
+		return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	}
+
+	switch parseTriageTurn(raw) {
+	case TriageEmergent:
+		return d.runEmergentTurn(ctx, tenantID, conv, patient)
+	case TriageUnparseable:
+		d.writeTriageFailureAudit(ctx, tenantID, conv, patient, "unparseable")
+		return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	default: // TriageRoutine
+		return d.runInterviewTurn(ctx, tenantID, conv, patient)
+	}
+}
+
+// generateTriageTurn assembles the triage model context for an INTAKE turn:
+// TriageSystemPrompt as the sole system message, followed by the full
+// tenant-scoped conversation history — the same message-assembly shape as
+// generateInterviewTurn and generateRelayTurn, but with no additional
+// per-conversation grounding message (triage classification needs neither
+// rejection guidance nor delivered-plan content).
+//
+// No content is logged (PHI constraint). A non-nil error means the
+// classifier call itself failed (store read error, timeout, transport error,
+// non-2xx model response); the caller (runIntakeTurn) must fail open rather
+// than treat the returned string as a classification.
+func (d *Drafter) generateTriageTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
+	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
+	modelMsgs := make([]Message, 0, len(msgs)+1)
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: TriageSystemPrompt,
+	})
+	for _, m := range msgs {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	return d.client.Complete(ctx, modelMsgs)
+}
+
+// writeTriageFailureAudit records a triage classification failure — either a
+// Complete() call error or an unparseable/ambiguous marker result — as an
+// ai_interaction_failed audit event, mirroring the audit write DraftAsync
+// performs for every other draft failure. Metadata carries identifiers plus
+// a coarse "reason" string and a "stage" marker distinguishing this from a
+// whole-turn draft failure — no PHI, no model output, no error message text
+// (see draftFailureReason's doc comment for the discipline this reuses).
+//
+// A failed audit write must not block the fail-open interview turn from
+// running, so this method only logs (never returns an error) on its own
+// failure — same discipline as the inline audit writes elsewhere in this
+// file (e.g. deliverInterviewQuestion, runAwaitingReviewTurn).
+func (d *Drafter) writeTriageFailureAudit(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient, reason string) {
+	if _, err := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "ai_interaction_failed",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"patient_id":      patient.ID.String(),
+			"reason":          reason,
+			"stage":           "triage",
+		}),
+	}); err != nil {
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, err)
+	}
+}
+
+// runEmergentTurn handles the TriageEmergent branch of runIntakeTurn: an
+// emergency presentation short-circuits the normal interview entirely. It
+// persists the fixed EmergencyReferralMessage — static text, never model
+// output, for the same reason ReviewPendingAckMessage and
+// ReviewPendingReminderMessage are static (see their doc comments) — emits
+// an urgent physician notification, writes an audit event, and pushes the
+// referral message to the patient. No interview-turn model call is made for
+// this patient message.
+//
+// Urgent notification shape: reuses the existing "queue.updated" event type
+// (additive, not a new event type) with "priority": "urgent" in its data
+// payload, so any existing queue.updated consumer keeps working unmodified
+// while gaining a way to distinguish this notification from a normal
+// drafted-recommendation queue.updated. There is no recommendation_id — a
+// triage short-circuit creates no recommendation.
+//
+// Order guarantee mirrors deliverInterviewQuestion: the message is committed
+// and audited before either notifier fires, so neither the patient's client
+// nor a physician can ever receive a reference to a message that does not
+// yet exist in the DB.
+func (d *Drafter) runEmergentTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	// Step 1: persist the fixed emergency-referral message (a failure is
+	// handled after the audit and physician notification below) as an
+	// assistant-role message so the iOS client can retrieve it via
+	// GET /api/conversations/{id}/messages.
+	msg, saveErr := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", EmergencyReferralMessage)
+
+	// Step 2: write the audit event. Metadata contains identifiers only — no
+	// PHI, no message content (the message is fixed text, but the pattern is
+	// kept consistent with the rest of the drafter). When the message could
+	// not be saved there is no message_id; the event still records the
+	// emergent triage so the trail is honest about what happened.
+	auditMeta := map[string]any{
+		"conversation_id": conv.ID.String(),
+		"patient_id":      patient.ID.String(),
+	}
+	if saveErr == nil {
+		auditMeta["message_id"] = msg.ID.String()
+	} else {
+		auditMeta["referral_message_saved"] = false
+	}
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.emergent_triage",
+		Metadata:  mustMarshalJSON(auditMeta),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the referral or the urgent
+		// notification from firing — log the error type only (never the
+		// value, which could echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit the urgent queue.updated variant to physicians. It fires
+	// even when saving the referral message failed — a patient with a
+	// suspected emergency must still reach a physician. Payload carries
+	// identifiers plus a priority flag only — no PHI.
+	d.notifier.SendToPhysicians(tenantID.String(), mustMarshalJSON(map[string]any{
+		"type": "queue.updated",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"priority":        "urgent",
+		},
+	}))
+
+	if saveErr != nil {
+		// No message exists to point the patient client at; surface the error
+		// so DraftAsync records the failure.
+		return saveErr
+	}
+
+	// Step 4: push the referral to the patient over WS. The payload is IDs
+	// only so no PHI crosses the notification channel; the client fetches
+	// content via its authenticated REST endpoint after receiving the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		},
+	}))
+
+	return nil
+}
+
+// runAwaitingReviewTurn handles a patient message received while the
+// conversation's drafted recommendation is still awaiting physician review.
+// This is the double-draft fix (bead HouseCall-lkzs, 2026-07-15): dispatchTurn
+// already routes AWAITING_REVIEW away from runInterviewTurn, so this method
+// makes NO model call and creates NO recommendation — it only tells the
+// patient their report is already with the physician.
+//
+// Order guarantee mirrors deliverInterviewQuestion: the reminder message is
+// persisted and audited before the patient notifier fires, so the client can
+// never receive a reference to a message that does not yet exist in the DB.
+//
+// PHI discipline: ReviewPendingReminderMessage is fixed, non-clinical text —
+// not model output — so no drafted SOAP content can leak here. Audit metadata
+// and the patient WebSocket event contain conversation_id and message_id
+// only.
+func (d *Drafter) runAwaitingReviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	// Step 1: persist the fixed reminder as an assistant-role message so the
+	// iOS client can retrieve it via GET /api/conversations/{id}/messages.
+	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", ReviewPendingReminderMessage)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: write the audit event. Metadata contains identifiers only — no
+	// PHI, no message content (the message is fixed text, but the pattern is
+	// kept consistent with deliverInterviewQuestion / draftSOAPNote's ack).
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.awaiting_review_reminder",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		}),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the reminder from being
+		// delivered — log the error type only (never the value, which could
+		// echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit a WebSocket event to the patient — same message.created
+	// shape as deliverInterviewQuestion/draftSOAPNote's ack push. The payload
+	// is IDs only so no PHI crosses the notification channel; the client
+	// fetches content via its authenticated REST endpoint after receiving
+	// the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		},
+	}))
+
+	return nil
+}
+
+// runPlanDeliveredTurn handles a patient message received after the
+// conversation's recommendation has been delivered (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). It assembles relay context from the
+// delivered recommendation's final content plus conversation history, calls
+// the model with RelaySystemPrompt, and parses the result with
+// parseRelayTurn:
+//
+//   - NewComplaint == false: the reply (an explanation grounded in the
+//     delivered plan, or a fixed-style deferral — both are plain relay text,
+//     indistinguishable at this layer by design) is persisted as an
+//     assistant message and pushed to the patient. No care-phase transition;
+//     the conversation stays in PLAN_DELIVERED.
+//   - NewComplaint == true: the conversation transitions PLAN_DELIVERED →
+//     INTAKE, and an interview turn runs immediately against the same
+//     conversation history (which already includes the patient's
+//     new-complaint message) so the interview starts without requiring a
+//     further patient message.
+//
+// Error discipline mirrors runInterviewTurn: a non-nil return means no
+// content was delivered to the patient. The caller (DraftAsync) logs the
+// error type and writes the ai_interaction_failed audit event — no model
+// output or PHI is inspected here.
+func (d *Drafter) runPlanDeliveredTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	raw, err := d.generateRelayTurn(ctx, tenantID, conv)
+	if err != nil {
+		return err
+	}
+
+	outcome := parseRelayTurn(raw)
+
+	if outcome.NewComplaint {
+		return d.reopenIntakeForNewComplaint(ctx, tenantID, conv, patient)
+	}
+
+	return d.deliverRelayReply(ctx, tenantID, conv, patient, outcome.Text)
+}
+
+// generateRelayTurn assembles the relay model context for a PLAN_DELIVERED
+// turn: RelaySystemPrompt (system role), a second system-role message
+// grounding the reply in the most recently delivered recommendation's final
+// content (see deliveredPlanContextMessage), followed by the full
+// tenant-scoped conversation history — the same message-assembly shape as
+// generateInterviewTurn, with the delivered-plan grounding message in place
+// of the rejection-guidance message.
+//
+// No content is logged (PHI constraint). A non-nil error means no usable
+// model output was obtained; the caller must not treat the returned string
+// as clinical content.
+func (d *Drafter) generateRelayTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
+	// Grounding source: the most recently delivered recommendation for this
+	// conversation. Per design.md, relay context is assembled ONLY from this
+	// content and the conversation history — nothing else.
+	deliveredRec, err := d.store.GetLatestDeliveredRecommendation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+	var deliveredContent string
+	if deliveredRec.FinalContent != nil {
+		deliveredContent = *deliveredRec.FinalContent
+	}
+
+	msgs, err := d.store.ListMessagesByConversation(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
+	modelMsgs := make([]Message, 0, len(msgs)+2)
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: RelaySystemPrompt,
+	})
+	modelMsgs = append(modelMsgs, Message{
+		Role:    "system",
+		Content: deliveredPlanContextMessage(deliveredContent),
+	})
+	for _, m := range msgs {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	return d.client.Complete(ctx, modelMsgs)
+}
+
+// deliverRelayReply persists a PLAN_DELIVERED relay reply — an explanation
+// grounded in the delivered plan, or a fixed-style deferral (see
+// RelayOutcome's doc comment for why the two are not distinguished here) —
+// as an assistant-role message, writes an audit event with identifiers only
+// (no PHI), and emits a WebSocket event to the patient. This does NOT
+// transition the conversation's care phase: PLAN_DELIVERED stays
+// PLAN_DELIVERED for both the explain and defer scenarios.
+//
+// Order guarantee mirrors deliverInterviewQuestion: the message is committed
+// and audited before the patient notifier fires, so the client can never
+// receive a reference to a message that does not yet exist in the DB.
+func (d *Drafter) deliverRelayReply(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient, text string) error {
+	// Step 1: persist the reply as an assistant-role message so the iOS
+	// client can retrieve it via GET /api/conversations/{id}/messages.
+	msg, err := d.store.CreateMessage(ctx, tenantID, conv.ID, "assistant", text)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: write the audit event. Metadata contains identifiers only — no
+	// PHI, no message content.
+	if _, auditErr := d.store.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		ActorType: string(domain.ActorAgent),
+		ActorID:   nil, // agent has no user UUID
+		EventType: "agent.relay_reply",
+		Metadata: mustMarshalJSON(map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		}),
+	}); auditErr != nil {
+		// A failed audit write must not prevent the reply from being
+		// delivered — log the error type only (never the value, which could
+		// echo PHI) and continue.
+		log.Printf("agent: audit write failed conversation_id=%s: %T", conv.ID, auditErr)
+	}
+
+	// Step 3: emit a WebSocket event to the patient. The payload is IDs only
+	// so no PHI crosses the notification channel; the client fetches content
+	// via its authenticated REST endpoint after receiving the event.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      msg.ID.String(),
+		},
+	}))
+
+	return nil
+}
+
+// reopenIntakeForNewComplaint handles the RelayOutcome.NewComplaint == true
+// branch of runPlanDeliveredTurn: it transitions the conversation
+// PLAN_DELIVERED → INTAKE and immediately runs an intake turn so the
+// patient's new-complaint message — already present in the conversation
+// history that generateRelayTurn (and now generateInterviewTurn) read —
+// is screened for emergency presentations before the interview begins,
+// without requiring a further patient message. A new complaint raised
+// against a delivered plan is exactly the kind of message (e.g. "I also
+// now have crushing chest pain") the red-flag triage screen exists to
+// catch, so this path must go through runIntakeTurn — not runInterviewTurn
+// directly — like every other INTAKE-phase turn.
+//
+// The phase transition and its audit event are written together in a short
+// transaction so the audit trail always reflects a durable phase change (the
+// same discipline as every other TransitionCarePhase caller in this file).
+// TransitionCarePhase's compare-and-swap guard means a racing writer that
+// already moved the conversation off PLAN_DELIVERED causes this call to fail
+// with store.ErrNotFound, which propagates like any other draft failure —
+// no intake turn runs and DraftAsync writes ai_interaction_failed.
+func (d *Drafter) reopenIntakeForNewComplaint(ctx context.Context, tenantID store.TenantID, conv store.Conversation, patient store.Patient) error {
+	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
+		if err := tx.TransitionCarePhase(ctx, tenantID, conv.ID, store.CarePhasePlanDelivered, store.CarePhaseIntake); err != nil {
+			return err
+		}
+		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+			ActorType: string(domain.ActorAgent),
+			ActorID:   nil, // agent has no user UUID
+			EventType: "agent.new_complaint_reopened_intake",
+			Metadata: mustMarshalJSON(map[string]any{
+				"conversation_id": conv.ID.String(),
+			}),
+		})
+	}); err != nil {
+		return err
+	}
+
+	// Run the intake turn (triage screen, then interview) against the
+	// now-INTAKE conversation. The existing message history already
+	// contains the patient's new-complaint message, so this turn is what
+	// screens and then starts the interview on it — no additional patient
+	// message is required.
+	conv.CarePhase = store.CarePhaseIntake
+	return d.runIntakeTurn(ctx, tenantID, conv, patient)
+}
+
+// runInterviewTurn is the synchronous orchestration logic called by
+// runIntakeTurn for conversations in INTAKE whose message passed (or failed
+// open past) the triage screen. It runs one step of the clinical interview:
 //
 //   - Generates the next turn from the tenant-scoped conversation history using
 //     the clinical interview system prompt.
@@ -187,6 +660,16 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 		return err
 	}
 
+	// The cap counts only the questions asked in the CURRENT interview, i.e.
+	// assistant messages after the conversation last entered INTAKE. Acks,
+	// reminders, relay replies and earlier interviews' questions must not
+	// count, or a re-interview (after a rejection or a new complaint) would be
+	// skipped. See store.LatestIntakeEntryAt for the boundary.
+	priorMsgs, err = d.currentInterviewMessages(ctx, tenantID, conv.ID, priorMsgs)
+	if err != nil {
+		return err
+	}
+
 	outcome := decideInterviewAction(raw, priorMsgs, DefaultMaxInterviewTurns)
 
 	if outcome.ReadyForNote {
@@ -201,6 +684,25 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 	// Interview continues: deliver the next question to the patient. No
 	// recommendation row is created; this is non-clinical data collection.
 	return d.deliverInterviewQuestion(ctx, tenantID, conv, patient, outcome.Question)
+}
+
+// currentInterviewMessages drops messages created at or before the
+// conversation's latest INTAKE entry boundary, leaving the current interview.
+func (d *Drafter) currentInterviewMessages(ctx context.Context, tenantID store.TenantID, convID uuid.UUID, msgs []store.Message) ([]store.Message, error) {
+	boundary, ok, err := d.store.LatestIntakeEntryAt(ctx, tenantID, convID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return msgs, nil
+	}
+	out := make([]store.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.CreatedAt.After(boundary) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 // generateInterviewTurn assembles the full tenant-scoped conversation history
@@ -218,6 +720,16 @@ func (d *Drafter) runInterviewTurn(ctx context.Context, tenantID store.TenantID,
 // ReadyForNoteMarker and branching between delivering an interview question
 // and triggering SOAP note drafting. This method is intentionally output-
 // agnostic: it returns whatever the model produced.
+//
+// Task 3.3: when the conversation's latest reviewed outcome is a physician
+// rejection (store.GetLatestRejectionReason), an additional system-role
+// message carrying the rejection reason as reviewer guidance is inserted
+// between InterviewSystemPrompt and the conversation history — see
+// rejectionGuidanceMessage in prompt.go. The reason reaches the model
+// context only; it is never persisted via store.CreateMessage or written to
+// any patient-facing text (patient-facing content in this codepath is
+// entirely model-generated question text and the fixed ack/reminder
+// messages elsewhere, none of which touch this string).
 func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.TenantID, conv store.Conversation) (string, error) {
 	// Fetch the full conversation history scoped to this tenant. The query
 	// includes tenant_id in the WHERE clause so cross-tenant bleed is
@@ -227,14 +739,29 @@ func (d *Drafter) generateInterviewTurn(ctx context.Context, tenantID store.Tena
 		return "", err
 	}
 
+	// Determine whether a rejection is the conversation's current (not
+	// stale) reviewed outcome. See store.GetLatestRejectionReason for the
+	// "newer than any delivered recommendation" rule.
+	reason, hasRejection, err := d.store.GetLatestRejectionReason(ctx, tenantID, conv.ID)
+	if err != nil {
+		return "", err
+	}
+
 	// Build the model message slice: the clinical interview system prompt as
-	// the sole system message, followed by every stored turn in order.
-	// Content goes to the model call only — never written to logs or audit.
-	modelMsgs := make([]Message, 0, len(msgs)+1)
+	// the leading system message, optionally followed by the rejection
+	// reviewer-guidance message, then every stored turn in order. Content
+	// goes to the model call only — never written to logs or audit.
+	modelMsgs := make([]Message, 0, len(msgs)+2)
 	modelMsgs = append(modelMsgs, Message{
 		Role:    "system",
 		Content: InterviewSystemPrompt,
 	})
+	if hasRejection {
+		modelMsgs = append(modelMsgs, Message{
+			Role:    "system",
+			Content: rejectionGuidanceMessage(reason),
+		})
+	}
 	for _, m := range msgs {
 		modelMsgs = append(modelMsgs, Message{
 			Role:    m.Role,
@@ -480,8 +1007,37 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 
 	agentActor := domain.Actor{Type: domain.ActorAgent, ID: uuid.Nil}
 
-	// Persist DRAFT → PENDING_REVIEW + audit event atomically.
+	// The care phase the conversation was observed in when this turn was
+	// dispatched. dispatchTurn routes both CarePhaseIntake and the empty
+	// (pre-migration/legacy-fixture) phase to runIntakeTurn → runInterviewTurn
+	// → draftSOAPNote, so an empty value here is treated as INTAKE for the CAS
+	// `from` — the same defensive mapping dispatchTurn already applies. Every real
+	// database row always has a non-empty care_phase (NOT NULL DEFAULT
+	// 'INTAKE'), so this only matters for in-memory test fixtures.
+	fromPhase := conv.CarePhase
+	if fromPhase == "" {
+		fromPhase = store.CarePhaseIntake
+	}
+
+	// Persist DRAFT → PENDING_REVIEW, the fixed patient-facing acknowledgement
+	// message, and the INTAKE → AWAITING_REVIEW care-phase transition
+	// atomically. Doing all of this in one transaction is deliberate: a
+	// physician must never see a queue entry (or a patient an ack) for a
+	// draft that didn't durably land, and the conversation must never sit in
+	// AWAITING_REVIEW without an actual pending recommendation behind it.
+	//
+	// CAS-failure semantics: TransitionCarePhase compares-and-swaps on
+	// care_phase = fromPhase. If the row has already moved on (e.g. a racing
+	// second draft — the double-draft bug guarded against in task 2.3, or any
+	// other concurrent writer), it returns store.ErrNotFound, which aborts and
+	// rolls back the ENTIRE transaction: no recommendation, no ack message,
+	// nothing partial. The caller (DraftAsync) treats this exactly like any
+	// other draft failure — it logs the failure type and writes an
+	// ai_interaction_failed audit event. No recommendation is left in DRAFT
+	// state and no ack is shown for content the patient never actually
+	// triggered a successful draft for.
 	var recID uuid.UUID
+	var ackMsgID uuid.UUID
 	if err := d.store.Txn(ctx, func(tx *store.TxStore) error {
 		// Step 1: insert at DRAFT.
 		rec, err := tx.CreateRecommendation(ctx, tenantID, store.Recommendation{
@@ -510,7 +1066,7 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 
 		// Step 4: write the audit event. Metadata contains identifiers +
 		// payload_type only — no PHI, no model output.
-		return tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+		if err := tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
 			ActorType: string(domain.ActorAgent),
 			ActorID:   nil, // agent has no user UUID
 			EventType: "recommendation.submitted_for_review",
@@ -520,7 +1076,41 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 				"new_state":         nextState,
 				"payload_type":      domain.PayloadTypeSOAPNote,
 			}),
-		})
+		}); err != nil {
+			return err
+		}
+
+		// Step 5: persist the fixed review-pending acknowledgement as an
+		// assistant message in the same conversation. This is static text
+		// (ReviewPendingAckMessage), never model output, and reveals nothing
+		// of the drafted Subjective/Objective/Assessment/Plan content.
+		ackMsg, err := tx.CreateMessage(ctx, tenantID, conv.ID, "assistant", ReviewPendingAckMessage)
+		if err != nil {
+			return err
+		}
+		ackMsgID = ackMsg.ID
+
+		// Step 6: write the audit event for the acknowledgement. Metadata
+		// contains identifiers only — no PHI, no message content (the message
+		// is fixed text, but the pattern is kept consistent with
+		// deliverInterviewQuestion).
+		if err := tx.CreateAuditEvent(ctx, tenantID, store.AuditEvent{
+			ActorType: string(domain.ActorAgent),
+			ActorID:   nil, // agent has no user UUID
+			EventType: "agent.review_pending_ack",
+			Metadata: mustMarshalJSON(map[string]any{
+				"conversation_id":   conv.ID.String(),
+				"message_id":        ackMsgID.String(),
+				"recommendation_id": recID.String(),
+			}),
+		}); err != nil {
+			return err
+		}
+
+		// Step 7: move the conversation INTAKE → AWAITING_REVIEW so
+		// dispatchTurn routes any further patient messages away from
+		// runInterviewTurn (the double-draft guard task 2.3 completes).
+		return tx.TransitionCarePhase(ctx, tenantID, conv.ID, fromPhase, store.CarePhaseAwaitingReview)
 	}); err != nil {
 		return err
 	}
@@ -532,6 +1122,19 @@ func (d *Drafter) draftSOAPNote(ctx context.Context, tenantID store.TenantID, co
 		"data": map[string]any{
 			"recommendation_id": recID.String(),
 			"conversation_id":   conv.ID.String(),
+		},
+	}))
+
+	// Push the acknowledgement to the patient over WS AFTER the successful
+	// commit, mirroring deliverInterviewQuestion: the payload carries
+	// identifiers only (never message content), and the client can never
+	// receive a reference to a message that does not yet exist in the
+	// database.
+	d.patientNotifier.SendToPatient(tenantID.String(), patient.ID.String(), mustMarshalJSON(map[string]any{
+		"type": "message.created",
+		"data": map[string]any{
+			"conversation_id": conv.ID.String(),
+			"message_id":      ackMsgID.String(),
 		},
 	}))
 

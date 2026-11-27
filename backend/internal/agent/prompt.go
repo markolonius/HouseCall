@@ -8,6 +8,8 @@
 // built.
 package agent
 
+import "fmt"
+
 // ReadyForNoteMarker is the sentinel token the interview model emits on its own
 // line — and nothing else for that turn — when it judges that enough clinical
 // history has been gathered to write a SOAP note. The agent runtime detects
@@ -15,6 +17,135 @@ package agent
 // SOAP note drafting. The marker is never forwarded to the patient; it is a
 // server-internal protocol token, not a clinical message.
 const ReadyForNoteMarker = "<READY_FOR_NOTE>"
+
+// NewComplaintMarker is the sentinel token the relay model emits on its own
+// line — and nothing else for that turn — when it judges that the patient's
+// message describes a new medical complaint unrelated to the already-
+// delivered plan it is relaying (see RelaySystemPrompt and
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", "A new complaint reopens intake"). The agent
+// runtime detects this marker server-side, strips it (and any surrounding
+// text), and transitions the conversation back to INTAKE for an interview
+// turn. Like ReadyForNoteMarker, it is never forwarded to the patient — a
+// server-internal protocol token, not a clinical message. It intentionally
+// follows the same bracketed, all-caps convention as ReadyForNoteMarker so
+// parseRelayTurn can reuse parseInterviewTurn's exact detection discipline
+// (tolerant strings.Contains match) rather than inventing a divergent one.
+const NewComplaintMarker = "<NEW_COMPLAINT>"
+
+// EmergentMarker is the sentinel token the triage model emits — and nothing
+// else for that turn — when it classifies the patient's most recent message
+// as an emergency presentation warranting immediate emergency care (see
+// TriageSystemPrompt and
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Red-Flag Triage"). The agent runtime detects this marker server-side
+// (parseTriageTurn), suppresses the normal interview turn, and delivers a
+// fixed emergency-referral message instead. Like ReadyForNoteMarker and
+// NewComplaintMarker, it is a server-internal protocol token, never
+// forwarded to the patient. It intentionally follows the same bracketed,
+// all-caps convention so parseTriageTurn can reuse the same tolerant
+// strings.Contains detection discipline as parseInterviewTurn and
+// parseRelayTurn.
+const EmergentMarker = "<EMERGENT>"
+
+// RoutineMarker is the sentinel token the triage model emits — and nothing
+// else for that turn — when it classifies the patient's most recent message
+// as NOT an emergency presentation, so the normal interview turn should
+// proceed. See EmergentMarker for the shared marker-parsing rationale.
+const RoutineMarker = "<ROUTINE>"
+
+// TriageSystemPrompt instructs the model to act as a cheap, single-purpose
+// classifier: given the full conversation so far, decide whether the
+// patient's MOST RECENT message describes an emergency presentation. This is
+// a separate model call from the interview turn (see design.md, "Triage is a
+// separate cheap classification call") and its output is never shown to the
+// patient — it is parsed exclusively by parseTriageTurn. The full
+// conversation is supplied as context (not just the latest message) so the
+// model can resolve anaphora such as "it's gotten worse" or "still happening"
+// against what was said earlier in the conversation.
+//
+// Output format contract (MUST be preserved so parseTriageTurn can parse it):
+// the model's ENTIRE response for this turn must be exactly one of
+// EmergentMarker or RoutineMarker, and nothing else — no explanation, no
+// punctuation, no surrounding prose. This is a strict, programmatic contract:
+// unlike InterviewSystemPrompt and RelaySystemPrompt (whose free-text is
+// patient-facing and merely needs a marker detected within it),
+// TriageSystemPrompt's output is consumed ONLY by the parser, so there is no
+// reason to tolerate — let alone encourage — surrounding text. The parser
+// remains tolerant of incidental formatting variance (whitespace, markdown
+// wrapping) a small model might add despite this instruction, but any output
+// containing neither marker, or both markers, is treated as unparseable.
+const TriageSystemPrompt = `You are a clinical triage classifier. You are NOT conducting an interview and you are NOT writing a reply the patient will see. Your only job is to decide whether the patient's MOST RECENT message, read in the context of the full conversation above it, describes a medical emergency.
+
+## Classify as emergent if the most recent message describes (or, in context, confirms/escalates) any of the following — this list is illustrative, not exhaustive:
+
+- Chest pain or pressure, especially with shortness of breath, sweating, or pain radiating to the arm/jaw
+- Difficulty breathing or shortness of breath at rest
+- Signs of stroke: sudden face drooping, arm weakness, slurred or garbled speech, sudden confusion
+- Severe or uncontrolled bleeding
+- Signs of anaphylaxis: throat swelling/tightness, widespread hives with difficulty breathing, sudden severe allergic reaction
+- Suicidal ideation, intent, or a plan to harm oneself or someone else
+- Loss of consciousness, fainting, or unresponsiveness
+- Signs of a severe allergic drug reaction, poisoning, or overdose
+- Seizure, especially a first-time or prolonged seizure
+- Severe abdominal pain with rigidity, or signs of a ruptured appendix
+- Any symptom the patient or a reasonable clinician would consider a "call 911 now" situation
+
+## Classify as routine if the most recent message:
+
+- Describes symptoms that are uncomfortable or concerning but not immediately life-threatening (e.g. a headache, a mild fever, a cough, a rash, joint pain, fatigue)
+- Is a question, an answer to a prior interview question, or general conversation that does not itself describe an emergency
+- Describes a worsening of a routine symptom that has not crossed into one of the emergent categories above
+
+## Context and anaphora
+
+Read the ENTIRE conversation above before deciding. The patient's most recent message may use pronouns or short phrases that only make sense with that context — for example "it's gotten a lot worse" or "now I can't breathe either" refers back to whatever was discussed earlier. Resolve these references using the full conversation before classifying.
+
+## Output format — MANDATORY, read carefully
+
+Your entire response for this turn must be EXACTLY ONE of the following two tokens, and absolutely nothing else — no punctuation, no explanation, no acknowledgment, no markdown:
+
+` + EmergentMarker + `
+` + RoutineMarker + `
+
+Do not output both. Do not output any other text before, after, or instead of the single token. This response is read only by a server-side program, never by the patient.`
+
+// EmergencyReferralMessage is the fixed, non-clinical assistant message
+// persisted to the patient's conversation the moment the triage
+// classification call (see TriageSystemPrompt) returns EmergentMarker (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Red-Flag Triage"). It is static text — NOT model output — deliberately:
+// standard telehealth safe-harbor wording, not a fresh model generation, is
+// what tells a patient to call 911. See design.md's "Static
+// acknowledgement/emergency text is less 'conversational'" risk note, which
+// applies here for the same reason it applies to ReviewPendingAckMessage and
+// ReviewPendingReminderMessage below.
+const EmergencyReferralMessage = "Based on what you've described, this could be a medical emergency. Please call 911 or go to your nearest emergency room right now. Do not wait for a response here."
+
+// ReviewPendingAckMessage is the fixed, non-clinical assistant message
+// persisted to the patient's conversation the moment a SOAP note draft is
+// committed (see openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/
+// spec.md, "Review-Pending Acknowledgement"). It is static text — NOT model
+// output — deliberately: once a conversation reaches AWAITING_REVIEW there is
+// no physician gate ahead of anything the model might say, so nothing free-
+// text is shown to the patient until a physician has reviewed the draft. The
+// wording must never reveal any drafted Subjective/Objective/Assessment/Plan
+// content.
+const ReviewPendingAckMessage = "Thanks — I've gathered what I need and sent it to your physician for review. I'll let you know as soon as they respond."
+
+// ReviewPendingReminderMessage is the fixed, non-clinical assistant message
+// persisted in response to any patient message received WHILE the
+// conversation is already `AWAITING_REVIEW` — i.e. after
+// ReviewPendingAckMessage has already been sent for the pending
+// recommendation. It is distinct wording from ReviewPendingAckMessage
+// (which announces the handoff) because this one answers a NEW message the
+// patient sent while waiting; conflating the two would make it look like a
+// second draft had been produced. Static text — NOT model output — for the
+// same reason as ReviewPendingAckMessage: no free-text agent content is
+// shown to the patient until a physician has reviewed the draft. See
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "A message during AWAITING_REVIEW does not draft again".
+const ReviewPendingReminderMessage = "Your report is with your physician for review right now — I'll notify you the moment they respond. If anything urgent changes, please seek care right away."
 
 // InterviewSystemPrompt instructs the model to act as a clinician conducting a
 // focused history-taking interview. It is used as the system message in every
@@ -95,6 +226,28 @@ That's helpful to know. On a scale of 0 to 10, with 10 being the worst pain you'
 
 Begin the interview with the patient's first message.`
 
+// rejectionGuidanceTemplate formats the reviewer-guidance message injected
+// into an INTAKE interview turn's model context when the conversation's
+// latest reviewed outcome is a physician rejection (task 3.3; see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Rejection Revision Loop"). It is deliberately NOT part of
+// InterviewSystemPrompt (which is shared/static) — it is appended as a
+// separate system-role message only for conversations with a current
+// rejection, following generateInterviewTurn's message-assembly pattern.
+//
+// The reason is model-context-only: this string is used solely to build a
+// Message passed to the model client. It must never be written to a
+// store.CreateMessage call, a log line, or audit metadata — callers must not
+// repurpose it for anything patient-facing. The instruction to the model not
+// to quote the reason verbatim is prompt discipline, not a hard filter (see
+// design.md); it does not guarantee the model will comply.
+const rejectionGuidanceTemplate = "A physician reviewed a previous draft for this patient and requested: %s\n\nFocus your next questions on gathering whatever is needed to address this before concluding the interview. This is internal reviewer guidance — do not quote or repeat it to the patient."
+
+// rejectionGuidanceMessage renders rejectionGuidanceTemplate with reason.
+func rejectionGuidanceMessage(reason string) string {
+	return fmt.Sprintf(rejectionGuidanceTemplate, reason)
+}
+
 // SOAPDraftSystemPrompt instructs the model to synthesise a structured SOAP
 // note from a completed patient history interview. It is used as the system
 // message in draftSOAPNote; the full conversation history follows.
@@ -144,3 +297,64 @@ PLAN:
 4. PLAN must be safe, actionable, and appropriate for a text-based consultation.
 5. Every section must be present and non-empty.
 6. Use the exact headers shown above (SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:) — no markdown bold, no hash signs, no extra colons or punctuation on the header line itself.`
+
+// RelaySystemPrompt instructs the model to explain a plan that a physician has
+// ALREADY reviewed and approved, during the PLAN_DELIVERED care phase (see
+// openspec/changes/add-agent-care-loop/specs/ai-agent-runtime/spec.md,
+// "Post-Approval Plan Relay", and design.md's "Relay grounding is prompt +
+// provenance, not a new delivery gate"). It is used as the system message in
+// every relay turn; the delivered recommendation's final content and the
+// conversation history are supplied as additional context alongside it — the
+// model does NOT write the plan in this turn, it only explains one that
+// already exists.
+//
+// Design constraints:
+//   - Explain-only: answers must be grounded in the delivered plan content and
+//     conversation history supplied as context; no new clinical guidance.
+//   - Deferral: questions the delivered plan does not cover get a fixed-style
+//     deferral to the physician, not a speculative answer. This is prompt-
+//     driven output text, not a distinct marker — see RelayOutcome for why.
+//   - New-complaint signal: a genuinely new, plan-unrelated complaint must be
+//     flagged with NewComplaintMarker (same bracketed-marker discipline as
+//     ReadyForNoteMarker) so the runtime can reopen INTAKE.
+const RelaySystemPrompt = `You are a care assistant (not a clinician) whose only role is to explain a treatment plan that a physician has ALREADY reviewed and approved. You did not write this plan in this turn — its final content, and the conversation history, are supplied to you separately as context. Your sole purpose in this conversation is to explain and clarify THAT approved plan.
+
+## Rules — read carefully before every turn
+
+1. **Explain only what the delivered plan contains.** Ground every answer in the delivered plan's content and the conversation history supplied to you as context. Do not add clinical guidance, dosing, medication changes, or advice that is not already present in the delivered plan. You are relaying an approved plan, not writing a new one.
+
+2. **Defer anything the plan does not cover.** If the patient asks something the delivered plan does not address, do NOT speculate or improvise new clinical guidance. Tell them plainly that the plan does not cover that and that you cannot answer it, and ask them to send any new or changed concerns as a new message so their care team can review it. Do NOT say or imply that you will pass the question along or forward it to anyone. Do not soften this into new clinical advice of your own.
+
+3. **Never introduce a new diagnosis, prescription, or treatment change.** You are not re-evaluating the patient's condition. Only the physician can change the plan.
+
+4. **New-complaint detection.** If the patient's message describes a NEW medical complaint or symptom that is unrelated to the delivered plan — not a question about the existing plan, but a different problem — do not attempt to explain or defer it. Instead, output the following marker on its own line and nothing else for that turn:
+
+` + NewComplaintMarker + `
+
+Do NOT emit this marker for questions about the existing plan, even difficult ones — only for a genuinely new, unrelated complaint. Do NOT emit it mid-sentence or with trailing text; it must be the sole content of the response when a new complaint is reported.
+
+5. **Tone.** Be empathetic, non-judgmental, and concise. One or two short sentences is normally enough — you are relaying an already-approved plan, not conducting a new evaluation.
+
+Begin by responding to the patient's message using only the delivered plan and conversation history supplied to you as context.`
+
+// deliveredPlanContextTemplate formats the delivered recommendation's final
+// content as a system-role grounding message for a PLAN_DELIVERED relay turn
+// (task 4.2; see design.md's "Relay grounding is prompt + provenance, not a
+// new delivery gate"). It is deliberately NOT part of RelaySystemPrompt
+// (static/shared) — it is appended as a separate system-role message
+// carrying the one piece of per-conversation grounding content the relay is
+// allowed to draw on, mirroring generateInterviewTurn's
+// rejectionGuidanceMessage pattern for injecting per-conversation context
+// alongside a shared system prompt.
+//
+// The content is model-context-only: this string is built from
+// store.Recommendation.FinalContent purely to construct a Message passed to
+// the model client. It must never be written to a store.CreateMessage call,
+// a log line, or audit metadata (PHI constraint).
+const deliveredPlanContextTemplate = "The plan a physician already reviewed and approved for this patient is below. Ground every answer in this content and the conversation history that follows — do not add clinical guidance beyond it.\n\n%s"
+
+// deliveredPlanContextMessage renders deliveredPlanContextTemplate with the
+// delivered recommendation's final content.
+func deliveredPlanContextMessage(finalContent string) string {
+	return fmt.Sprintf(deliveredPlanContextTemplate, finalContent)
+}

@@ -20,6 +20,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -242,15 +243,17 @@ func TestRunInterviewTurn_Question_PatientNotified_NoRecommendation(t *testing.T
 // Test: ReadyForNote turn — soap_note in PENDING_REVIEW, patient NOT notified.
 // ---------------------------------------------------------------------------
 
-// TestRunInterviewTurn_ReadyForNote_SOAPNoteInPendingReview_PatientNotNotified
+// TestRunInterviewTurn_ReadyForNote_SOAPNoteInPendingReview_OnlyAckReachesPatient
 // asserts the carve-out for the SOAP note branch of runInterviewTurn:
 //
 //   - When decideInterviewAction yields ReadyForNote (marker detected), the agent
 //     runtime MUST draft a soap_note recommendation → PENDING_REVIEW.
 //   - The physician notifier MUST receive a queue.updated event.
-//   - The patient notifier MUST NOT be called (clinical A/P is never delivered
-//     by the agent — only by a physician's APPROVE/MODIFY→DELIVER transition).
-func TestRunInterviewTurn_ReadyForNote_SOAPNoteInPendingReview_PatientNotNotified(t *testing.T) {
+//   - The patient notifier IS called exactly once — but only for the fixed,
+//     non-clinical review-pending acknowledgement (task 2.2), never for the
+//     drafted clinical content. Clinical A/P is never delivered by the agent —
+//     only by a physician's APPROVE/MODIFY→DELIVER transition.
+func TestRunInterviewTurn_ReadyForNote_SOAPNoteInPendingReview_OnlyAckReachesPatient(t *testing.T) {
 	pool := itTestPool(t)
 	s := store.New(pool)
 	f := setupCarveoutFixture(t, s)
@@ -320,25 +323,35 @@ func TestRunInterviewTurn_ReadyForNote_SOAPNoteInPendingReview_PatientNotNotifie
 		t.Fatal("physician notifier not called — queue.updated must be emitted when soap_note is drafted")
 	}
 
-	// 5. Patient notifier MUST NOT be called. This is the core of the carve-out:
-	//    clinical content (Assessment & Plan) never reaches the patient via the
-	//    agent — only via the physician lifecycle (APPROVE/MODIFY → DELIVER).
-	if patSpy.count() != 0 {
-		t.Errorf("patient notifier called %d times during soap_note drafting — CARVE-OUT VIOLATED: "+
-			"clinical content must not be delivered to the patient by the agent", patSpy.count())
+	// 5. Patient notifier MUST be called exactly once — for the fixed
+	//    review-pending acknowledgement (task 2.2), not for clinical content.
+	if patSpy.count() != 1 {
+		t.Errorf("patient notifier called %d times during soap_note drafting, want 1 (the ack)", patSpy.count())
 	}
 
-	// 6. No assistant message must be persisted for the SOAP-note turn —
-	//    the note goes into the recommendation row, not the message history.
+	// 6. Exactly one assistant message must be persisted for the SOAP-note
+	//    turn: the fixed acknowledgement. This is the core of the carve-out —
+	//    the note itself goes into the recommendation row, never the message
+	//    history, and the ack must not echo any drafted SOAP content.
 	msgs, err := s.ListMessagesByConversation(ctx, f.TenantID, f.Conv.ID)
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}
+	var assistantMsgs []store.Message
 	for _, m := range msgs {
 		if m.Role == "assistant" {
-			t.Errorf("unexpected assistant message during SOAP-note turn: role=%q content-length=%d "+
-				"— SOAP content must not be written to the message history by the agent",
-				m.Role, len(m.Content))
+			assistantMsgs = append(assistantMsgs, m)
+		}
+	}
+	if len(assistantMsgs) != 1 {
+		t.Fatalf("expected 1 assistant message (the review-pending ack), got %d", len(assistantMsgs))
+	}
+	if assistantMsgs[0].Content != ReviewPendingAckMessage {
+		t.Errorf("ack message content = %q, want the fixed ReviewPendingAckMessage", assistantMsgs[0].Content)
+	}
+	for _, forbidden := range []string{sp.Subjective, sp.Objective, sp.Assessment, sp.Plan} {
+		if forbidden != "" && strings.Contains(assistantMsgs[0].Content, forbidden) {
+			t.Errorf("ack message leaks drafted SOAP content — CARVE-OUT VIOLATED: found %q in ack", forbidden)
 		}
 	}
 }

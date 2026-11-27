@@ -289,43 +289,55 @@ struct CloudLoginTests {
                 "No session must be started when Core API rejects credentials")
     }
 
-    // MARK: - Cloud disabled (nil deps) → local-only login
+    // MARK: - Unconfigured build (nil deps) → login unavailable
 
-    @Test("Cloud disabled — local-only login works unchanged")
-    func testLocalOnlyLogin() async throws {
+    @Test("Unconfigured build — login throws coreAPINotConfigured and starts no session")
+    func testUnconfiguredLogin() async throws {
         let context = makeContext()
         let keychain = InMemoryKeychainManager()
-        // nil client + nil tenantId → local-only path
         let service = makeService(context: context, keychain: keychain, stubClient: nil, tenantId: nil)
 
-        // Pre-create a local user (local-only registration).
+        #expect(service.isCoreAPIConfigured == false)
+
+        // A pre-existing local user must NOT be loginable without Core API.
         let repo = makeRepo(context: context)
-        let localUser = try repo.createUser(
+        _ = try repo.createUser(
             email: "local@example.com",
             password: "SecurePassword123!",
             passcode: nil,
             fullName: "Local Patient",
             authMethod: .password
         )
-        let localId = try #require(localUser.id)
 
-        let loggedIn = try await service.login(
-            email: "local@example.com",
-            credential: "SecurePassword123!",
-            authMethod: .password
-        )
+        var thrown: AuthenticationError?
+        do {
+            _ = try await service.login(
+                email: "local@example.com",
+                credential: "SecurePassword123!",
+                authMethod: .password
+            )
+        } catch let e as AuthenticationError {
+            thrown = e
+        }
+        guard case .coreAPINotConfigured? = thrown else {
+            Issue.record("Expected coreAPINotConfigured, got \(String(describing: thrown))")
+            return
+        }
 
-        let loggedInId = try #require(loggedIn.id)
-        #expect(loggedInId == localId,
-                "Local-only login must return the pre-existing local user")
-
-        // No JWT should be stored.
-        let storedJWT = try? keychain.get(key: KeychainManager.Keys.coreAPIJWT)
-        #expect(storedJWT == nil, "Local-only login must NOT store a Core API JWT")
-
-        // Session must be active.
         await Task.yield()
-        #expect(service.isAuthenticated == true,
-                "Session must be active after successful local-only login")
+        #expect(service.isAuthenticated == false)
+        let storedJWT = try? keychain.get(key: KeychainManager.Keys.coreAPIJWT)
+        #expect(storedJWT == nil)
+    }
+
+    @Test("Configured build reports isCoreAPIConfigured")
+    func testConfiguredFlag() {
+        let service = makeService(
+            context: makeContext(),
+            keychain: InMemoryKeychainManager(),
+            stubClient: StubCoreAPIAuthClient(loginBehaviour: .unauthorized),
+            tenantId: "t-1"
+        )
+        #expect(service.isCoreAPIConfigured == true)
     }
 }

@@ -563,7 +563,9 @@ struct SecurityTests {
             userRepository: userRepo,
             keychainManager: KeychainManager.shared,
             biometricAuthManager: BiometricAuthManager.shared,
-            auditLogger: auditLogger
+            auditLogger: auditLogger,
+            coreAuthClient: FakeCoreAPIAuthClient(),
+            coreAPITenantId: FakeCoreAPIAuthClient.tenantId
         )
 
         // Register a user and establish a session.

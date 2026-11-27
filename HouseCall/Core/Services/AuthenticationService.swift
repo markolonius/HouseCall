@@ -18,6 +18,7 @@ enum AuthenticationError: LocalizedError {
     case sessionValidationFailed
     case noActiveSession
     case biometricAuthFailed(String)
+    case coreAPINotConfigured
 
     var errorDescription: String? {
         switch self {
@@ -33,6 +34,8 @@ enum AuthenticationError: LocalizedError {
             return "No active user session"
         case .biometricAuthFailed(let reason):
             return "Biometric authentication failed: \(reason)"
+        case .coreAPINotConfigured:
+            return "This build is not configured to connect to HouseCall."
         }
     }
 }
@@ -60,14 +63,15 @@ class AuthenticationService: ObservableObject {
 
     // `shared` reads Core API config at first access.  When both
     // `CoreAPIBaseURL` and `CoreAPITenantID` are set in the xcconfig,
-    // the singleton is cloud-enabled; otherwise it is local-only.
+    // the singleton is configured; otherwise register/login throw
+    // `AuthenticationError.coreAPINotConfigured`.
     // Tests that construct `AuthenticationService(...)` directly are
     // unaffected — the memberwise init defaults remain `nil`.
     static let shared: AuthenticationService = makeShared()
 
     /// Production factory.  Reads build-time config via `CoreAPIConfig`
     /// and returns a cloud-enabled instance when both the base URL and the
-    /// tenant ID are present, or a local-only instance when either is absent.
+    /// tenant ID are present, or an unconfigured instance when either is absent.
     ///
     /// Tests should NOT call this method; inject deps via the memberwise
     /// `init(...)` instead to keep tests hermetic.
@@ -78,7 +82,7 @@ class AuthenticationService: ObservableObject {
             let tenantId = CoreAPIConfig.tenantID(),
             let client = try? CoreAPIAuthClient(baseURL: baseURL)
         else {
-            // Config absent or URL invalid — local-only, zero behaviour change.
+            // Config absent or URL invalid — unconfigured; register/login are unavailable.
             return AuthenticationService()
         }
         return AuthenticationService(
@@ -95,7 +99,7 @@ class AuthenticationService: ObservableObject {
 
     /// Returns an `AuthenticationService` wired with cloud deps when both
     /// `urlString` and `tenantId` are non-nil and `urlString` is a valid,
-    /// TLS-compliant URL; returns a local-only instance otherwise.
+    /// TLS-compliant URL; returns an unconfigured instance otherwise.
     ///
     /// - Parameters:
     ///   - urlString: The raw base URL string (mirrors `CoreAPIConfig.baseURLString()`).
@@ -135,8 +139,8 @@ class AuthenticationService: ObservableObject {
 
     /// Optional Core API auth client.  When non-nil (together with
     /// `coreAPITenantId`), registration and login route through Core API.
-    /// `nil` preserves the original local-only behaviour — no existing call
-    /// sites or tests are affected.  Production wiring is finalised in phase 5.
+    /// `nil` means the build is unconfigured: register/login throw
+    /// `AuthenticationError.coreAPINotConfigured`.
     private let coreAuthClient: CoreAPIAuthClientProtocol?
 
     /// Tenant identifier passed to Core API auth calls.  Must be non-nil
@@ -148,6 +152,13 @@ class AuthenticationService: ObservableObject {
     /// Set this to the active `CloudSyncCoordinator` once the coordinator is
     /// started; set it back to `nil` after `stop()` is called.
     weak var syncCoordinator: CloudSyncCoordinator?
+
+    /// `true` when both a Core API auth client and tenant id are present.
+    /// When `false`, register/login are unavailable and the UI shows a
+    /// configuration error.
+    var isCoreAPIConfigured: Bool {
+        coreAuthClient != nil && coreAPITenantId != nil
+    }
 
     private var sessionTimeoutTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -190,7 +201,8 @@ class AuthenticationService: ObservableObject {
     /// - Network unreachable → `registrationFailed("Registration requires…")`
     /// - 401 → `registrationFailed("Registration unauthorised")`
     ///
-    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
+    /// Without cloud deps this throws `AuthenticationError.coreAPINotConfigured`;
+    /// there is no local-only path and no local account is created.
     @MainActor
     func register(
         email: String,
@@ -199,36 +211,18 @@ class AuthenticationService: ObservableObject {
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
-        // Cloud-enabled path
-        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
-            return try await registerViaCloudAPI(
-                authClient: authClient,
-                tenantId: tenantId,
-                email: email,
-                password: password,
-                passcode: passcode,
-                fullName: fullName,
-                authMethod: authMethod
-            )
+        guard let authClient = coreAuthClient, let tenantId = coreAPITenantId else {
+            throw AuthenticationError.coreAPINotConfigured
         }
-
-        // Local-only path (unchanged)
-        do {
-            let user = try userRepository.createUser(
-                email: email,
-                password: password,
-                passcode: passcode,
-                fullName: fullName,
-                authMethod: authMethod
-            )
-
-            // Create session for newly registered user
-            try await createSession(for: user, authMethod: authMethod)
-
-            return user
-        } catch {
-            throw AuthenticationError.registrationFailed(error.localizedDescription)
-        }
+        return try await registerViaCloudAPI(
+            authClient: authClient,
+            tenantId: tenantId,
+            email: email,
+            password: password,
+            passcode: passcode,
+            fullName: fullName,
+            authMethod: authMethod
+        )
     }
 
     /// Cloud registration flow.  Separated from the public `register` method so
@@ -325,7 +319,8 @@ class AuthenticationService: ObservableObject {
     /// - 401 (unauthorized) → `loginFailed(...)`. Core API is authoritative; no fallback.
     /// - Network unreachable → `loginFailed(...)` for now (task 4.1 will add offline fallback).
     ///
-    /// **Local path** (nil cloud deps): unchanged from the original behaviour.
+    /// Without cloud deps this throws `AuthenticationError.coreAPINotConfigured`;
+    /// there is no local-only path and no local account is created.
     @MainActor
     func login(
         email: String,
@@ -346,31 +341,16 @@ class AuthenticationService: ObservableObject {
             }
         }
 
-        // Cloud-enabled path
-        if let authClient = coreAuthClient, let tenantId = coreAPITenantId {
-            return try await loginViaCloudAPI(
-                authClient: authClient,
-                tenantId: tenantId,
-                email: email,
-                credential: credential,
-                authMethod: authMethod
-            )
+        guard let authClient = coreAuthClient, let tenantId = coreAPITenantId else {
+            throw AuthenticationError.coreAPINotConfigured
         }
-
-        // Local-only path (unchanged)
-        do {
-            let user = try userRepository.authenticateUser(
-                email: email,
-                credential: credential,
-                authMethod: authMethod
-            )
-
-            try await createSession(for: user, authMethod: authMethod)
-
-            return user
-        } catch {
-            throw AuthenticationError.loginFailed(error.localizedDescription)
-        }
+        return try await loginViaCloudAPI(
+            authClient: authClient,
+            tenantId: tenantId,
+            email: email,
+            credential: credential,
+            authMethod: authMethod
+        )
     }
 
     /// Cloud login flow.  Separated from the public `login` method so the

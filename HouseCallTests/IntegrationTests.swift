@@ -21,7 +21,8 @@ struct IntegrationTests {
         encryptionManager: EncryptionManager,
         repository: CoreDataUserRepository,
         authService: AuthenticationService,
-        auditLogger: AuditLogger
+        auditLogger: AuditLogger,
+        client: FakeCoreAPIAuthClient
     ) {
         let container = NSPersistentContainer(name: "HouseCall", managedObjectModel: TestCoreDataModel.shared)
         let description = NSPersistentStoreDescription()
@@ -43,14 +44,17 @@ struct IntegrationTests {
             passwordHasher: PasswordHasher.shared,
             auditLogger: auditLogger
         )
+        let client = FakeCoreAPIAuthClient()
         let authService = AuthenticationService(
             userRepository: repository,
             keychainManager: KeychainManager.shared,
             biometricAuthManager: BiometricAuthManager.shared,
-            auditLogger: auditLogger
+            auditLogger: auditLogger,
+            coreAuthClient: client,
+            coreAPITenantId: FakeCoreAPIAuthClient.tenantId
         )
 
-        return (context, encryptionManager, repository, authService, auditLogger)
+        return (context, encryptionManager, repository, authService, auditLogger, client)
     }
 
     // MARK: - Full Registration Flow
@@ -292,6 +296,10 @@ struct IntegrationTests {
             authMethod: .password
         )
 
+        // Core API unreachable -> offline fallback runs the local credential
+        // check, which records the failure in the audit log.
+        components.client.loginOffline = true
+
         // Attempt login with wrong password
         do {
             _ = try await authService.login(
@@ -459,6 +467,8 @@ struct IntegrationTests {
 
         try await authService.logout()
 
+        // Offline fallback performs the local credential check that audits login_success.
+        components.client.loginOffline = true
         _ = try await authService.login(
             email: "auditcomplete@example.com",
             credential: "AuditPassword123!",

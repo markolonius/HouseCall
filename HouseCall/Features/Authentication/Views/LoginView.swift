@@ -89,6 +89,18 @@ struct LoginView: View {
                             .cornerRadius(8)
                     }
 
+                    // Configuration Error (build lacks Core API config)
+                    if !authService.isCoreAPIConfigured {
+                        Text("This build is not configured to connect to HouseCall.")
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                            .accessibilityLabel("Configuration error. This build is not configured to connect to HouseCall.")
+                            .accessibilityIdentifier("coreAPIConfigurationError")
+                    }
+
                     // Login Button
                     Button(action: {
                         Task {
@@ -112,11 +124,11 @@ struct LoginView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(viewModel.canSubmit ? Color.blue : Color.gray)
+                        .background(viewModel.canSubmit && authService.isCoreAPIConfigured ? Color.blue : Color.gray)
                         .foregroundColor(.white)
                         .cornerRadius(10)
                     }
-                    .disabled(!viewModel.canSubmit)
+                    .disabled(!viewModel.canSubmit || !authService.isCoreAPIConfigured)
                     .accessibilityIdentifier("loginSubmitButton")
 
                     // Sign Up Link

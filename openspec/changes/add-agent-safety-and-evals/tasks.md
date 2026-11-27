@@ -13,7 +13,7 @@ Prerequisite: `add-agent-care-loop` merged and archived.
   - Migration adds `model_name` and `prompt_version` to `recommendations`.
   - Prompt version constants next to each prompt; a test fails if a prompt's text changes without its version.
   - Drafter writes both fields; store round-trip test.
-- [ ] 1.3 Show provenance in the physician queue
+- [x] 1.3 Show provenance in the physician queue
   - Queue and detail views show model and prompt version; web handler test.
 - [ ] 1.4 Document the development data rule (synthetic data only on the LAN inference host) in `backend/README.md`.
 

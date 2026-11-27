@@ -89,7 +89,7 @@ func ValidateEndpoint(baseURL, appEnv string) error {
 	case "https":
 		return nil
 	case "http":
-		if strings.EqualFold(appEnv, "production") {
+		if strings.EqualFold(strings.TrimSpace(appEnv), "production") {
 			return fmt.Errorf("agent: APP_ENV=production requires an https AGENT_MODEL_BASE_URL (host %s)", u.Host)
 		}
 		return nil

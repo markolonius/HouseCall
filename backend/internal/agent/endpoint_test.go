@@ -20,6 +20,8 @@ func TestValidateEndpoint(t *testing.T) {
 		{"http://host:11434/v1", "development", false},
 		{"http://host:11434/v1", "production", true},
 		{"http://host:11434/v1", "Production", true},
+		{"http://host:11434/v1", "production ", true},
+		{"http://host:11434/v1", " PRODUCTION\n", true},
 		{"https://host/v1", "production", false},
 		{"ftp://host/v1", "", true},
 		{"not a url", "", true},
@@ -94,5 +96,40 @@ func TestCheckEndpoint(t *testing.T) {
 	w = agent.CheckEndpoint(ctx, agent.ClientConfig{BaseURL: "http://user:pw@127.0.0.1:1/v1", APIKey: "topsecret"}, nil)
 	if w == "" || strings.Contains(w, "pw") || strings.Contains(w, "topsecret") {
 		t.Errorf("expected host-only unreachable warning, got %q", w)
+	}
+}
+
+func TestCompleteFor_TurnTimeoutHoldsUnderLongerParentDeadline(t *testing.T) {
+	t.Setenv("AGENT_TIMEOUT_TRIAGE", "50ms")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	parent, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := agent.NewClient(agent.ClientConfig{BaseURL: srv.URL, Model: "m"}, nil)
+	start := time.Now()
+	_, err := c.CompleteFor(parent, agent.TurnTriage, []agent.Message{{Role: "user", Content: "x"}})
+	if err == nil || time.Since(start) > time.Second {
+		t.Errorf("triage cap must apply under a longer parent deadline, err=%v after %v", err, time.Since(start))
+	}
+}
+
+func TestClientConfig_String_OmitsURLCredentialsAndQuery(t *testing.T) {
+	cfg := agent.ClientConfig{
+		BaseURL: "https://user:pw@host.example:8080/v1?api_key=querysecret#frag",
+		Model:   "m",
+	}
+	s := cfg.String()
+	for _, bad := range []string{"user", "pw@", "querysecret", "api_key", "frag"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("String() leaks %q: %s", bad, s)
+		}
+	}
+	if !strings.Contains(s, "https://host.example:8080/v1") {
+		t.Errorf("String() should keep scheme+host+path, got: %s", s)
 	}
 }

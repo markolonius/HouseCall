@@ -196,7 +196,7 @@ AGENT_MODEL_NAME=medgemma-27b-text-it
 ```
 
 `AGENT_MODEL_NAME` must be the exact id the server lists at
-`GET <base>/v1/models`. At startup the server checks `/models` and logs a
+`GET <base>/models`. At startup the server checks `/models` and logs a
 warning (host only) if the endpoint is unreachable or the model is missing.
 
 Any OpenAI-compatible server works: llama.cpp / llama-swap, vLLM, or Ollama.

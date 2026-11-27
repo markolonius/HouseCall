@@ -100,8 +100,13 @@ when running via `docker compose`).
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL DSN (`postgres://user:pass@host:port/db?sslmode=disable`) |
 | `JWT_SECRET` | **Yes** | — | HMAC-HS256 signing secret; must be ≥ 16 characters |
-| `AGENT_MODEL_BASE_URL` | No | `http://host.docker.internal:11434/v1` | OpenAI-compatible chat completions base URL |
-| `AGENT_MODEL_NAME` | No | `medgemma:4b` | Model identifier passed in the `model` field |
+| `APP_ENV` | No | `development` | With `production`, the server refuses to start unless `AGENT_MODEL_BASE_URL` is `https://` |
+| `AGENT_MODEL_BASE_URL` | No | `http://host.docker.internal:11434/v1` | OpenAI-compatible chat completions base URL (read from `.env` under compose) |
+| `AGENT_MODEL_NAME` | No | `medgemma:4b` | Model identifier passed in the `model` field; must match an id in the server's `/models` list |
+| `AGENT_TIMEOUT_TRIAGE` | No | `15s` | Per-turn model timeout, triage (Go duration) |
+| `AGENT_TIMEOUT_INTERVIEW` | No | `60s` | Per-turn model timeout, interview |
+| `AGENT_TIMEOUT_SOAP` | No | `120s` | Per-turn model timeout, SOAP note |
+| `AGENT_TIMEOUT_RELAY` | No | `60s` | Per-turn model timeout, relay |
 | `AGENT_MODEL_API_KEY` | No | _(empty)_ | Bearer token for hosted endpoints; leave empty for Ollama |
 
 The Makefile supplies dev defaults:
@@ -122,7 +127,12 @@ JWT_SECRET        = dev-secret-change-me-in-production
 ```yaml
 DATABASE_URL:         postgres://housecall:housecall@postgres:5432/housecall?sslmode=disable
 JWT_SECRET:           ${JWT_SECRET:-dev-jwt-secret-change-me-in-production}
-AGENT_MODEL_BASE_URL: http://host.docker.internal:11434/v1
+AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+APP_ENV:              ${APP_ENV:-development}
+AGENT_TIMEOUT_TRIAGE:    ${AGENT_TIMEOUT_TRIAGE:-}     # empty = server default (15s)
+AGENT_TIMEOUT_INTERVIEW: ${AGENT_TIMEOUT_INTERVIEW:-}  # empty = server default (60s)
+AGENT_TIMEOUT_SOAP:      ${AGENT_TIMEOUT_SOAP:-}       # empty = server default (120s)
+AGENT_TIMEOUT_RELAY:     ${AGENT_TIMEOUT_RELAY:-}      # empty = server default (60s)
 AGENT_MODEL_NAME:     ${AGENT_MODEL_NAME:-medgemma:4b}
 AGENT_MODEL_API_KEY:  ${AGENT_MODEL_API_KEY:-}
 SERVER_PORT:          ${SERVER_PORT:-8080}   # host-side port binding
@@ -174,6 +184,33 @@ AGENT_MODEL_NAME=google/medgemma-27b-it \
 
 Any endpoint that implements `POST /v1/chat/completions` (OpenAI-compatible) is
 a valid drop-in.
+
+### Using a LAN inference machine (MedGemma 27B)
+
+The Ollama-on-the-Mac setup above stays the default. To use a separate machine
+on the LAN that serves MedGemma 27B instead, set in `backend/.env`:
+
+```bash
+AGENT_MODEL_BASE_URL=http://<inference-host>:<port>/v1
+AGENT_MODEL_NAME=medgemma-27b-text-it
+```
+
+`AGENT_MODEL_NAME` must be the exact id the server lists at
+`GET <base>/v1/models`. At startup the server checks `/models` and logs a
+warning (host only) if the endpoint is unreachable or the model is missing.
+
+Any OpenAI-compatible server works: llama.cpp / llama-swap, vLLM, or Ollama.
+
+> **Development data rule: synthetic data only.**
+> The link to the inference machine is plain HTTP on the LAN. In development,
+> use only the seeded synthetic patients and the eval vignettes — never real
+> patient information. This is a working rule that the code cannot enforce.
+> Production refuses non-HTTPS model endpoints (`APP_ENV=production`).
+
+### Recommendation provenance
+
+Each recommendation records the model name and prompt version that produced it.
+Physicians see both in the review queue.
 
 ---
 

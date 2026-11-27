@@ -572,7 +572,6 @@ struct SecurityTests {
         _ = try await authService.register(
             email: "timeout-test@example.com",
             password: "TimeoutPass123!",
-            passcode: nil,
             fullName: "Timeout User",
             authMethod: .password
         )

@@ -377,7 +377,6 @@ enum UITestBootstrap {
         _ = try? repo.createUser(
             email: testEmail,
             password: testPassword,
-            passcode: nil,
             fullName: "UI Test",      // Synthetic — not real PHI
             authMethod: .password
         )

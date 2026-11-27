@@ -120,7 +120,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "patient@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Jane Smith",
             authMethod: .password
         )
@@ -144,7 +143,6 @@ struct CloudRegistrationTests {
         _ = try await service.register(
             email: "jwt@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "JWT Patient",
             authMethod: .password
         )
@@ -168,7 +166,6 @@ struct CloudRegistrationTests {
         _ = try await service.register(
             email: "session@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Session Patient",
             authMethod: .password
         )
@@ -194,7 +191,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "enc@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Enc Patient",
             authMethod: .password
         )
@@ -225,7 +221,6 @@ struct CloudRegistrationTests {
         let user = try await service.register(
             email: "phi@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "PHI Patient",
             authMethod: .password
         )
@@ -253,7 +248,6 @@ struct CloudRegistrationTests {
             _ = try await service.register(
                 email: "local@example.com",
                 password: "SecurePassword123!",
-                passcode: nil,
                 fullName: "Local Patient",
                 authMethod: .password
             )
@@ -285,7 +279,6 @@ struct CloudRegistrationTests {
             _ = try await service.register(
                 email: "dup@example.com",
                 password: "SecurePassword123!",
-                passcode: nil,
                 fullName: "Duplicate",
                 authMethod: .password
             )
@@ -331,7 +324,6 @@ struct CloudRegistrationTests {
             _ = try await service.register(
                 email: "offline@example.com",
                 password: "SecurePassword123!",
-                passcode: nil,
                 fullName: "Offline Patient",
                 authMethod: .password
             )

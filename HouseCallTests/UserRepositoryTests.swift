@@ -46,7 +46,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "test@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "John Doe",
             authMethod: .password
         )
@@ -54,33 +53,8 @@ struct UserRepositoryTests {
         #expect(user.email == "test@example.com")
         #expect(user.authMethod == "password")
         #expect(user.encryptedPasswordHash != nil)
-        #expect(user.encryptedPasscodeHash == nil)
         #expect(user.accountStatus == "active")
         #expect(user.id != nil)
-    }
-
-    @Test("Create user with passcode auth")
-    func testCreateUserWithPasscode() throws {
-        let context = createInMemoryContext()
-        let repository = CoreDataUserRepository(
-            context: context,
-            encryptionManager: EncryptionManager.shared,
-            passwordHasher: PasswordHasher.shared,
-            auditLogger: AuditLogger(context: context)
-        )
-
-        let user = try repository.createUser(
-            email: "passcode@example.com",
-            password: nil,
-            passcode: "135792",
-            fullName: "Jane Smith",
-            authMethod: .passcode
-        )
-
-        #expect(user.email == "passcode@example.com")
-        #expect(user.authMethod == "passcode")
-        #expect(user.encryptedPasscodeHash != nil)
-        #expect(user.encryptedPasswordHash == nil)
     }
 
     @Test("Create user with biometric auth")
@@ -96,7 +70,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "biometric@example.com",
             password: nil,
-            passcode: nil,
             fullName: "Bob Johnson",
             authMethod: .biometric
         )
@@ -104,7 +77,6 @@ struct UserRepositoryTests {
         #expect(user.email == "biometric@example.com")
         #expect(user.authMethod == "biometric")
         #expect(user.encryptedPasswordHash == nil)
-        #expect(user.encryptedPasscodeHash == nil)
     }
 
     @Test("Email is stored in lowercase")
@@ -120,7 +92,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "MixedCase@Example.COM",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Test User",
             authMethod: .password
         )
@@ -142,7 +113,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "test@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: fullName,
             authMethod: .password
         )
@@ -174,7 +144,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: "findme@example.com",
             password: "Password123!",
-            passcode: nil,
             fullName: "Find Me",
             authMethod: .password
         )
@@ -199,7 +168,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "findbyid@example.com",
             password: "Password123!",
-            passcode: nil,
             fullName: "Find By ID",
             authMethod: .password
         )
@@ -243,7 +211,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Auth User",
             authMethod: .password
         )
@@ -257,38 +224,6 @@ struct UserRepositoryTests {
 
         #expect(authenticatedUser.email == email)
         #expect(authenticatedUser.lastLoginAt != nil)
-    }
-
-    @Test("Authenticate user with valid passcode")
-    func testAuthenticateWithValidPasscode() throws {
-        let context = createInMemoryContext()
-        let repository = CoreDataUserRepository(
-            context: context,
-            encryptionManager: EncryptionManager.shared,
-            passwordHasher: PasswordHasher.shared,
-            auditLogger: AuditLogger(context: context)
-        )
-
-        let email = "passcode@example.com"
-        let passcode = "135792"
-
-        // Create user
-        _ = try repository.createUser(
-            email: email,
-            password: nil,
-            passcode: passcode,
-            fullName: "Passcode User",
-            authMethod: .passcode
-        )
-
-        // Authenticate
-        let authenticatedUser = try repository.authenticateUser(
-            email: email,
-            credential: passcode,
-            authMethod: .passcode
-        )
-
-        #expect(authenticatedUser.email == email)
     }
 
     @Test("Reject invalid password")
@@ -309,7 +244,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: correctPassword,
-            passcode: nil,
             fullName: "Secure User",
             authMethod: .password
         )
@@ -341,17 +275,16 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Method User",
             authMethod: .password
         )
 
-        // Try to authenticate with passcode method
+        // Try to authenticate with a different method
         #expect(throws: UserRepositoryError.invalidAuthMethod) {
             try repository.authenticateUser(
                 email: email,
                 credential: password,
-                authMethod: .passcode
+                authMethod: .biometric
             )
         }
     }
@@ -396,7 +329,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: "Password123!",
-            passcode: nil,
             fullName: "Registered User",
             authMethod: .password
         )
@@ -421,7 +353,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "update@example.com",
             password: "Password123!",
-            passcode: nil,
             fullName: "Original Name",
             authMethod: .password
         )
@@ -452,7 +383,6 @@ struct UserRepositoryTests {
         let user = try repository.createUser(
             email: "logged@example.com",
             password: "Password123!",
-            passcode: nil,
             fullName: "Logged User",
             authMethod: .password
         )
@@ -484,7 +414,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: password,
-            passcode: nil,
             fullName: "Login Log User",
             authMethod: .password
         )
@@ -521,7 +450,6 @@ struct UserRepositoryTests {
         _ = try repository.createUser(
             email: email,
             password: "CorrectPassword123!",
-            passcode: nil,
             fullName: "Fail Log User",
             authMethod: .password
         )

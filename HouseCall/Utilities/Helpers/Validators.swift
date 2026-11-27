@@ -3,7 +3,7 @@
 //  HouseCall
 //
 //  Input validation for authentication forms
-//  HIPAA-compliant password and passcode validation
+//  HIPAA-compliant password validation
 //
 
 import Foundation
@@ -133,88 +133,6 @@ class Validators {
         }
 
         return .valid()
-    }
-
-    // MARK: - Passcode Validation
-
-    /// Validates 6-digit passcode
-    /// Requirements:
-    /// - Exactly 6 numeric digits
-    /// - No sequential patterns (123456, 654321)
-    /// - No repeated digits (111111, 000000)
-    /// - Parameter passcode: Passcode to validate
-    /// - Returns: ValidationResult
-    static func validatePasscode(_ passcode: String) -> ValidationResult {
-        // Check if exactly 6 digits
-        guard passcode.count == 6 else {
-            return .invalid("Passcode must be exactly 6 digits")
-        }
-
-        // Check if all characters are numeric
-        guard passcode.allSatisfy({ $0.isNumber }) else {
-            return .invalid("Passcode must contain only numbers")
-        }
-
-        // Check for repeated digits
-        let uniqueDigits = Set(passcode)
-        if uniqueDigits.count == 1 {
-            return .invalid("Passcode cannot contain all the same digit (e.g., 111111)")
-        }
-
-        // Check for sequential patterns (ascending)
-        if isSequential(passcode, ascending: true) {
-            return .invalid("Passcode cannot be a sequential pattern (e.g., 123456)")
-        }
-
-        // Check for sequential patterns (descending)
-        if isSequential(passcode, ascending: false) {
-            return .invalid("Passcode cannot be a sequential pattern (e.g., 654321)")
-        }
-
-        return .valid()
-    }
-
-    /// Validates that passcode and confirmation match
-    /// - Parameters:
-    ///   - passcode: Original passcode
-    ///   - confirmation: Passcode confirmation
-    /// - Returns: ValidationResult
-    static func validatePasscodeConfirmation(passcode: String, confirmation: String) -> ValidationResult {
-        guard passcode == confirmation else {
-            return .invalid("Passcodes do not match")
-        }
-
-        return .valid()
-    }
-
-    // MARK: - Helper Methods
-
-    /// Checks if a string of digits is sequential
-    /// - Parameters:
-    ///   - digits: String of digits to check
-    ///   - ascending: true for ascending sequence (123), false for descending (321)
-    /// - Returns: true if sequential, false otherwise
-    private static func isSequential(_ digits: String, ascending: Bool) -> Bool {
-        guard digits.count >= 2 else { return false }
-
-        let digitsArray = Array(digits)
-        let expectedDifference = ascending ? 1 : -1
-
-        for i in 0..<digitsArray.count - 1 {
-            guard let currentDigit = Int(String(digitsArray[i])),
-                  let nextDigit = Int(String(digitsArray[i + 1])) else {
-                return false
-            }
-
-            // Handle wrap-around (9 -> 0 or 0 -> 9)
-            let difference = (nextDigit - currentDigit + 10) % 10
-
-            if difference != expectedDifference && difference != expectedDifference + 10 {
-                return false
-            }
-        }
-
-        return true
     }
 
     // MARK: - Full Name Validation

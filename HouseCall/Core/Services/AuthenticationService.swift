@@ -19,6 +19,7 @@ enum AuthenticationError: LocalizedError {
     case noActiveSession
     case biometricAuthFailed(String)
     case coreAPINotConfigured
+    case legacyAuthMethod
 
     var errorDescription: String? {
         switch self {
@@ -36,6 +37,8 @@ enum AuthenticationError: LocalizedError {
             return "Biometric authentication failed: \(reason)"
         case .coreAPINotConfigured:
             return "This build is not configured to connect to HouseCall."
+        case .legacyAuthMethod:
+            return "This account used a sign-in method that is no longer supported. Please sign in with your password, or register again."
         }
     }
 }
@@ -207,7 +210,6 @@ class AuthenticationService: ObservableObject {
     func register(
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
@@ -219,7 +221,6 @@ class AuthenticationService: ObservableObject {
             tenantId: tenantId,
             email: email,
             password: password,
-            passcode: passcode,
             fullName: fullName,
             authMethod: authMethod
         )
@@ -234,7 +235,6 @@ class AuthenticationService: ObservableObject {
         tenantId: String,
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod
     ) async throws -> User {
@@ -284,8 +284,7 @@ class AuthenticationService: ObservableObject {
             user = try userRepository.createUser(
                 email: email,
                 password: password,
-                passcode: passcode,
-                fullName: fullName,
+                    fullName: fullName,
                 authMethod: authMethod,
                 id: patientId
             )
@@ -392,6 +391,7 @@ class AuthenticationService: ObservableObject {
                 //
                 // No JWT is obtained; cloud sync stays inactive until a subsequent
                 // online login succeeds and a fresh token is stored.
+                try rejectLegacyAuthMethod(for: email)
                 do {
                     let localUser = try userRepository.authenticateUser(
                         email: email,
@@ -435,13 +435,13 @@ class AuthenticationService: ObservableObject {
         // to the server-canonical identity — encryption-identity continuity.
         let user: User
         if let existingUser = userRepository.findUser(by: patientId) {
+            try rejectLegacyAuthMethod(existingUser)
             user = existingUser
         } else {
             do {
                 user = try userRepository.createUser(
                     email: email,
                     password: authMethod == .password ? credential : nil,
-                    passcode: authMethod == .passcode ? credential : nil,
                     fullName: "",   // Not known at login; profile sync is future work (not in this change)
                     authMethod: authMethod,
                     id: patientId
@@ -476,6 +476,8 @@ class AuthenticationService: ObservableObject {
         guard let user = userRepository.findUser(by: email) else {
             throw AuthenticationError.loginFailed("User not found")
         }
+
+        try rejectLegacyAuthMethod(user)
 
         // Verify user has biometric enabled
         guard user.authMethod == AuthMethod.biometric.rawValue else {
@@ -617,11 +619,33 @@ class AuthenticationService: ObservableObject {
         }
     }
 
+    /// Throws `.legacyAuthMethod` when a stored auth-method string is not a
+    /// supported `AuthMethod` (e.g. the retired "passcode" method).
+    private func rejectLegacyAuthMethod(_ stored: String?) throws {
+        guard let stored, AuthMethod(rawValue: stored) == nil else { return }
+        throw AuthenticationError.legacyAuthMethod
+    }
+
+    private func rejectLegacyAuthMethod(_ user: User) throws {
+        try rejectLegacyAuthMethod(user.authMethod)
+    }
+
+    private func rejectLegacyAuthMethod(for email: String) throws {
+        guard let user = userRepository.findUser(by: email) else { return }
+        try rejectLegacyAuthMethod(user)
+    }
+
     /// Restores session from keychain if available
     private func restoreSession() {
         guard let _ = try? keychainManager.retrieveSessionToken(),
-              let authMethodString = try? keychainManager.retrieveAuthMethod(),
-              let _ = AuthMethod(rawValue: authMethodString) else {
+              let authMethodString = try? keychainManager.retrieveAuthMethod() else {
+            return
+        }
+
+        // A stored legacy method (retired passcode) must not restore a session;
+        // drop the token so the patient is sent to sign in with their password.
+        guard AuthMethod(rawValue: authMethodString) != nil else {
+            try? keychainManager.deleteSessionToken()
             return
         }
 

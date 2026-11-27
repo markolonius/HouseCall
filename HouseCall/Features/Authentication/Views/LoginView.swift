@@ -44,23 +44,16 @@ struct LoginView: View {
                                 .accessibilityIdentifier("loginEmailField")
                         }
 
-                        // Credential (Password or Passcode)
+                        // Credential (Password)
                         if !viewModel.useBiometric {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(viewModel.credentialPlaceholder)
                                     .font(.headline)
 
-                                if viewModel.authMethod == .passcode {
-                                    TextField("Enter 6-digit passcode", text: $viewModel.credential)
-                                        .textContentType(.password)
-                                        .keyboardType(.numberPad)
-                                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                                } else {
-                                    SecureField("Enter password", text: $viewModel.credential)
-                                        .textContentType(.password)
-                                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                                        .accessibilityIdentifier("loginPasswordField")
-                                }
+                                SecureField("Enter password", text: $viewModel.credential)
+                                    .textContentType(.password)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .accessibilityIdentifier("loginPasswordField")
                             }
                         }
 

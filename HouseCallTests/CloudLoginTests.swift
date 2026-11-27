@@ -131,7 +131,6 @@ struct CloudLoginTests {
         _ = try repo.createUser(
             email: "patient@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Jane Smith",
             authMethod: .password,
             id: patientId
@@ -222,7 +221,6 @@ struct CloudLoginTests {
         let registeredUser = try await service.register(
             email: "cont@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Continuity Patient",
             authMethod: .password
         )
@@ -304,7 +302,6 @@ struct CloudLoginTests {
         _ = try repo.createUser(
             email: "local@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Local Patient",
             authMethod: .password
         )
@@ -352,7 +349,6 @@ struct CloudLoginTests {
         _ = try makeRepo(context: context).createUser(
             email: "patient@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Jane Smith",
             authMethod: .password,
             id: currentId

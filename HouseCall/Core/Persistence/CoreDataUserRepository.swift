@@ -34,7 +34,6 @@ class CoreDataUserRepository: UserRepositoryProtocol {
     func createUser(
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod,
         id: UUID?
@@ -65,23 +64,10 @@ class CoreDataUserRepository: UserRepositoryProtocol {
                 data: hashedPassword,
                 for: userId
             )
-            user.encryptedPasscodeHash = nil
-
-        case .passcode:
-            guard let passcode = passcode else {
-                throw UserRepositoryError.invalidPasscode
-            }
-            let hashedPasscode = try passwordHasher.hash(password: passcode)
-            user.encryptedPasscodeHash = try encryptionManager.encrypt(
-                data: hashedPasscode,
-                for: userId
-            )
-            user.encryptedPasswordHash = nil
 
         case .biometric:
             // Biometric doesn't store credentials
             user.encryptedPasswordHash = nil
-            user.encryptedPasscodeHash = nil
         }
 
         // Encrypt full name
@@ -210,37 +196,6 @@ class CoreDataUserRepository: UserRepositoryProtocol {
             } catch {
                 // A genuine decryption/system failure is still an opaque
                 // invalidCredentials to the caller — no credential-stage info leaks.
-                try? auditLogger.logLoginFailure(
-                    email: email,
-                    reason: "Credential verification failed",
-                    authMethod: authMethod.rawValue
-                )
-                throw UserRepositoryError.invalidCredentials
-            }
-
-        case .passcode:
-            guard let encryptedHash = user.encryptedPasscodeHash else {
-                throw UserRepositoryError.invalidCredentials
-            }
-
-            // Same opaque policy for passcode verification.
-            do {
-                let hashedPasscode = try encryptionManager.decrypt(
-                    encryptedData: encryptedHash,
-                    for: userId
-                )
-
-                guard try passwordHasher.verify(password: credential, hash: hashedPasscode) else {
-                    try? auditLogger.logLoginFailure(
-                        email: email,
-                        reason: "Invalid passcode",
-                        authMethod: authMethod.rawValue
-                    )
-                    throw UserRepositoryError.invalidCredentials
-                }
-            } catch let repoError as UserRepositoryError {
-                throw repoError
-            } catch {
                 try? auditLogger.logLoginFailure(
                     email: email,
                     reason: "Credential verification failed",

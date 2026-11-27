@@ -38,9 +38,9 @@ enum AuditEventType: String, Codable {
     case decryptionFailure = "decryption_failure"
     case unauthorizedAccess = "unauthorized_access"
 
-    // Password/Passcode Events
+    // Password Events
     case passwordChanged = "password_changed"
-    case passcodeChanged = "passcode_changed"
+    case passcodeChanged = "passcode_changed" // Legacy: no longer emitted; kept so stored audit entries still decode
     case passwordResetRequested = "password_reset_requested"
 
     // Data Access Events (for future PHI tracking)

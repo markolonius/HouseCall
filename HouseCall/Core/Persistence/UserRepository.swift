@@ -20,7 +20,6 @@ enum UserRepositoryError: LocalizedError, Equatable {
     case fetchFailed(Error)
     case invalidEmail
     case invalidPassword
-    case invalidPasscode
 
     var errorDescription: String? {
         switch self {
@@ -42,8 +41,6 @@ enum UserRepositoryError: LocalizedError, Equatable {
             return "Invalid email address format"
         case .invalidPassword:
             return "Invalid password"
-        case .invalidPasscode:
-            return "Invalid passcode"
         }
     }
     
@@ -56,8 +53,7 @@ enum UserRepositoryError: LocalizedError, Equatable {
              (.invalidAuthMethod, .invalidAuthMethod),
              (.userNotFound, .userNotFound),
              (.invalidEmail, .invalidEmail),
-             (.invalidPassword, .invalidPassword),
-             (.invalidPasscode, .invalidPasscode):
+             (.invalidPassword, .invalidPassword):
             return true
         case (.saveFailed, .saveFailed),
              (.fetchFailed, .fetchFailed):
@@ -73,7 +69,6 @@ enum UserRepositoryError: LocalizedError, Equatable {
 /// Authentication method types
 enum AuthMethod: String {
     case password = "password"
-    case passcode = "passcode"
     case biometric = "biometric"
 }
 
@@ -84,9 +79,8 @@ protocol UserRepositoryProtocol {
     /// - Parameters:
     ///   - email: User's email address
     ///   - password: User's password (optional, for password auth)
-    ///   - passcode: User's passcode (optional, for passcode auth)
     ///   - fullName: User's full name
-    ///   - authMethod: Authentication method (password, passcode, or biometric)
+    ///   - authMethod: Authentication method (password or biometric)
     ///   - id: Optional caller-supplied UUID to use as the new user's identity.
     ///     When `nil` the implementation generates a fresh UUID.
     ///     Pass the Core API `patientId` here so the local user's `id` matches
@@ -97,7 +91,6 @@ protocol UserRepositoryProtocol {
     func createUser(
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod,
         id: UUID?
@@ -121,7 +114,7 @@ protocol UserRepositoryProtocol {
     /// Authenticates a user with credentials
     /// - Parameters:
     ///   - email: User's email
-    ///   - credential: Password or passcode
+    ///   - credential: Password
     ///   - authMethod: Authentication method being used
     /// - Returns: Authenticated User entity
     /// - Throws: UserRepositoryError
@@ -139,14 +132,12 @@ extension UserRepositoryProtocol {
     func createUser(
         email: String,
         password: String?,
-        passcode: String?,
         fullName: String,
         authMethod: AuthMethod
     ) throws -> User {
         try createUser(
             email: email,
             password: password,
-            passcode: passcode,
             fullName: fullName,
             authMethod: authMethod,
             id: nil

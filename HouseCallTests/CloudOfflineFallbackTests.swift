@@ -83,7 +83,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "offline@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Offline Patient",
             authMethod: .password,
             id: patientId
@@ -113,6 +112,41 @@ struct CloudOfflineFallbackTests {
                 "isAuthenticated must be true after successful offline fallback login")
     }
 
+    // MARK: - Legacy (retired) auth method
+
+    @Test("Offline + cached user with retired auth method — fails with legacyAuthMethod, no session")
+    func testOfflineLogin_legacyAuthMethod_rejected() async throws {
+        let context = makeContext()
+        let keychain = InMemoryKeychainManager()
+
+        let repo = makeRepo(context: context)
+        let user = try repo.createUser(
+            email: "legacy@example.com",
+            password: "SecurePassword123!",
+            fullName: "Legacy Patient",
+            authMethod: .password,
+            id: UUID()
+        )
+        // Simulate a dev account stored with the retired method.
+        user.authMethod = "passcode"
+        try context.save()
+
+        let service = makeService(context: context, keychain: keychain, stubBehaviour: .offline("no route"))
+
+        do {
+            _ = try await service.login(
+                email: "legacy@example.com",
+                credential: "SecurePassword123!",
+                authMethod: .password
+            )
+            Issue.record("Expected legacyAuthMethod error")
+        } catch AuthenticationError.legacyAuthMethod {
+            // expected
+        }
+        await Task.yield()
+        #expect(service.isAuthenticated == false)
+    }
+
     // MARK: - Offline + correct credential → encryption identity preserved
 
     @Test("Offline + existing user — encryption identity (user.id) matches cached local user")
@@ -125,7 +159,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "eid@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "EID Patient",
             authMethod: .password,
             id: patientId
@@ -167,7 +200,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "offline2@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Offline Patient 2",
             authMethod: .password,
             id: patientId
@@ -254,7 +286,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo.createUser(
             email: "rejected@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Rejected Patient",
             authMethod: .password,
             id: patientId
@@ -306,7 +337,6 @@ struct CloudOfflineFallbackTests {
         _ = try repo1.createUser(
             email: "test@example.com",
             password: "SecurePassword123!",
-            passcode: nil,
             fullName: "Test Patient",
             authMethod: .password,
             id: patientId

@@ -137,3 +137,74 @@ advertising or analytics audience
 **And** the only PHI-bearing reads are scoped to the owning patient or a
 care-related physician within the tenant
 
+### Requirement: Patient Registration
+
+The Core API SHALL provide a registration endpoint that creates a tenant-scoped
+patient from an email and password, storing the password as a bcrypt hash, and
+SHALL return an authentication token so the client is immediately authenticated.
+Registration SHALL reject a duplicate email within the same tenant and SHALL
+write an audit event containing identifiers only.
+
+#### Scenario: New patient registers
+
+- **GIVEN** a valid tenant and an email not yet registered in that tenant
+- **WHEN** the client POSTs the email and password to the registration endpoint
+- **THEN** a patient record is created in that tenant with a bcrypt password hash
+- **AND** an authentication token is returned
+- **AND** a `patient.registered` audit event is written with identifiers only (no password, no PHI)
+
+#### Scenario: Duplicate email is rejected
+
+- **GIVEN** an email already registered within the tenant
+- **WHEN** the client attempts to register that email again
+- **THEN** the request is rejected as a conflict
+- **AND** no second patient record is created
+
+#### Scenario: Missing fields are rejected
+
+- **GIVEN** a registration request missing tenant, email, or password
+- **WHEN** the request is processed
+- **THEN** it is rejected as a bad request
+- **AND** no patient record is created
+
+#### Scenario: Returned token authenticates API access
+
+- **GIVEN** a successful registration
+- **WHEN** the returned token is used as a Bearer token on an authenticated `/api/*` request
+- **THEN** the request is accepted as that patient within the tenant
+
+### Requirement: Agent Interview Message Delivery
+
+The Core API SHALL provide a channel for the AI Agent Runtime to deliver a
+non-clinical interview question to the originating patient: the question SHALL be
+persisted as an assistant message on the conversation and pushed to the patient's
+live WebSocket connection when present. Interview questions SHALL NOT pass through
+the recommendation review lifecycle.
+
+#### Scenario: Interview question reaches the patient
+
+- **GIVEN** the agent runtime generates an interview question for a conversation
+- **WHEN** the Core API delivers it
+- **THEN** the question is persisted as an assistant message on that conversation
+- **AND** it is pushed to the patient's WebSocket if connected
+- **AND** no recommendation row is created for the question
+
+#### Scenario: Offline patient receives the question on reconnect
+
+- **GIVEN** the patient is offline when an interview question is delivered
+- **WHEN** the patient reconnects and syncs the conversation
+- **THEN** the persisted assistant message is included in the message history
+
+### Requirement: SOAP Note Recommendation Payload
+
+The Core API SHALL accept and persist Recommendations with `payload_type` =
+`soap_note` whose payload contains structured Subjective, Objective, Assessment,
+and Plan fields, scoped to the owning tenant like every other recommendation.
+
+#### Scenario: A soap_note recommendation is tenant-scoped
+
+- **GIVEN** a `soap_note` recommendation drafted for a patient in tenant A
+- **WHEN** it is persisted and later queried
+- **THEN** it is only ever returned within tenant A's scope
+- **AND** its payload exposes the Subjective, Objective, Assessment, and Plan fields
+

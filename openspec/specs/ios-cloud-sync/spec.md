@@ -89,3 +89,44 @@ render (e.g. `prescription` before differentiated cards ship)
 **Then** it renders the recommendation's textual content as a generic card
 **And** the app does not crash or silently drop the recommendation
 
+### Requirement: Authenticated Cloud Activation
+
+Cloud sync SHALL activate only when a Core API base URL and tenant are configured
+AND a valid Core API authentication token is present. After a successful patient
+login that yields a token, the client SHALL activate cloud sync so patient
+messages route through the Core API and agent interview questions and delivered
+recommendations arrive over the live connection. Absent configuration or token,
+the client SHALL remain in local-only mode with no regression.
+
+#### Scenario: Cloud activates after authenticated login
+
+- **GIVEN** a configured Core API base URL and tenant
+- **WHEN** the patient logs in and a valid token is cached
+- **THEN** cloud sync activates and patient messages route through the Core API
+- **AND** agent interview questions arrive over the live connection
+
+#### Scenario: Local-only mode without configuration or token
+
+- **GIVEN** no Core API tenant/base URL configured, or no valid token
+- **WHEN** the patient uses the chat
+- **THEN** cloud sync stays inactive and the app operates in local-only mode without error
+
+### Requirement: Interview Question Receipt
+
+The iOS client SHALL receive agent interview questions as assistant messages over
+the existing message-sync and WebSocket channels and display them in the
+conversation, so the server-driven history interview appears as a normal chat
+exchange.
+
+#### Scenario: Live interview question is rendered
+
+- **GIVEN** the patient has an open conversation and a live WebSocket connection
+- **WHEN** the agent delivers an interview question
+- **THEN** the question appears as an assistant message bubble in the chat
+
+#### Scenario: Missed interview question is synced on reconnect
+
+- **GIVEN** an interview question was delivered while the client was offline
+- **WHEN** the client reconnects and syncs the conversation
+- **THEN** the previously missed question appears in the message history in order
+

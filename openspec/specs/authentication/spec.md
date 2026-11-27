@@ -72,38 +72,27 @@ The authentication service's async operations SHALL execute on the main actor to
 - **AND** session timeout timer updates SHALL be included in the deferred block
 
 ### Requirement: User Registration with Email and Password
-The system SHALL provide a user registration interface that collects email address, password, and full name to create a new account.
 
-#### Scenario: Successful account creation
-- **GIVEN** a new user opens the registration screen
-- **WHEN** the user enters a valid email, strong password, and full name
-- **AND** confirms the password correctly
-- **AND** email is not already registered
-- **THEN** the system SHALL create an encrypted user account in Core Data
-- **AND** store the master encryption key in keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
-- **AND** encrypt the password hash using bcrypt (cost factor 12) then AES-256-GCM
-- **AND** encrypt the full name using AES-256-GCM with user-specific derived key
-- **AND** log the account creation event in the audit log
-- **AND** navigate the user to biometric enrollment screen
+Patient registration SHALL be performed against the Core API as the source of
+truth: the app SHALL register the patient with the Core API (email + password),
+and SHALL create a device-local cache record keyed by the canonical patient
+identity returned by the Core API, used for offline access and PHI encryption-key
+derivation. The plaintext password SHALL be sent only to the Core API over TLS
+and SHALL never be logged.
 
-#### Scenario: Duplicate email rejection
-- **GIVEN** an email address is already registered in Core Data
-- **WHEN** a user attempts to register with that email
-- **THEN** the system SHALL display error "An account with this email already exists"
-- **AND** SHALL NOT create a duplicate user record
-- **AND** log the failed registration attempt in audit log
+#### Scenario: Successful patient registration
 
-#### Scenario: Invalid email format
-- **GIVEN** a user enters an invalid email format (e.g., "notanemail", "missing@domain")
-- **WHEN** the user attempts to submit the registration form
-- **THEN** the system SHALL display inline validation error "Please enter a valid email address"
-- **AND** SHALL NOT proceed with registration
+- **GIVEN** a new patient provides a valid email and a password meeting strength rules
+- **WHEN** registration succeeds against the Core API
+- **THEN** a Core API patient is created and an authentication token is returned
+- **AND** a device-local cache record is created keyed by the canonical patient identity
+- **AND** the authentication token is cached securely for cloud sync
 
-#### Scenario: Weak password rejection
-- **GIVEN** a user enters a password that does not meet strength requirements
-- **WHEN** the user attempts to submit the registration form
-- **THEN** the system SHALL display inline validation error with specific requirements not met
-- **AND** SHALL NOT proceed with registration
+#### Scenario: Registration rejected for an existing account
+
+- **GIVEN** an email already registered in the tenant
+- **WHEN** the patient attempts to register
+- **THEN** registration fails with a conflict and no local cache record is created
 
 ### Requirement: Password Strength Validation
 The system SHALL enforce healthcare-grade password strength requirements to protect Protected Health Information.
@@ -234,50 +223,26 @@ The system SHALL prompt users to enable biometric authentication (Face ID or Tou
 - **AND** navigate to AI chat interface if user chooses to continue with password-only
 
 ### Requirement: User Login with Multiple Authentication Methods
-The system SHALL provide a login interface that authenticates users with their chosen authentication method (password, passcode, or biometric).
 
-#### Scenario: Successful login with biometric enabled
-- **GIVEN** a registered user with biometric authentication enabled
-- **WHEN** the user enters correct email and password
-- **AND** successfully completes biometric verification (Face ID/Touch ID)
-- **THEN** the system SHALL decrypt the user's encryption key from keychain
-- **AND** create an authenticated session token stored in keychain
-- **AND** update `User.lastLoginAt` timestamp
-- **AND** log the successful login event in audit log
-- **AND** navigate to the AI chat interface
+Patient login SHALL authenticate against the Core API as the source of truth.
+On success the app SHALL cache the returned authentication token, ensure the
+device-local cache record for the canonical patient identity exists, unlock PHI
+encryption for that identity, and start a session. When the Core API rejects the
+credentials the login SHALL fail. Biometric unlock SHALL continue to gate access
+to a previously authenticated local session.
 
-#### Scenario: Successful login without biometric (password-only)
-- **GIVEN** a registered user without biometric authentication enabled
-- **WHEN** the user enters correct email and password
-- **THEN** the system SHALL decrypt the user's encryption key from keychain
-- **AND** create an authenticated session token stored in keychain
-- **AND** update `User.lastLoginAt` timestamp
-- **AND** log the successful login event in audit log
-- **AND** navigate to the AI chat interface
+#### Scenario: Successful cloud login
 
-#### Scenario: Invalid credentials
-- **GIVEN** a user attempts to log in
-- **WHEN** the email exists but password is incorrect
-- **THEN** the system SHALL display error "Invalid email or password"
-- **AND** SHALL NOT reveal which credential is incorrect (security best practice)
-- **AND** log the failed login attempt in audit log with reason "invalid_password"
-- **AND** remain on login screen
+- **GIVEN** valid credentials and a reachable Core API
+- **WHEN** the patient logs in
+- **THEN** the Core API returns an authentication token which is cached securely
+- **AND** the session starts and PHI encryption is unlocked for the canonical patient identity
 
-#### Scenario: Non-existent account
-- **GIVEN** a user attempts to log in
-- **WHEN** the email does not exist in Core Data
-- **THEN** the system SHALL display error "Invalid email or password"
-- **AND** log the failed login attempt in audit log with reason "account_not_found"
-- **AND** remain on login screen
+#### Scenario: Invalid credentials are rejected
 
-#### Scenario: Biometric authentication failure
-- **GIVEN** a registered user with biometric enabled
-- **WHEN** the user enters correct email and password
-- **AND** biometric verification fails (wrong face/fingerprint)
-- **THEN** the system SHALL display error "Biometric authentication failed"
-- **AND** offer "Try Again" or "Use Password Only" options
-- **AND** log the failed biometric attempt in audit log
-- **AND** allow retry with password-only fallback
+- **GIVEN** a reachable Core API and incorrect credentials
+- **WHEN** the patient attempts to log in
+- **THEN** login fails and no session is started
 
 ### Requirement: Session Management
 The system SHALL manage authenticated user sessions with automatic timeout and re-authentication requirements.
@@ -393,4 +358,46 @@ The system SHALL handle all authentication errors gracefully without exposing se
 - **AND** proceed with password-only authentication
 - **AND** log the framework error in audit log
 - **AND** inform user "Biometric authentication temporarily unavailable"
+
+### Requirement: Core API Session Token Lifecycle
+
+The app SHALL cache the Core API authentication token in the Keychain on
+successful registration or login, SHALL clear it on logout, and SHALL deactivate
+cloud sync and require re-login when the Core API reports the token is no longer
+valid. The token SHALL never be logged.
+
+#### Scenario: Token cached and cleared
+
+- **GIVEN** a successful Core API login
+- **WHEN** the token is returned
+- **THEN** it is stored in the Keychain for cloud sync
+- **WHEN** the patient logs out
+- **THEN** the cached token is removed
+
+#### Scenario: Expired token forces re-login
+
+- **GIVEN** a cached token that the Core API rejects as invalid
+- **WHEN** a cloud sync request returns unauthorized
+- **THEN** cloud sync is deactivated and re-login is required, without a retry loop
+
+### Requirement: Offline Authentication Fallback
+
+The app SHALL allow a previously-authenticated patient to unlock their encrypted
+local record via the cached local credential when the Core API is unreachable
+(network failure or timeout, as distinct from a credential rejection), and SHALL
+keep cloud sync inactive until a valid token is obtained.
+
+#### Scenario: Login while Core API unreachable
+
+- **GIVEN** a patient who has previously authenticated on this device
+- **AND** the Core API is unreachable
+- **WHEN** the patient logs in with correct credentials
+- **THEN** the local encrypted record is unlocked for offline use
+- **AND** cloud sync remains inactive until connectivity and a valid token return
+
+#### Scenario: Unreachable is distinguished from rejected
+
+- **GIVEN** the Core API is reachable and rejects the credentials
+- **WHEN** the patient attempts to log in
+- **THEN** login fails and the offline fallback is NOT used
 

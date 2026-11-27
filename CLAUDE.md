@@ -162,7 +162,7 @@ The app never calls a model. All AI runs server-side in the Go agent runtime beh
 #### App Navigation (`HouseCallApp.swift`)
 - Conditional navigation based on authentication state:
   - `isAuthenticated == false` → LoginView
-  - `isAuthenticated == true` → TabView with Chat and Profile tabs
+  - `isAuthenticated == true` → a single auto-opened chat (ChatView); Profile opens as a sheet from the toolbar button
 - Session validation on app launch
 - AuthenticationService as environment object
 - Screen capture protection with privacy overlay
@@ -181,7 +181,7 @@ The app never calls a model. All AI runs server-side in the Go agent runtime beh
   - Offline fallback for a previously signed-in patient
 
 #### Conversation Views (`Features/Conversation/Views/`)
-- **ConversationListView.swift**: Conversation list with navigation
+- **ConversationListView.swift**: Unused (only its preview references it); the app opens a single conversation automatically
   - Displays all user conversations (sorted by updatedAt)
   - Encrypted conversation titles (decrypted for display)
   - "New Chat" button in toolbar and empty state
@@ -251,7 +251,7 @@ The app never calls a model. All AI runs server-side in the Go agent runtime beh
 - **AuditLogEntry**: HIPAA compliance audit trail
   - `id`, `timestamp`, `eventType`, `userId`
   - `encryptedDetails`, `deviceId`
-  - Extended event types: conversation_created, conversation_accessed, conversation_deleted, message_created, screenshot_detected
+  - Extended event types: conversation_created, conversation_accessed, conversation_deleted, message_created, ai_interaction, ai_interaction_failed, screenshot_detected
 
 #### Legacy Entity (Deprecated)
 - **Item**: Template entity from Xcode project
@@ -303,6 +303,7 @@ The app never calls a model. All AI runs server-side in the Go agent runtime beh
 ✅ **Audit Trail**: All events logged per 45 CFR § 164.312(b)
   - All authentication events
   - All conversation operations (create, access, delete)
+  - AI interactions (`.aiInteraction`, `.aiInteractionFailed`)
   - Sign-in and sync events
   - Screenshot detection
   - No PHI in audit logs (event metadata only)
@@ -506,8 +507,8 @@ The `managedObjectContext` is injected via SwiftUI environment and should be acc
 2. Delete Derived Data: `rm -rf ~/Library/Developer/Xcode/DerivedData`
 3. Run tests individually to isolate failures
 4. Check test logs for specific error messages
-5. Ensure iOS Simulator is iPhone 15 (as specified in tests)
 5. Run through `scripts/test.sh` (iPhone 17 simulator, `OS=latest`)
+
 #### Keychain Tests Failing
 **Symptoms**: KeychainManager tests fail with error -25300 (item not found)
 **Causes**:

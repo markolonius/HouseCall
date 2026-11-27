@@ -5,7 +5,7 @@ Welcome to HouseCall, your HIPAA-compliant health assistant app. This guide will
 ## Table of Contents
 1. [Getting Started](#getting-started)
 2. [Using the Chat Interface](#using-the-chat-interface)
-3. [Managing Conversations](#managing-conversations)
+3. [Your Conversation](#your-conversation)
 4. [Privacy & Security](#privacy--security)
 5. [Frequently Asked Questions](#frequently-asked-questions)
 6. [Troubleshooting](#troubleshooting)
@@ -31,16 +31,21 @@ Welcome to HouseCall, your HIPAA-compliant health assistant app. This guide will
 4. (Optional) Enable Face ID or Touch ID for faster login
 5. Tap **Log In**
 
-Face ID or Touch ID unlocks a session you have already signed in to with your password. If you have not signed in recently, you will be asked for your password.
+Face ID or Touch ID opens the app on your phone, but it does not sign you in to HouseCall's servers. After a Face ID or Touch ID login you can read your conversations, but chat stays read-only until you enter your password (see below).
 
-The app will automatically log you out after 5 minutes of inactivity for security.
+The app will automatically log you out after 5 minutes of inactivity for security. Logging out, or the inactivity timeout, ends your sign-in with HouseCall's servers, so you will need your password to send messages again.
 
 ### Signing In Again When Chat Is Read-Only
 
-Sometimes your sign-in with HouseCall expires, or you opened the app while your phone could not reach the internet. When that happens you can still open and read your earlier conversations, but you cannot send new messages. The chat shows a **Sign in to send messages** banner.
+Sometimes you can read your earlier conversations but cannot send new messages. This happens when:
+- you signed in with Face ID or Touch ID
+- your sign-in with HouseCall expired or was rejected
+- you signed in while your phone could not reach the internet
+
+The chat then shows a **Sign in to send messages** banner with a **Sign in** button.
 
 1. Make sure your phone has an internet connection
-2. Tap the **Sign in to send messages** banner
+2. Tap **Sign in** in the banner
 3. Enter your password
 4. Your messages start syncing again right away. You do not need to restart the app.
 
@@ -48,17 +53,16 @@ Sometimes your sign-in with HouseCall expires, or you opened the app while your 
 
 ## Using the Chat Interface
 
-### Starting a New Conversation
+### Starting a Conversation
 
 1. Open HouseCall and log in
-2. Tap the **Chat** tab at the bottom
-3. Tap the **+ New Chat** button (top right or center if no conversations)
-4. Type your message in the text field at the bottom
-5. Tap the **Send** button (blue arrow)
+2. Your conversation opens automatically
+3. Type your message in the text field at the bottom
+4. Tap the **Send** button (blue arrow)
 
 Your message will appear on the right in a blue bubble. While the HouseCall assistant is working on its answer, you will see a "waiting for a reply" indicator. The reply then appears all at once on the left in a gray bubble.
 
-Responses come from the HouseCall assistant. Any clinical guidance is reviewed by a physician before it is delivered to you, so some replies may take longer to arrive.
+Replies come from the HouseCall assistant. The assistant asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them, so that part may take longer to arrive. If you describe an emergency, the assistant tells you right away to call 911; that advice is not reviewed first.
 
 ### Sending Messages
 
@@ -74,18 +78,16 @@ Responses come from the HouseCall assistant. Any clinical guidance is reviewed b
 - "I have chest pain when I breathe deeply. Started an hour ago."
 
 **Important Notes:**
-- The HouseCall assistant provides general health information, NOT medical diagnoses
+- The HouseCall assistant is not a doctor and does NOT give medical diagnoses
 - For emergencies (chest pain, difficulty breathing, severe bleeding), call 911 immediately
 - Always consult a healthcare provider for medical advice
 
 ### Understanding Assistant Responses
 
 The assistant will:
-- ✅ Ask clarifying questions about your symptoms
-- ✅ Provide general health information
-- ✅ Suggest when to see a doctor
-- ✅ Recommend over-the-counter remedies (when appropriate)
-- ✅ Explain medical terms in simple language
+- ✅ Ask you questions about your symptoms, one at a time
+- ✅ Tell you right away to call 911 if you describe an emergency
+- ✅ Prepare an assessment and care plan, which a physician reviews and approves before you see it
 
 The assistant will NOT:
 - ❌ Provide definitive diagnoses
@@ -97,47 +99,14 @@ The assistant will NOT:
 
 - Scroll up to see older messages in the conversation
 - Tap on any message to see its timestamp
-- For long conversations, tap "Load earlier messages" at the top
 
 ---
 
-## Managing Conversations
+## Your Conversation
 
-### Viewing All Conversations
+HouseCall opens a single conversation for you automatically, titled "Consultation". Your earlier messages load when you open it, and you can continue from where you left off.
 
-1. Tap the **Chat** tab
-2. Your conversations are listed newest first
-3. Each conversation shows:
-   - Title (based on first message)
-   - Time of last message
-
-### Opening a Conversation
-
-- Tap any conversation in the list to open it
-- All previous messages will load
-- Continue chatting from where you left off
-
-### Deleting a Conversation
-
-**Method 1: Swipe to Delete**
-1. In the conversation list, swipe left on a conversation
-2. Tap the red **Delete** button
-3. Confirm deletion
-
-**Method 2: In-Conversation Delete**
-1. Open the conversation
-2. Tap the menu icon (three dots)
-3. Select **Delete Conversation**
-4. Confirm deletion
-
-**Note**: Deleted conversations cannot be recovered. All messages are permanently erased.
-
-### Organizing Conversations
-
-Conversations are automatically sorted by last activity:
-- Most recent conversations appear at the top
-- Sending a message moves that conversation to the top
-- No manual sorting needed
+The app does not currently let you create, delete, or switch between conversations. Account deletion is also not yet available in the app (see [Deleting Your Data](#deleting-your-data)).
 
 ---
 
@@ -148,10 +117,10 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 ### How Your Data is Protected
 
 #### 1. Encryption at Rest
-- **All conversation data is encrypted** on your device using AES-256-GCM encryption
-- Message content is never stored in plaintext
-- Conversation titles are encrypted
-- Even if someone accesses your device storage, they cannot read your conversations
+- **The copy of your conversation on your device is encrypted** using AES-256-GCM encryption
+- Message content and conversation titles are never stored in plaintext on your device
+- Even if someone accesses your device storage, they cannot read the local copy
+- Messages are also stored on HouseCall's servers so your care team can see them
 
 #### 2. Encryption in Transit
 - All communications with HouseCall's servers use **TLS 1.2+ encryption**
@@ -160,7 +129,7 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 
 #### 3. Session Management
 - Automatic logout after **5 minutes of inactivity**
-- Re-authentication required when app returns from background
+- If the app has been in the background longer than the 5-minute inactivity timeout, you will need to sign in again
 - Session tokens are securely stored in iOS Keychain
 
 #### 4. Screen Protection
@@ -174,8 +143,8 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 - Fallback to your password if biometrics are unavailable
 
 #### 6. Audit Logging
-- Every action is logged for HIPAA compliance
-- Logs include: logins, conversation access, deletions
+- Key events are logged for HIPAA compliance
+- Logs include: logins, conversation access, and assistant interactions (including failures)
 - Logs contain NO personal health information (PHI)
 - Logs are encrypted and stored securely
 
@@ -192,25 +161,14 @@ HouseCall does NOT sync data to iCloud and does not make automatic iCloud backup
 
 When you send a message:
 - Your message is sent to HouseCall's servers, where the HouseCall assistant prepares a reply
-- Clinical guidance is reviewed by a physician before it is delivered to you
+- The assessment and care plan are reviewed and approved by a physician before you see them
 - Replies are sent back to your phone and stored encrypted on your device
 
-Your phone never contacts an outside AI company directly, and you do not need to set up any AI accounts or keys.
+The app only talks to HouseCall's servers, and you do not need to set up any AI accounts or keys.
 
 ### Deleting Your Data
 
-**To delete all your data:**
-1. Log into HouseCall
-2. Go to **Profile** tab
-3. Scroll down to **Delete Account**
-4. Confirm deletion
-
-This will permanently delete:
-- All conversations and messages
-- Your user account
-- All audit logs
-
-**Note**: This action cannot be undone.
+Account deletion is not yet available in the app. To ask about your data, contact support.
 
 ---
 
@@ -225,35 +183,35 @@ A: HouseCall is free to download. There is nothing to set up for AI access; the 
 A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline, or your sign-in has expired, the chat is read-only until you sign in again.
 
 **Q: How long are my conversations stored?**
-A: Conversations are stored indefinitely on your device until you delete them. There are no automatic expiration or deletion policies.
+A: Your messages are stored encrypted on your device and also on HouseCall's servers. The app does not currently let you delete conversations. Contact support with questions about your data.
 
 **Q: Can I use HouseCall on multiple devices?**
 A: Currently, HouseCall is iPhone-only.
 
 **Q: Is HouseCall HIPAA compliant?**
-A: Yes, HouseCall is designed with HIPAA compliance in mind. All data is encrypted at rest and in transit, with comprehensive audit logging.
+A: Yes, HouseCall is designed with HIPAA compliance in mind. The copy on your device is encrypted at rest, data is sent over TLS, and key events are audit-logged.
 
 ### Assistant Questions
 
 **Q: Who writes the replies?**
-A: Replies come from the HouseCall assistant, which runs on HouseCall's servers. Clinical guidance is reviewed by a physician before it is delivered to you.
+A: Replies come from the HouseCall assistant, which runs on HouseCall's servers. It asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them. Emergency advice (call 911) is shown right away and is not reviewed first.
 
 **Q: Why is the chat read-only?**
-A: Your sign-in has expired or you opened the app while offline. Tap **Sign in to send messages** and enter your password to continue. See [Signing In Again When Chat Is Read-Only](#signing-in-again-when-chat-is-read-only).
+A: You signed in with Face ID or Touch ID, your sign-in has expired, or you signed in while offline. Tap **Sign in** in the banner and enter your password to continue. See [Signing In Again When Chat Is Read-Only](#signing-in-again-when-chat-is-read-only).
 
 ### Privacy & Security Questions
 
 **Q: Can anyone else see my conversations?**
-A: No. Conversations are encrypted with a key unique to your account. Only you can decrypt and view them when logged in.
+A: You can see them, and so can the clinicians and staff caring for you, since your messages are stored on HouseCall's servers and reviewed in the physician portal. The copy on your device is encrypted with a key unique to your account.
 
 **Q: What happens if I lose my phone?**
-A: Your conversations are encrypted and cannot be accessed without your password. Use iOS "Find My" to remotely wipe your device if needed.
+A: The copy of your conversations on your device is encrypted and cannot be read without signing in. Use iOS "Find My" to remotely wipe your device if needed.
 
 **Q: Does HouseCall collect my health information?**
 A: Your messages are sent to HouseCall's servers so the assistant and your physician can respond. They are encrypted in transit and stored encrypted on your device.
 
 **Q: Can my employer/insurance see my conversations?**
-A: No. HouseCall does not sell or share your conversations with employers or insurers. Your conversations are encrypted on your device.
+A: See the privacy policy for how HouseCall handles your data.
 
 **Q: Is it safe to screenshot my conversations?**
 A: Screenshots are detected and logged for audit purposes. Avoid sharing screenshots that contain sensitive health information, as they are not encrypted outside the app.
@@ -263,13 +221,13 @@ A: Screenshots are detected and logged for audit purposes. Avoid sharing screens
 **Q: Why is the reply slow?**
 A: Response speed depends on:
 - Your internet connection speed
-- Whether a physician is reviewing the guidance
+- Whether a physician is still reviewing the assessment and care plan
 - How busy the service is
 
 **Q: Why did my message fail to send?**
 A: Common causes:
 - No internet connection
-- Your sign-in expired (tap **Sign in to send messages**)
+- Your sign-in expired or you used Face ID / Touch ID (tap **Sign in** in the banner)
 - HouseCall's service is temporarily unavailable
 
 **Q: How do I report a bug?**
@@ -285,7 +243,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 **Solutions**:
 1. Check your internet connection (WiFi or cellular)
-2. Tap the **Sign in to send messages** banner and enter your password
+2. Tap **Sign in** in the banner and enter your password
 3. If signing in fails, try again in a few minutes or restart the app
 
 ### "Unable to connect"
@@ -303,7 +261,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 **Solutions**:
 1. Check your internet connection
-2. Clinical guidance is reviewed by a physician, which can take extra time
+2. The assessment and care plan are reviewed by a physician, which can take extra time
 3. Close and reopen the app to refresh your conversation
 
 ### "Unable to decrypt conversation"
@@ -313,8 +271,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 **Solutions**:
 1. Logout and login again to refresh encryption keys
 2. Verify you're logged in with the correct account
-3. If the conversation is corrupted, you may need to delete it
-4. Contact support if the issue persists
+3. Contact support if the issue persists
 
 ### App crashes when sending message
 
@@ -324,8 +281,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 1. Check your device has enough free storage
 2. Restart your iPhone
 3. Update to the latest version of HouseCall
-4. Delete unused conversations to free up space
-5. If crashes continue, report the issue with device logs
+4. If crashes continue, report the issue with device logs
 
 ---
 
@@ -333,7 +289,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 **IMPORTANT: HouseCall is NOT a substitute for professional medical advice, diagnosis, or treatment.**
 
-- The HouseCall assistant provides general health information only
+- The HouseCall assistant is not a doctor and does not give medical diagnoses
 - Always consult a qualified healthcare provider for medical concerns
 - For emergencies, call 911 or go to the nearest emergency room immediately
 - Do not delay seeking medical care based on assistant responses
@@ -358,16 +314,6 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 **Privacy Policy**: See PRIVACY.md in the app repository
 
 **License**: MIT License - See LICENSE file
-
----
-
-## Version Information
-
-**Current Version**: 1.0.0 (Phase 9: Documentation & Handoff)
-
-**Last Updated**: November 23, 2025
-
-**Compatibility**: iOS 17.0+
 
 ---
 

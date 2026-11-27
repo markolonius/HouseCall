@@ -15,7 +15,7 @@ Prerequisite: `add-agent-care-loop` merged and archived.
   - Drafter writes both fields; store round-trip test.
 - [x] 1.3 Show provenance in the physician queue
   - Queue and detail views show model and prompt version; web handler test.
-- [ ] 1.4 Document the development data rule (synthetic data only on the LAN inference host) in `backend/README.md`.
+- [x] 1.4 Document the development data rule (synthetic data only on the LAN inference host) in `backend/README.md`.
 
 ## Phase 2 — Evaluation harness
 

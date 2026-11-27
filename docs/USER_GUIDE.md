@@ -1,6 +1,6 @@
 # HouseCall User Guide
 
-Welcome to HouseCall, your HIPAA-compliant health assistant app. This guide will help you get started and make the most of the app's features.
+Welcome to HouseCall, your health assistant app, designed with HIPAA compliance in mind. This guide will help you get started and make the most of the app's features.
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
@@ -31,14 +31,14 @@ Welcome to HouseCall, your HIPAA-compliant health assistant app. This guide will
 4. (Optional) Enable Face ID or Touch ID for faster login
 5. Tap **Log In**
 
-Face ID or Touch ID opens the app on your phone, but it does not sign you in to HouseCall's servers. After a Face ID or Touch ID login you can read your conversations, but chat stays read-only until you enter your password (see below).
+Face ID or Touch ID opens the app on your phone, but it does not sign you in to HouseCall's servers. After a Face ID or Touch ID login you can read your conversations, but chat is usually read-only until you enter your password (see below).
 
 The app will automatically log you out after 5 minutes of inactivity for security. Logging out, or the inactivity timeout, ends your sign-in with HouseCall's servers, so you will need your password to send messages again.
 
 ### Signing In Again When Chat Is Read-Only
 
 Sometimes you can read your earlier conversations but cannot send new messages. This happens when:
-- you signed in with Face ID or Touch ID
+- you signed in with Face ID or Touch ID (chat is usually read-only after this, because a leftover sign-in can remain if the app was force-quit)
 - your sign-in with HouseCall expired or was rejected
 - you signed in while your phone could not reach the internet
 
@@ -62,7 +62,7 @@ The chat then shows a **Sign in to send messages** banner with a **Sign in** but
 
 Your message will appear on the right in a blue bubble. While the HouseCall assistant is working on its answer, you will see a "waiting for a reply" indicator. The reply then appears all at once on the left in a gray bubble.
 
-Replies come from the HouseCall assistant. The assistant asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them, so that part may take longer to arrive. If you describe an emergency, the assistant tells you right away to call 911; that advice is not reviewed first.
+Replies come from the HouseCall assistant. The assistant asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them, so that part may take longer to arrive. The assistant is instructed to tell you to call 911 if you describe an emergency, but do not wait for it. If you think you are having an emergency, call 911 yourself now.
 
 ### Sending Messages
 
@@ -86,7 +86,7 @@ Replies come from the HouseCall assistant. The assistant asks you questions abou
 
 The assistant will:
 - ✅ Ask you questions about your symptoms, one at a time
-- ✅ Tell you right away to call 911 if you describe an emergency
+- ✅ Is instructed to tell you to call 911 if you describe an emergency (but do not rely on it; call 911 yourself)
 - ✅ Prepare an assessment and care plan, which a physician reviews and approves before you see it
 
 The assistant will NOT:
@@ -104,7 +104,7 @@ The assistant will NOT:
 
 ## Your Conversation
 
-HouseCall opens a single conversation for you automatically, titled "Consultation". Your earlier messages load when you open it, and you can continue from where you left off.
+HouseCall opens a single conversation for you automatically, titled "Chat". Your earlier messages load when you open it, and you can continue from where you left off.
 
 The app does not currently let you create, delete, or switch between conversations. Account deletion is also not yet available in the app (see [Deleting Your Data](#deleting-your-data)).
 
@@ -124,8 +124,7 @@ HouseCall is designed with HIPAA compliance and your privacy as top priorities.
 
 #### 2. Encryption in Transit
 - All communications with HouseCall's servers use **TLS 1.2+ encryption**
-- Your messages are encrypted during transmission
-- Network traffic cannot be intercepted and read
+- Your messages are protected from being read in transit
 
 #### 3. Session Management
 - Automatic logout after **5 minutes of inactivity**
@@ -180,7 +179,7 @@ Account deletion is not yet available in the app. To ask about your data, contac
 A: HouseCall is free to download. There is nothing to set up for AI access; the assistant is part of the service.
 
 **Q: Can I use HouseCall without an internet connection?**
-A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline, or your sign-in has expired, the chat is read-only until you sign in again.
+A: You can read existing conversations offline, but sending new messages requires an internet connection and a valid sign-in. If you are offline but still signed in, chat stays active, but sending fails until you reconnect. If your sign-in has expired, or you signed in while offline, the chat is read-only until you sign in again.
 
 **Q: How long are my conversations stored?**
 A: Your messages are stored encrypted on your device and also on HouseCall's servers. The app does not currently let you delete conversations. Contact support with questions about your data.
@@ -189,15 +188,15 @@ A: Your messages are stored encrypted on your device and also on HouseCall's ser
 A: Currently, HouseCall is iPhone-only.
 
 **Q: Is HouseCall HIPAA compliant?**
-A: Yes, HouseCall is designed with HIPAA compliance in mind. The copy on your device is encrypted at rest, data is sent over TLS, and key events are audit-logged.
+A: HouseCall is designed with HIPAA compliance in mind. The copy on your device is encrypted at rest, data is sent over TLS, and key events are audit-logged.
 
 ### Assistant Questions
 
 **Q: Who writes the replies?**
-A: Replies come from the HouseCall assistant, which runs on HouseCall's servers. It asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them. Emergency advice (call 911) is shown right away and is not reviewed first.
+A: Replies come from the HouseCall assistant, which runs on HouseCall's servers. It asks you questions about your symptoms. Its assessment and care plan are reviewed and approved by a physician before you see them. It is instructed to tell you to call 911 if you describe an emergency, but do not wait for it. If you think you are having an emergency, call 911 yourself now.
 
 **Q: Why is the chat read-only?**
-A: You signed in with Face ID or Touch ID, your sign-in has expired, or you signed in while offline. Tap **Sign in** in the banner and enter your password to continue. See [Signing In Again When Chat Is Read-Only](#signing-in-again-when-chat-is-read-only).
+A: You signed in with Face ID or Touch ID (usually read-only afterwards), your sign-in has expired, or you signed in while offline. Tap **Sign in** in the banner and enter your password to continue. See [Signing In Again When Chat Is Read-Only](#signing-in-again-when-chat-is-read-only).
 
 ### Privacy & Security Questions
 
@@ -211,7 +210,7 @@ A: The copy of your conversations on your device is encrypted and cannot be read
 A: Your messages are sent to HouseCall's servers so the assistant and your physician can respond. They are encrypted in transit and stored encrypted on your device.
 
 **Q: Can my employer/insurance see my conversations?**
-A: See the privacy policy for how HouseCall handles your data.
+A: A privacy policy will be published before HouseCall is available to patients.
 
 **Q: Is it safe to screenshot my conversations?**
 A: Screenshots are detected and logged for audit purposes. Avoid sharing screenshots that contain sensitive health information, as they are not encrypted outside the app.
@@ -231,7 +230,7 @@ A: Common causes:
 - HouseCall's service is temporarily unavailable
 
 **Q: How do I report a bug?**
-A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issues
+A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issues. Do not include personal or health information in GitHub issues.
 
 ---
 
@@ -281,7 +280,7 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 1. Check your device has enough free storage
 2. Restart your iPhone
 3. Update to the latest version of HouseCall
-4. If crashes continue, report the issue with device logs
+4. If crashes continue, report the issue (do not include logs or screenshots that contain personal or health information)
 
 ---
 
@@ -309,11 +308,9 @@ A: Please report issues on GitHub: https://github.com/markolonius/HouseCall/issu
 
 ## Support & Contact
 
-**App Issues**: Report bugs on [GitHub Issues](https://github.com/markolonius/HouseCall/issues)
+**App Issues**: Report bugs on [GitHub Issues](https://github.com/markolonius/HouseCall/issues). Do not include personal or health information in GitHub issues.
 
-**Privacy Policy**: See PRIVACY.md in the app repository
-
-**License**: MIT License - See LICENSE file
+**Privacy Policy**: A privacy policy will be published before HouseCall is available to patients.
 
 ---
 
